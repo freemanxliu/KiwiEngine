@@ -1,5 +1,9 @@
 #include "Core/Window.h"
+#include <imgui.h>
 #include <stdexcept>
+
+// Forward declare ImGui Win32 WndProc handler
+extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace Kiwi
 {
@@ -68,6 +72,9 @@ namespace Kiwi
 
     void Window::PumpMessages()
     {
+        // Reset per-frame state
+        m_Mouse.LeftClicked = false;
+
         MSG msg = {};
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
@@ -83,6 +90,10 @@ namespace Kiwi
 
     LRESULT CALLBACK Window::WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
+        // Let ImGui process first
+        if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+            return true;
+
         // 获取 Window 实例指针
         Window* window = nullptr;
         if (msg == WM_NCCREATE)
@@ -122,6 +133,28 @@ namespace Kiwi
             }
             break;
         }
+
+        case WM_MOUSEMOVE:
+            window->m_Mouse.X = (int32_t)LOWORD(lParam);
+            window->m_Mouse.Y = (int32_t)HIWORD(lParam);
+            break;
+
+        case WM_LBUTTONDOWN:
+            window->m_Mouse.LeftDown = true;
+            window->m_Mouse.LeftClicked = true;
+            break;
+
+        case WM_LBUTTONUP:
+            window->m_Mouse.LeftDown = false;
+            break;
+
+        case WM_RBUTTONDOWN:
+            window->m_Mouse.RightDown = true;
+            break;
+
+        case WM_RBUTTONUP:
+            window->m_Mouse.RightDown = false;
+            break;
 
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE)

@@ -15,3 +15,6 @@ Thumbs.db
 
 # WorkBuddy
 .workbuddy/
+
+# Scene files (user data)
+*.json

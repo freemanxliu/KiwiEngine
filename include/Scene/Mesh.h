@@ -37,6 +37,7 @@ namespace Kiwi
         // 创建标准图元
         static Mesh CreateCube(float size = 1.0f);
         static Mesh CreateSphere(float radius = 0.5f, uint32_t segments = 32);
+        static Mesh CreateCylinder(float radius = 0.5f, float height = 1.0f, uint32_t segments = 24);
         static Mesh CreatePlane(float width = 1.0f, float height = 1.0f);
 
     private:

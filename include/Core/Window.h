@@ -15,6 +15,16 @@ namespace Kiwi
         void*       ParentHandle = nullptr;
     };
 
+    // Mouse button state
+    struct MouseState
+    {
+        int32_t X = 0;
+        int32_t Y = 0;
+        bool    LeftDown = false;
+        bool    RightDown = false;
+        bool    LeftClicked = false;  // Single frame click
+    };
+
     class Window
     {
     public:
@@ -36,6 +46,10 @@ namespace Kiwi
         uint32_t GetWidth() const { return m_Width; }
         uint32_t GetHeight() const { return m_Height; }
 
+        // Mouse
+        const MouseState& GetMouseState() const { return m_Mouse; }
+        void ResetFrameState() { m_Mouse.LeftClicked = false; }
+
         // Resize callback
         using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
         void SetResizeCallback(ResizeCallback callback) { m_OnResize = callback; }
@@ -49,6 +63,7 @@ namespace Kiwi
         uint32_t     m_Height;
         bool         m_ShouldClose = false;
         ResizeCallback m_OnResize;
+        MouseState   m_Mouse;
     };
 
 } // namespace Kiwi

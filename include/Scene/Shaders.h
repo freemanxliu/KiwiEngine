@@ -13,6 +13,9 @@ namespace Kiwi
         float WorldMatrix[16];      // 4x4 matrix
         float ViewMatrix[16];       // 4x4 matrix
         float ProjectionMatrix[16]; // 4x4 matrix
+        float ObjectColor[4];       // Object color (RGBA)
+        float Selected;             // 1.0 if selected, 0.0 otherwise
+        float Padding[3];           // Pad to 16-byte alignment
     };
 
     // ---- 顶点着色器 ----
@@ -22,6 +25,9 @@ namespace Kiwi
         row_major float4x4 g_World;
         row_major float4x4 g_View;
         row_major float4x4 g_Projection;
+        float4 g_ObjectColor;
+        float  g_Selected;
+        float3 g_Padding;
     };
 
     struct VSInput
@@ -50,7 +56,8 @@ namespace Kiwi
         output.PositionCS = projPos;
         output.PositionWS = worldPos.xyz;
         output.NormalWS = mul(input.Normal, (float3x3)g_World);
-        output.Color = input.Color;
+        // Multiply vertex color by object color
+        output.Color = input.Color * g_ObjectColor;
 
         return output;
     }
@@ -63,6 +70,9 @@ namespace Kiwi
         row_major float4x4 g_World;
         row_major float4x4 g_View;
         row_major float4x4 g_Projection;
+        float4 g_ObjectColor;
+        float  g_Selected;
+        float3 g_Padding;
     };
 
     struct PSInput
@@ -93,6 +103,12 @@ namespace Kiwi
         float3 halfVec = normalize(lightDir + viewDir);
         float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
         finalColor += float3(0.3, 0.3, 0.3) * spec * 0.5;
+
+        // Selection highlight: add orange tint
+        if (g_Selected > 0.5)
+        {
+            finalColor = lerp(finalColor, float3(1.0, 0.6, 0.1), 0.25);
+        }
 
         return float4(finalColor, input.Color.a);
     }

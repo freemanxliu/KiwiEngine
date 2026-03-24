@@ -133,6 +133,105 @@ namespace Kiwi
         return mesh;
     }
 
+    Mesh Mesh::CreateCylinder(float radius, float height, uint32_t segments)
+    {
+        Mesh mesh;
+        float halfH = height * 0.5f;
+
+        // Side vertices
+        for (uint32_t i = 0; i <= segments; i++)
+        {
+            float theta = (float)i / segments * 2.0f * PI;
+            float cosT = cosf(theta);
+            float sinT = sinf(theta);
+
+            Vec3 normal = { cosT, 0.0f, sinT };
+
+            // Bottom vertex
+            Vertex vBot;
+            vBot.Position = { radius * cosT, -halfH, radius * sinT };
+            vBot.Normal = normal;
+            vBot.Color = { 0.5f + 0.5f * cosT, 0.7f, 0.5f + 0.5f * sinT, 1.0f };
+            mesh.m_Vertices.push_back(vBot);
+
+            // Top vertex
+            Vertex vTop;
+            vTop.Position = { radius * cosT, halfH, radius * sinT };
+            vTop.Normal = normal;
+            vTop.Color = vBot.Color;
+            mesh.m_Vertices.push_back(vTop);
+        }
+
+        // Side indices
+        for (uint32_t i = 0; i < segments; i++)
+        {
+            uint32_t base = i * 2;
+            mesh.m_Indices.push_back(base);
+            mesh.m_Indices.push_back(base + 2);
+            mesh.m_Indices.push_back(base + 1);
+
+            mesh.m_Indices.push_back(base + 1);
+            mesh.m_Indices.push_back(base + 2);
+            mesh.m_Indices.push_back(base + 3);
+        }
+
+        // Top cap
+        uint32_t topCenter = (uint32_t)mesh.m_Vertices.size();
+        {
+            Vertex vc;
+            vc.Position = { 0, halfH, 0 };
+            vc.Normal = { 0, 1, 0 };
+            vc.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
+            mesh.m_Vertices.push_back(vc);
+        }
+
+        for (uint32_t i = 0; i <= segments; i++)
+        {
+            float theta = (float)i / segments * 2.0f * PI;
+            Vertex v;
+            v.Position = { radius * cosf(theta), halfH, radius * sinf(theta) };
+            v.Normal = { 0, 1, 0 };
+            v.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
+            mesh.m_Vertices.push_back(v);
+        }
+
+        for (uint32_t i = 0; i < segments; i++)
+        {
+            mesh.m_Indices.push_back(topCenter);
+            mesh.m_Indices.push_back(topCenter + 1 + i);
+            mesh.m_Indices.push_back(topCenter + 2 + i);
+        }
+
+        // Bottom cap
+        uint32_t botCenter = (uint32_t)mesh.m_Vertices.size();
+        {
+            Vertex vc;
+            vc.Position = { 0, -halfH, 0 };
+            vc.Normal = { 0, -1, 0 };
+            vc.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
+            mesh.m_Vertices.push_back(vc);
+        }
+
+        for (uint32_t i = 0; i <= segments; i++)
+        {
+            float theta = (float)i / segments * 2.0f * PI;
+            Vertex v;
+            v.Position = { radius * cosf(theta), -halfH, radius * sinf(theta) };
+            v.Normal = { 0, -1, 0 };
+            v.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
+            mesh.m_Vertices.push_back(v);
+        }
+
+        for (uint32_t i = 0; i < segments; i++)
+        {
+            mesh.m_Indices.push_back(botCenter);
+            mesh.m_Indices.push_back(botCenter + 2 + i);
+            mesh.m_Indices.push_back(botCenter + 1 + i);
+        }
+
+        return mesh;
+    }
+
     Mesh Mesh::CreatePlane(float width, float height)
     {
         Mesh mesh;

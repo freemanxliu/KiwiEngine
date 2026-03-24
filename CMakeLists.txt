@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(KiwiEngine VERSION 0.1.0 LANGUAGES CXX)
+project(KiwiEngine VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +10,19 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin)
 
+# ---- ImGui ----
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
+
+set(IMGUI_SOURCES
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+)
+
 # ---- 源文件 ----
 set(SOURCES
     src/main.cpp
@@ -17,6 +30,7 @@ set(SOURCES
     src/Core/Application.cpp
     src/RHI/DX11Device.cpp
     src/Scene/Mesh.cpp
+    src/Scene/Scene.cpp
 )
 
 set(HEADERS
@@ -31,14 +45,18 @@ set(HEADERS
     include/Math/Math.h
     include/Scene/Mesh.h
     include/Scene/Shaders.h
+    include/Scene/SceneObject.h
+    include/Scene/Scene.h
 )
 
 # ---- 可执行文件 ----
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES})
 
 # ---- Include 路径 ----
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
 )
 
 # ---- 链接 Windows 系统库 ----
@@ -70,6 +88,3 @@ if(MSVC)
         $<$<CONFIG:Release>:/O2 /Ob2>
     )
 endif()
-
-# ---- 拷贝 DLL 到输出目录（Debug 时需要 D3D SDK 层） ----
-# Note: d3dcompiler_47.dll 通常已在系统目录中，不需要手动拷贝
