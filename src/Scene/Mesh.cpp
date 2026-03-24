@@ -38,17 +38,17 @@ namespace Kiwi
         };
 
         Face faces[6] = {
-            // Front (Z+)
+            // Front (Z+)  - CW from outside: 4→5→6, 4→6→7
             { { 4, 5, 6, 7 }, {  0,  0,  1 } },
-            // Back (Z-)
+            // Back (Z-)   - CW from outside: 1→0→3, 1→3→2
             { { 1, 0, 3, 2 }, {  0,  0, -1 } },
-            // Top (Y+)
-            { { 3, 2, 6, 7 }, {  0,  1,  0 } },
-            // Bottom (Y-)
-            { { 0, 1, 5, 4 }, {  0, -1,  0 } },
-            // Right (X+)
-            { { 1, 5, 6, 2 }, {  1,  0,  0 } },
-            // Left (X-)
+            // Top (Y+)    - CW from outside: 7→6→2, 7→2→3
+            { { 7, 6, 2, 3 }, {  0,  1,  0 } },
+            // Bottom (Y-) - CW from outside: 4→0→1, 4→1→5
+            { { 4, 0, 1, 5 }, {  0, -1,  0 } },
+            // Right (X+)  - CW from outside: 5→1→2, 5→2→6
+            { { 5, 1, 2, 6 }, {  1,  0,  0 } },
+            // Left (X-)   - CW from outside: 0→4→7, 0→7→3
             { { 0, 4, 7, 3 }, { -1,  0,  0 } },
         };
 

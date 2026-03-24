@@ -4,6 +4,7 @@ A lightweight 3D rendering engine built from scratch with C++17 and DirectX, fea
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
+![Vulkan](https://img.shields.io/badge/Vulkan-WIP-yellow)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![Build](https://img.shields.io/badge/Build-CMake-orange)
 ![RenderDoc](https://img.shields.io/badge/RenderDoc-Integrated-red)
@@ -13,14 +14,16 @@ A lightweight 3D rendering engine built from scratch with C++17 and DirectX, fea
 - **RHI Abstraction Layer** — Clean separation between rendering logic and graphics API, with runtime backend switching
 - **DX11 Backend** — Full DirectX 11 implementation (device, context, swap chain, shaders, buffers, pipeline state)
 - **DX12 Backend** — Full DirectX 12 implementation (root signature, PSO, descriptor heaps, fence sync, resource barriers)
+- **Vulkan Backend** *(WIP)* — Vulkan implementation in progress (device, swap chain, render pass, pipeline, SPIR-V shaders)
 - **Runtime RHI Switching** — Hot-switch between DX11 and DX12 at runtime via the menu bar (no restart needed)
 - **Built-in Math Library** — Vec2/3/4, Mat4, perspective/orthographic projection, LookAt camera (left-hand coordinate system)
 - **Scene Editor** — Interactive scene management with object selection, transform editing, and JSON serialization
 - **Mesh Generation** — Procedural cube, sphere, cylinder, and floor primitives
 - **Runtime Shader Compilation** — HLSL vertex/pixel shaders compiled at startup via D3DCompile
-- **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading
-- **RenderDoc Integration** — Built-in frame capture with one-click button (auto-attaches on startup)
+- **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading with selection highlight
+- **RenderDoc Integration** — One-click frame capture button with auto-open in RenderDoc
 - **ImGui UI** — Full-featured editor interface with menu bar, scene panel, detail inspector, and object placer
+- **Ray Picking** — Click objects in the viewport to select them (Ray-AABB intersection)
 
 ## 🔍 RenderDoc Integration
 
@@ -29,18 +32,17 @@ KiwiEngine includes built-in [RenderDoc](https://renderdoc.org) support for GPU 
 ### How It Works
 
 - **Auto-Attach**: RenderDoc is automatically loaded at startup (before any graphics device is created)
-- **One-Click Capture**: A fixed overlay button in the top-right corner of the window lets you capture a frame instantly
+- **One-Click Capture & Open**: A compact button (🔵) in the top-right corner captures a frame and automatically opens it in RenderDoc
 - **Zero Configuration**: No need to launch from RenderDoc UI — just run the engine normally
-- **Replay UI**: After capturing, click "Open in RenderDoc" to launch the replay viewer directly
+- **Visual Feedback**: Button turns orange during capture; hover tooltip shows capture count
 
 ### Setup
 
 1. **Install RenderDoc** from [https://renderdoc.org](https://renderdoc.org) (default install path: `C:\Program Files\RenderDoc\`)
 2. Run `KiwiEngine.exe` normally — RenderDoc will be detected and attached automatically
-3. Click the red **"Capture Frame"** button in the top-right overlay to capture
-4. Captures are saved to the `captures/` directory
+3. Click the **capture button** in the top-right corner — the frame will be captured and RenderDoc will open automatically
 
-> **Note**: If RenderDoc is not installed, the engine runs normally without frame capture functionality. The overlay will show "RenderDoc N/A" status.
+> **Note**: If RenderDoc is not installed, the engine runs normally without the capture button.
 
 ### Alternative: Launch from RenderDoc
 
@@ -123,7 +125,8 @@ A 1280×720 window will appear showing a **3D scene editor** with Phong lighting
 - **Add objects**: Scene Panel → Placer tab → Click Cube/Sphere/Cylinder/Floor
 - **Select objects**: Click in the viewport or select from the object list
 - **Edit transforms**: Scene Panel → Detail tab → Drag Position/Rotation/Scale
-- **Capture frames**: Click the red "Capture Frame" button (top-right) for RenderDoc capture
+- **Edit colors**: Scene Panel → Detail tab → Color picker
+- **Capture frames**: Click the capture button (top-right) — auto-opens in RenderDoc
 - **Save/Load scenes**: Scene Panel → Save/Load buttons (JSON format)
 
 No external assets, textures, or config files are needed — everything (including shaders) is embedded in the source code.
@@ -142,9 +145,12 @@ KiwiEngine/
 │   │   │   ├── DX11Utils.h     # Format conversion utilities
 │   │   │   ├── DX11Resources.h # DX11 resource implementations
 │   │   │   └── DX11Device.h    # DX11 Device/Context/SwapChain declarations
-│   │   └── DX12/
-│   │       ├── DX12Headers.h   # Centralized DX12 includes
-│   │       └── DX12Device.h    # DX12 Device/Context/SwapChain declarations
+│   │   ├── DX12/
+│   │   │   ├── DX12Headers.h   # Centralized DX12 includes
+│   │   │   └── DX12Device.h    # DX12 Device/Context/SwapChain declarations
+│   │   └── Vulkan/
+│   │       ├── VulkanHeaders.h # Vulkan API includes
+│   │       └── VulkanDevice.h  # Vulkan Device/Context/SwapChain declarations
 │   ├── Core/
 │   │   ├── Window.h            # Win32 window wrapper
 │   │   └── Application.h       # Application framework (init, update, render loop)
@@ -164,16 +170,20 @@ KiwiEngine/
 │   │   └── Application.cpp     # App framework, message loop, RHI switching
 │   ├── RHI/
 │   │   ├── DX11Device.cpp      # DX11 backend implementation
-│   │   └── DX12Device.cpp      # DX12 backend implementation
+│   │   ├── DX12Device.cpp      # DX12 backend implementation
+│   │   └── VulkanDevice.cpp    # Vulkan backend implementation (WIP)
 │   ├── Debug/
 │   │   └── RenderDocIntegration.cpp  # RenderDoc runtime loading and capture API
 │   └── Scene/
 │       ├── Mesh.cpp            # Procedural mesh generation (Cube, Sphere, Cylinder, Floor)
 │       └── Scene.cpp           # Scene serialization (JSON)
-└── third_party/
-    ├── imgui/                  # Dear ImGui v1.91.8 (DX11 + DX12 + Win32 backends)
-    └── renderdoc/
-        └── renderdoc_app.h     # RenderDoc In-App API header (MIT License)
+├── third_party/
+│   ├── imgui/                  # Dear ImGui v1.91.8 (DX11 + DX12 + Win32 backends)
+│   ├── renderdoc/
+│   │   └── renderdoc_app.h     # RenderDoc In-App API header (MIT License)
+│   └── vulkan-headers/         # Vulkan SDK headers (Khronos)
+└── tools/
+    └── compile_shaders.mjs     # GLSL → SPIR-V shader compiler (for Vulkan backend)
 ```
 
 ## 🏗️ Architecture
@@ -182,12 +192,12 @@ KiwiEngine/
 ┌──────────────────────────────────────┐
 │            Application               │  ← Scene Editor + ImGui UI
 ├──────────────────────────────────────┤
-│      Debug / RenderDoc Integration   │  ← Frame capture overlay
+│      Debug / RenderDoc Integration   │  ← One-click frame capture
 ├──────────────────────────────────────┤
 │         RHI Abstract Layer           │  ← RHIDevice, RHIContext, RHIBuffer...
 ├────────────┬────────────┬────────────┤
 │   DX11     │   DX12     │  Vulkan    │  ← Backend implementations
-│ (active)   │ (active)   │ (planned)  │
+│ (active)   │ (active)   │   (WIP)    │
 └────────────┴────────────┴────────────┘
 ```
 
@@ -196,7 +206,7 @@ The RHI layer provides a unified interface. To add a new backend:
 1. Create `include/RHI/<API>/` and `src/RHI/<API>Device.cpp`
 2. Implement all abstract interfaces from `RHI.h`
 3. Add a new case in the `CreateRHI()` factory function
-4. The `RHI_API_TYPE` enum already has `DX12` and `Vulkan` reserved
+4. The `RHI_API_TYPE` enum already has `DX11`, `DX12`, and `VULKAN` defined
 
 ## 🔧 Troubleshooting
 

@@ -610,26 +610,25 @@ private:
     }
 
     // ============================================================
-    // RenderDoc Capture Overlay (fixed at top-right corner)
+    // RenderDoc Capture Button (compact, top-right corner)
     // ============================================================
 
     void DrawRenderDocOverlay()
     {
         auto& rdoc = RenderDocIntegration::Get();
+        if (!rdoc.IsAvailable()) return;
 
         float menuBarHeight = ImGui::GetFrameHeight();
         float windowWidth = (float)GetWindow()->GetWidth();
 
-        // Position the overlay at the top-right corner, below menu bar
-        float overlayWidth = 220.0f;
-        float overlayHeight = 0.0f;  // auto-size height
+        // Compact button size - just an icon button
+        float btnSize = 32.0f;
 
         ImGui::SetNextWindowPos(
-            ImVec2(windowWidth - overlayWidth - 8.0f, menuBarHeight + 4.0f),
+            ImVec2(windowWidth - btnSize - 12.0f, menuBarHeight + 6.0f),
             ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(overlayWidth, 0), ImGuiCond_Always);
-
-        ImGui::SetNextWindowBgAlpha(0.75f);
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.0f);  // transparent background
 
         ImGuiWindowFlags flags =
             ImGuiWindowFlags_NoMove |
@@ -641,77 +640,89 @@ private:
             ImGuiWindowFlags_NoFocusOnAppearing |
             ImGuiWindowFlags_NoNav;
 
-        if (ImGui::Begin("##RenderDocOverlay", nullptr, flags))
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+        if (ImGui::Begin("##RenderDocBtn", nullptr, flags))
         {
-            if (rdoc.IsAvailable())
+            bool capturing = rdoc.IsFrameCapturing();
+
+            // RenderDoc brand colors: dark blue background, white icon
+            // Normal: deep blue (#384C6C), Hover: brighter blue (#4A6A9A), Active: darker (#2A3A52)
+            ImVec4 btnColor    = capturing ? ImVec4(0.7f, 0.3f, 0.1f, 0.95f)  // orange when capturing
+                                           : ImVec4(0.22f, 0.30f, 0.42f, 0.95f);
+            ImVec4 hoverColor  = capturing ? ImVec4(0.8f, 0.4f, 0.2f, 1.0f)
+                                           : ImVec4(0.29f, 0.42f, 0.60f, 1.0f);
+            ImVec4 activeColor = capturing ? ImVec4(0.6f, 0.2f, 0.1f, 1.0f)
+                                           : ImVec4(0.16f, 0.23f, 0.32f, 1.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+
+            // RenderDoc-style icon: a stylized lens/camera symbol
+            // Using a circle + dot to mimic RenderDoc's lens icon
+            const char* icon = capturing ? "..." : "RD";
+
+            if (ImGui::Button(icon, ImVec2(btnSize, btnSize)))
             {
-                // RenderDoc status indicator
-                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "● RenderDoc");
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "v1.6+");
-
-                // Capture button - prominent and easy to click
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 0.9f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
-
-                bool capturing = rdoc.IsFrameCapturing();
-                const char* btnLabel = capturing ? "Capturing..." : "Capture Frame";
-
-                if (ImGui::Button(btnLabel, ImVec2(-1, 30)))
+                if (!capturing)
                 {
-                    if (!capturing)
-                    {
-                        rdoc.TriggerCapture();
-                        m_CaptureTriggered = true;
-                    }
+                    // Trigger capture and automatically open in RenderDoc
+                    rdoc.TriggerCapture();
+                    m_CaptureTriggered = true;
+                    m_AutoOpenRenderDoc = true;
                 }
+            }
 
-                ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar(1);  // FrameRounding
+            ImGui::PopStyleColor(4);
 
-                // Show capture count
+            // Tooltip on hover
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
                 uint32_t numCaptures = rdoc.GetNumCaptures();
+                ImGui::Text("RenderDoc Capture");
                 if (numCaptures > 0)
-                {
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f),
-                        "Captures: %u", numCaptures);
-
-                    // Open in RenderDoc button
-                    if (ImGui::SmallButton("Open in RenderDoc"))
-                    {
-                        rdoc.LaunchReplayUI();
-                    }
-                }
-
-                // Show capture notification
-                if (m_CaptureTriggered && numCaptures > m_LastCaptureCount)
-                {
-                    m_LastCaptureCount = numCaptures;
-                    m_CaptureTriggered = false;
-                    m_ShowCaptureNotification = true;
-                    m_CaptureNotificationTimer = 2.0f;
-                }
-
-                if (m_ShowCaptureNotification && m_CaptureNotificationTimer > 0.0f)
-                {
-                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, m_CaptureNotificationTimer / 2.0f),
-                        "Frame captured!");
-                    m_CaptureNotificationTimer -= ImGui::GetIO().DeltaTime;
-                    if (m_CaptureNotificationTimer <= 0.0f)
-                    {
-                        m_ShowCaptureNotification = false;
-                    }
-                }
+                    ImGui::Text("Captures: %u", numCaptures);
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                    "Click to capture & open");
+                ImGui::EndTooltip();
             }
-            else
+
+            // Auto-open RenderDoc after capture completes
+            uint32_t numCaptures = rdoc.GetNumCaptures();
+            if (m_CaptureTriggered && numCaptures > m_LastCaptureCount)
             {
-                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "○ RenderDoc");
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "N/A");
-                ImGui::TextWrapped("Install RenderDoc to enable frame capture.");
+                m_LastCaptureCount = numCaptures;
+                m_CaptureTriggered = false;
+
+                if (m_AutoOpenRenderDoc)
+                {
+                    m_AutoOpenRenderDoc = false;
+                    rdoc.LaunchReplayUI();
+                }
             }
+
+            // Draw the RenderDoc lens icon on top of the button using ImDrawList
+            ImVec2 btnMin = ImGui::GetItemRectMin();
+            ImVec2 btnMax = ImGui::GetItemRectMax();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 center = ImVec2((btnMin.x + btnMax.x) * 0.5f, (btnMin.y + btnMax.y) * 0.5f);
+
+            // Outer ring (lens outline) - RenderDoc's signature look
+            float outerR = btnSize * 0.35f;
+            float innerR = btnSize * 0.18f;
+            ImU32 white = IM_COL32(255, 255, 255, 220);
+            drawList->AddCircle(center, outerR, white, 24, 2.0f);
+            // Inner filled circle (lens center)
+            drawList->AddCircleFilled(center, innerR, white);
         }
         ImGui::End();
+        ImGui::PopStyleVar(2);  // WindowPadding, WindowBorderSize
     }
 
     // ============================================================
@@ -971,9 +982,8 @@ private:
 
     // RenderDoc state
     bool m_CaptureTriggered = false;
-    bool m_ShowCaptureNotification = false;
+    bool m_AutoOpenRenderDoc = false;
     uint32_t m_LastCaptureCount = 0;
-    float m_CaptureNotificationTimer = 0.0f;
 };
 
 // ============================================================
