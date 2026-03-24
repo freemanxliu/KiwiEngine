@@ -8,6 +8,7 @@
 #include "RHI/RHI.h"
 #include "RHI/DX11/DX11Device.h"
 #include "RHI/DX12/DX12Device.h"
+#include "Debug/RenderDocIntegration.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -329,6 +330,7 @@ protected:
         ImGui::NewFrame();
 
         DrawMenuBar();
+        DrawRenderDocOverlay();
         DrawUI();
 
         ImGui::Render();
@@ -608,6 +610,111 @@ private:
     }
 
     // ============================================================
+    // RenderDoc Capture Overlay (fixed at top-right corner)
+    // ============================================================
+
+    void DrawRenderDocOverlay()
+    {
+        auto& rdoc = RenderDocIntegration::Get();
+
+        float menuBarHeight = ImGui::GetFrameHeight();
+        float windowWidth = (float)GetWindow()->GetWidth();
+
+        // Position the overlay at the top-right corner, below menu bar
+        float overlayWidth = 220.0f;
+        float overlayHeight = 0.0f;  // auto-size height
+
+        ImGui::SetNextWindowPos(
+            ImVec2(windowWidth - overlayWidth - 8.0f, menuBarHeight + 4.0f),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(overlayWidth, 0), ImGuiCond_Always);
+
+        ImGui::SetNextWindowBgAlpha(0.75f);
+
+        ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav;
+
+        if (ImGui::Begin("##RenderDocOverlay", nullptr, flags))
+        {
+            if (rdoc.IsAvailable())
+            {
+                // RenderDoc status indicator
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "● RenderDoc");
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "v1.6+");
+
+                // Capture button - prominent and easy to click
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 0.9f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+
+                bool capturing = rdoc.IsFrameCapturing();
+                const char* btnLabel = capturing ? "Capturing..." : "Capture Frame";
+
+                if (ImGui::Button(btnLabel, ImVec2(-1, 30)))
+                {
+                    if (!capturing)
+                    {
+                        rdoc.TriggerCapture();
+                        m_CaptureTriggered = true;
+                    }
+                }
+
+                ImGui::PopStyleColor(3);
+
+                // Show capture count
+                uint32_t numCaptures = rdoc.GetNumCaptures();
+                if (numCaptures > 0)
+                {
+                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f),
+                        "Captures: %u", numCaptures);
+
+                    // Open in RenderDoc button
+                    if (ImGui::SmallButton("Open in RenderDoc"))
+                    {
+                        rdoc.LaunchReplayUI();
+                    }
+                }
+
+                // Show capture notification
+                if (m_CaptureTriggered && numCaptures > m_LastCaptureCount)
+                {
+                    m_LastCaptureCount = numCaptures;
+                    m_CaptureTriggered = false;
+                    m_ShowCaptureNotification = true;
+                    m_CaptureNotificationTimer = 2.0f;
+                }
+
+                if (m_ShowCaptureNotification && m_CaptureNotificationTimer > 0.0f)
+                {
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, m_CaptureNotificationTimer / 2.0f),
+                        "Frame captured!");
+                    m_CaptureNotificationTimer -= ImGui::GetIO().DeltaTime;
+                    if (m_CaptureNotificationTimer <= 0.0f)
+                    {
+                        m_ShowCaptureNotification = false;
+                    }
+                }
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "○ RenderDoc");
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "N/A");
+                ImGui::TextWrapped("Install RenderDoc to enable frame capture.");
+            }
+        }
+        ImGui::End();
+    }
+
+    // ============================================================
     // UI
     // ============================================================
 
@@ -861,6 +968,12 @@ private:
     bool m_ImGuiWin32Initialized = false;
     bool m_ImGuiDX11Initialized = false;
     bool m_ImGuiDX12Initialized = false;
+
+    // RenderDoc state
+    bool m_CaptureTriggered = false;
+    bool m_ShowCaptureNotification = false;
+    uint32_t m_LastCaptureCount = 0;
+    float m_CaptureNotificationTimer = 0.0f;
 };
 
 // ============================================================
@@ -877,8 +990,20 @@ int main()
         std::cout << "========================================" << std::endl;
         std::cout << std::endl;
 
+        // Initialize RenderDoc BEFORE creating any graphics device
+        auto& rdoc = Kiwi::RenderDocIntegration::Get();
+        bool rdocAvailable = rdoc.Initialize();
+        if (rdocAvailable)
+        {
+            std::cout << "[Kiwi] RenderDoc attached - frame capture available." << std::endl;
+        }
+        std::cout << std::endl;
+
         KiwiEngineApp app;
         app.Run();
+
+        // Shutdown RenderDoc
+        rdoc.Shutdown();
 
         std::cout << std::endl;
         std::cout << "[Kiwi] Engine shutdown complete." << std::endl;

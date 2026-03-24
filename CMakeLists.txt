@@ -33,6 +33,7 @@ set(SOURCES
     src/RHI/DX12Device.cpp
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
+    src/Debug/RenderDocIntegration.cpp
 )
 
 set(HEADERS
@@ -51,6 +52,7 @@ set(HEADERS
     include/Scene/Shaders.h
     include/Scene/SceneObject.h
     include/Scene/Scene.h
+    include/Debug/RenderDocIntegration.h
 )
 
 # ---- 可执行文件 ----
@@ -59,6 +61,7 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES})
 # ---- Include 路径 ----
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party/renderdoc
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
 )

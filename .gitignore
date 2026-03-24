@@ -18,3 +18,10 @@ Thumbs.db
 
 # Scene files (user data)
 *.json
+
+# RenderDoc captures
+captures/
+
+# Node modules (shader tools)
+node_modules/
+tools/node_modules/
