@@ -95,15 +95,9 @@ namespace Kiwi
         depthDesc.Usage = EResourceUsage::Default;
         depthDesc.SampleCount = 1;
 
-        // For DX11, use D3D11 bind flags directly
-        if (m_CurrentRHIType == RHI_API_TYPE::DX11)
-        {
-            depthDesc.BindFlags = 0x40; // D3D11_BIND_DEPTH_STENCIL
-        }
-        else
-        {
-            depthDesc.BindFlags = 0; // DX12 handles this via resource flags
-        }
+        // 后端会根据 Format 自动设置正确的 BindFlags
+        // DX11 需要 D3D11_BIND_DEPTH_STENCIL，DX12 通过 Resource Flags 处理
+        depthDesc.BindFlags = TEXTURE_HINT_DEPTH_STENCIL;
 
         m_DepthStencil = m_Device->CreateTexture(depthDesc);
         m_DSV = m_Device->CreateTextureView(m_DepthStencil.get(), EDescriptorHeapType::DSV);

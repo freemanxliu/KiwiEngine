@@ -1,6 +1,6 @@
 # 🥝 KiwiEngine
 
-A lightweight 3D rendering engine built from scratch with C++17 and DirectX, featuring a custom RHI (Render Hardware Interface) abstraction layer with runtime DX11/DX12 switching, a built-in scene editor, and integrated RenderDoc frame capture.
+A lightweight 3D rendering engine built from scratch with C++17 and DirectX, featuring a **fully abstract RHI (Render Hardware Interface) layer** — application code is 100% backend-agnostic with zero `static_cast` to specific backends. Supports runtime DX11/DX12 switching, a built-in scene editor, and integrated RenderDoc frame capture.
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
@@ -11,16 +11,19 @@ A lightweight 3D rendering engine built from scratch with C++17 and DirectX, fea
 
 ## ✨ Features
 
-- **RHI Abstraction Layer** — Clean separation between rendering logic and graphics API, with runtime backend switching
-- **DX11 Backend** — Full DirectX 11 implementation (device, context, swap chain, shaders, buffers, pipeline state)
-- **DX12 Backend** — Full DirectX 12 implementation (root signature, PSO, descriptor heaps, fence sync, resource barriers)
+- **True RHI Abstraction** — Application and scene code contain zero references to DX11/DX12 headers, no `isDX12` branching, no `static_cast` to specific backends. All backend-specific logic (shader compilation, PSO creation, ImGui integration, command list lifecycle) lives behind virtual interfaces.
+- **DX11 Backend** — Full DirectX 11 implementation (device, context, swap chain, shaders, buffers, pipeline state, ImGui backend)
+- **DX12 Backend** — Full DirectX 12 implementation (root signature, PSO, descriptor heaps, fence sync, resource barriers, ImGui backend, frame lifecycle management)
 - **Vulkan Backend** *(WIP)* — Vulkan implementation in progress (device, swap chain, render pass, pipeline, SPIR-V shaders)
 - **Runtime RHI Switching** — Hot-switch between DX11 and DX12 at runtime via the menu bar (no restart needed)
+- **Unified Shader Compilation** — `RHIDevice::CompileShader()` and `RHIDevice::CreateGraphicsPipelineState()` — each backend handles its own compilation and PSO creation internally
+- **Frame Lifecycle Abstraction** — `RHICommandContext::BeginFrame()` / `EndFrame()` encapsulate DX12's Reset/RootSignature/DescriptorHeaps/ResourceBarrier cycle (DX11: no-op)
+- **ImGui Backend Abstraction** — `RHIDevice::InitImGui()` / `ImGuiNewFrame()` / `ImGuiRenderDrawData()` — each backend manages its own ImGui integration
 - **Built-in Math Library** — Vec2/3/4, Mat4, perspective/orthographic projection, LookAt camera (left-hand coordinate system)
 - **Scene Editor** — Interactive scene management with object selection, transform editing, and JSON serialization
 - **Mesh Generation** — Procedural cube, sphere, cylinder, and floor primitives
 - **Shader Library** — File-based shader system: drop `.hlsl` files into the `Shaders/` folder and assign them per-object at runtime via the UI
-- **Runtime Shader Compilation** — HLSL shaders compiled at startup via D3DCompile; includes Default (Phong), Unlit, and Normal Visualization shaders
+- **Runtime Shader Compilation** — HLSL shaders compiled at startup via `RHIDevice::CompileShader()`; includes Default (Phong), Unlit, and Normal Visualization shaders
 - **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading (Default shader)
 - **Translation Gizmo** — 3-axis translation gizmo (X=red, Y=green, Z=blue) rendered on selected objects; drag axes to move objects in world space
 - **RenderDoc Integration** — One-click frame capture button with auto-open in RenderDoc
@@ -227,23 +230,41 @@ KiwiEngine/
 
 ```
 ┌──────────────────────────────────────┐
-│            Application               │  ← Scene Editor + ImGui UI
+│         Application / Scene          │  ← 100% backend-agnostic
+│  (zero DX11/DX12 includes or casts)  │     (uses only RHI interfaces)
 ├──────────────────────────────────────┤
-│      Debug / RenderDoc Integration   │  ← One-click frame capture
+│       Debug / RenderDoc Integration  │  ← One-click frame capture
 ├──────────────────────────────────────┤
-│         RHI Abstract Layer           │  ← RHIDevice, RHIContext, RHIBuffer...
+│          RHI Abstract Layer          │  ← RHIDevice, RHICommandContext,
+│                                      │     RHISwapChain, RHIBuffer...
 ├────────────┬────────────┬────────────┤
 │   DX11     │   DX12     │  Vulkan    │  ← Backend implementations
-│ (active)   │ (active)   │   (WIP)    │
+│ (active)   │ (active)   │   (WIP)    │     (all specifics hidden here)
 └────────────┴────────────┴────────────┘
 ```
+
+### Key RHI Virtual Methods
+
+| Interface | Method | Purpose |
+|---|---|---|
+| `RHIDevice` | `CompileShader()` | Compile HLSL → shader blob (backend handles D3DCompile details) |
+| `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: full PSO creation; DX11: lightweight wrapper |
+| `RHIDevice` | `InitImGui()` / `ShutdownImGui()` | Backend-specific ImGui initialization/cleanup |
+| `RHIDevice` | `ImGuiNewFrame()` / `ImGuiRenderDrawData()` | Per-frame ImGui rendering (each backend uses its own ImGui impl) |
+| `RHICommandContext` | `BeginFrame()` | DX12: Reset + RootSig + DescriptorHeaps + Barrier; DX11: no-op |
+| `RHICommandContext` | `EndFrame()` | DX12: BackBuffer → Present barrier; DX11: no-op |
+
+### Adding a New Backend
 
 The RHI layer provides a unified interface. To add a new backend:
 
 1. Create `include/RHI/<API>/` and `src/RHI/<API>Device.cpp`
-2. Implement all abstract interfaces from `RHI.h`
+2. Implement all abstract interfaces from `RHI.h`:
+   - `RHIDevice`: `CreateBuffer`, `CreateTexture`, `CompileShader`, `CreateGraphicsPipelineState`, `InitImGui`, `ShutdownImGui`, `ImGuiNewFrame`, `ImGuiRenderDrawData`
+   - `RHICommandContext`: `SetRenderTargets`, `Draw`, `DrawIndexed`, `BeginFrame`, `EndFrame`, etc.
 3. Add a new case in the `CreateRHI()` factory function
 4. The `RHI_API_TYPE` enum already has `DX11`, `DX12`, and `VULKAN` defined
+5. **No changes needed** in `main.cpp`, `Application.cpp`, `ShaderLibrary.h`, or any scene code — they only talk to the abstract interfaces
 
 ## 🔧 Troubleshooting
 

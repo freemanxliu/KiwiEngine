@@ -7,14 +7,9 @@
 #include "Scene/SceneObject.h"
 #include "Math/Math.h"
 #include "RHI/RHI.h"
-#include "RHI/DX11/DX11Device.h"
-#include "RHI/DX12/DX12Device.h"
 #include "Debug/RenderDocIntegration.h"
 
 #include <imgui.h>
-#include <imgui_impl_win32.h>
-#include <imgui_impl_dx11.h>
-#include <imgui_impl_dx12.h>
 
 #include <iostream>
 #include <memory>
@@ -437,25 +432,10 @@ protected:
     {
         auto ctx = GetContext();
         auto swapChain = GetSwapChain();
-        bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
+        auto device = GetDevice();
 
-        // ---- DX12: Reset command list and transition back buffer ----
-        if (isDX12)
-        {
-            auto dx12Ctx = static_cast<DX12CommandContext*>(ctx);
-            dx12Ctx->Reset();
-
-            // Set root signature and descriptor heaps
-            auto dx12Device = static_cast<DX12Device*>(GetDevice());
-            dx12Ctx->SetRootSignature(dx12Device->GetRootSignature());
-            ID3D12DescriptorHeap* heaps[] = { dx12Device->GetSRVHeap() };
-            dx12Ctx->SetDescriptorHeaps(heaps, 1);
-
-            // Transition back buffer to render target
-            auto backBuffer = swapChain->GetBackBuffer(swapChain->GetCurrentBackBufferIndex());
-            dx12Ctx->ResourceBarrier(backBuffer,
-                D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-        }
+        // ---- Begin frame (DX12: Reset + RootSig + DescriptorHeaps + Barrier; DX11: no-op) ----
+        ctx->BeginFrame(swapChain);
 
         // ---- Set render targets ----
         auto backBufferRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
@@ -482,11 +462,8 @@ protected:
         ctx->ClearDepthStencilView(GetDSV(), depthClear, 0x03);
 
         // ---- Setup pipeline (shared state) ----
-        if (!isDX12)
-        {
-            ctx->SetPipelineState(m_PipelineState.get());
-            ctx->SetInputLayout(m_InputLayout.get());
-        }
+        ctx->SetPipelineState(m_PipelineState.get());
+        ctx->SetInputLayout(m_InputLayout.get());
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
         // ---- Draw all scene objects (per-object shader switching) ----
@@ -508,15 +485,11 @@ protected:
 
                 if (shader)
                 {
-                    if (isDX12 && shader->DX12PSO)
-                    {
-                        ctx->SetPipelineState(shader->DX12PSO.get());
-                    }
-                    else if (!isDX12)
-                    {
-                        ctx->SetVertexShader(shader->VertexShader.get());
-                        ctx->SetPixelShader(shader->PixelShader.get());
-                    }
+                    // Unified: PSO for DX12, Set*Shader for DX11 — both are safe to call
+                    if (shader->PSO)
+                        ctx->SetPipelineState(shader->PSO.get());
+                    ctx->SetVertexShader(shader->VertexShader.get());
+                    ctx->SetPixelShader(shader->PixelShader.get());
                     lastShaderName = shaderName;
                 }
             }
@@ -564,16 +537,8 @@ protected:
         // ---- Draw Gizmo for selected object ----
         DrawGizmo(ctx);
 
-        // ---- ImGui Render ----
-        if (isDX12)
-        {
-            ImGui_ImplDX12_NewFrame();
-        }
-        else
-        {
-            ImGui_ImplDX11_NewFrame();
-        }
-        ImGui_ImplWin32_NewFrame();
+        // ---- ImGui ----
+        device->ImGuiNewFrame();
         ImGui::NewFrame();
 
         DrawMenuBar();
@@ -581,24 +546,10 @@ protected:
         DrawUI();
 
         ImGui::Render();
+        device->ImGuiRenderDrawData(ctx);
 
-        if (isDX12)
-        {
-            auto dx12Ctx = static_cast<DX12CommandContext*>(ctx);
-            auto dx12Device = static_cast<DX12Device*>(GetDevice());
-            ID3D12DescriptorHeap* heaps[] = { dx12Device->GetSRVHeap() };
-            dx12Ctx->GetCommandList()->SetDescriptorHeaps(1, heaps);
-            ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), dx12Ctx->GetCommandList());
-
-            // Transition back buffer to present
-            auto backBuffer = swapChain->GetBackBuffer(swapChain->GetCurrentBackBufferIndex());
-            dx12Ctx->ResourceBarrier(backBuffer,
-                D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-        }
-        else
-        {
-            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        }
+        // ---- End frame (DX12: BackBuffer→Present barrier; DX11: no-op) ----
+        ctx->EndFrame(swapChain);
 
         ctx->Flush();
     }
@@ -651,55 +602,9 @@ private:
 
     void ShutdownImGui()
     {
-        if (m_ImGuiDX11Initialized)
-        {
-            ImGui_ImplDX11_Shutdown();
-            m_ImGuiDX11Initialized = false;
-        }
-        if (m_ImGuiDX12Initialized)
-        {
-            ImGui_ImplDX12_Shutdown();
-            m_ImGuiDX12Initialized = false;
-        }
-        if (m_ImGuiWin32Initialized)
-        {
-            ImGui_ImplWin32_Shutdown();
-            m_ImGuiWin32Initialized = false;
-        }
-    }
-
-    void InitImGuiForDX11()
-    {
-        auto dx11Device = static_cast<DX11Device*>(GetDevice());
-
-        if (!m_ImGuiWin32Initialized)
-        {
-            ImGui_ImplWin32_Init(GetWindow()->GetHWND());
-            m_ImGuiWin32Initialized = true;
-        }
-
-        ImGui_ImplDX11_Init(dx11Device->GetD3DDevice(), dx11Device->GetD3DContext());
-        m_ImGuiDX11Initialized = true;
-    }
-
-    void InitImGuiForDX12()
-    {
-        auto dx12Device = static_cast<DX12Device*>(GetDevice());
-
-        if (!m_ImGuiWin32Initialized)
-        {
-            ImGui_ImplWin32_Init(GetWindow()->GetHWND());
-            m_ImGuiWin32Initialized = true;
-        }
-
-        ImGui_ImplDX12_Init(
-            dx12Device->GetD3DDevice(),
-            2, // num frames in flight
-            DXGI_FORMAT_R8G8B8A8_UNORM,
-            dx12Device->GetSRVHeap(),
-            dx12Device->GetSRVHeap()->GetCPUDescriptorHandleForHeapStart(),
-            dx12Device->GetSRVHeap()->GetGPUDescriptorHandleForHeapStart());
-        m_ImGuiDX12Initialized = true;
+        auto device = GetDevice();
+        if (device)
+            device->ShutdownImGui();
     }
 
     // ============================================================
@@ -709,72 +614,34 @@ private:
     void InitRHIResources()
     {
         auto device = GetDevice();
-        bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
 
-        if (isDX12)
-        {
-            auto dx12Device = static_cast<DX12Device*>(device);
+        // We need a temporary VS to create the shared input layout
+        auto tempVS = device->CompileShader(
+            EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
 
-            // We need a temporary VS to create the shared input layout first
-            auto tempVS = dx12Device->CompileShader(
-                EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
+        // Create input layout (shared across all shaders — same vertex format)
+        InputElementDesc inputElements[] = {
+            { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
+            { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
+            { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
+        };
+        m_InputLayout = device->CreateInputLayout(inputElements, 3, tempVS.get());
 
-            // Create input layout (shared across all shaders — same vertex format)
-            InputElementDesc inputElements[] = {
-                { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
-                { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
-                { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
-            };
-            m_InputLayout = device->CreateInputLayout(inputElements, 3, tempVS.get());
+        // Constant buffer
+        BufferDesc cbDesc;
+        cbDesc.SizeInBytes = sizeof(ConstantBufferData);
+        cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
+        cbDesc.Usage = EResourceUsage::Dynamic;
+        m_ConstantBuffer = device->CreateBuffer(cbDesc);
 
-            // Constant buffer
-            BufferDesc cbDesc;
-            cbDesc.SizeInBytes = sizeof(ConstantBufferData);
-            cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-            cbDesc.Usage = EResourceUsage::Dynamic;
-            m_ConstantBuffer = device->CreateBuffer(cbDesc);
+        // Pipeline state (DX11: empty wrapper, DX12: managed per-shader)
+        m_PipelineState = device->CreatePipelineState();
 
-            // Pipeline state (DX11 only, but keep the member)
-            // DX12 PSOs are managed per-shader inside ShaderLibrary
+        // Initialize ShaderLibrary (fully backend-agnostic)
+        m_ShaderLibrary.Initialize(m_ShaderDir, device, m_InputLayout.get());
 
-            // Initialize ShaderLibrary
-            m_ShaderLibrary.Initialize(m_ShaderDir, device, RHI_API_TYPE::DX12, m_InputLayout.get());
-
-            // Init ImGui for DX12
-            InitImGuiForDX12();
-        }
-        else
-        {
-            auto dx11Device = static_cast<DX11Device*>(device);
-
-            // We need a temporary VS to create the shared input layout
-            auto tempVS = dx11Device->CompileShader(
-                EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
-
-            // Input layout
-            InputElementDesc inputElements[] = {
-                { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
-                { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
-                { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
-            };
-            m_InputLayout = device->CreateInputLayout(inputElements, 3, tempVS.get());
-
-            // Constant buffer
-            BufferDesc cbDesc;
-            cbDesc.SizeInBytes = sizeof(ConstantBufferData);
-            cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-            cbDesc.Usage = EResourceUsage::Dynamic;
-            m_ConstantBuffer = device->CreateBuffer(cbDesc);
-
-            // Pipeline state (empty — DX11 uses separate Set* calls)
-            m_PipelineState = device->CreatePipelineState();
-
-            // Initialize ShaderLibrary
-            m_ShaderLibrary.Initialize(m_ShaderDir, device, RHI_API_TYPE::DX11, m_InputLayout.get());
-
-            // Init ImGui for DX11
-            InitImGuiForDX11();
-        }
+        // Init ImGui backend
+        device->InitImGui(GetWindow()->GetHWND());
     }
 
     // DX12 PSO creation is now handled by ShaderLibrary
@@ -791,15 +658,16 @@ private:
             {
                 if (ImGui::BeginMenu("RHI"))
                 {
-                    bool isDX11 = (GetCurrentRHIType() == RHI_API_TYPE::DX11);
-                    bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
+                    auto currentRHI = GetCurrentRHIType();
 
-                    if (ImGui::MenuItem("Direct3D 11", nullptr, isDX11, !isDX11))
+                    if (ImGui::MenuItem("Direct3D 11", nullptr,
+                        currentRHI == RHI_API_TYPE::DX11, currentRHI != RHI_API_TYPE::DX11))
                     {
                         m_PendingRHISwitch = true;
                         m_PendingRHIType = RHI_API_TYPE::DX11;
                     }
-                    if (ImGui::MenuItem("Direct3D 12", nullptr, isDX12, !isDX12))
+                    if (ImGui::MenuItem("Direct3D 12", nullptr,
+                        currentRHI == RHI_API_TYPE::DX12, currentRHI != RHI_API_TYPE::DX12))
                     {
                         m_PendingRHISwitch = true;
                         m_PendingRHIType = RHI_API_TYPE::DX12;
@@ -1161,19 +1029,13 @@ private:
         if (!sel) return;
 
         // Gizmo always uses the Default shader (which has unlit mode when g_Selected > 1.5)
-        bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
         CompiledShader* defaultShader = m_ShaderLibrary.GetDefault();
         if (defaultShader)
         {
-            if (isDX12 && defaultShader->DX12PSO)
-            {
-                ctx->SetPipelineState(defaultShader->DX12PSO.get());
-            }
-            else if (!isDX12)
-            {
-                ctx->SetVertexShader(defaultShader->VertexShader.get());
-                ctx->SetPixelShader(defaultShader->PixelShader.get());
-            }
+            if (defaultShader->PSO)
+                ctx->SetPipelineState(defaultShader->PSO.get());
+            ctx->SetVertexShader(defaultShader->VertexShader.get());
+            ctx->SetPixelShader(defaultShader->PixelShader.get());
         }
 
         Vec3 gizmoPos = sel->TransformData.Position;
@@ -1361,11 +1223,6 @@ private:
     Vec3 m_CameraPosition;
     Vec3 m_CameraTarget;
     Vec3 m_CameraUp;
-
-    // ImGui state tracking
-    bool m_ImGuiWin32Initialized = false;
-    bool m_ImGuiDX11Initialized = false;
-    bool m_ImGuiDX12Initialized = false;
 
     // RenderDoc state
     bool m_CaptureTriggered = false;

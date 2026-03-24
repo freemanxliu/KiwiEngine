@@ -252,7 +252,19 @@ namespace Kiwi
         // 从 HLSL 源码编译着色器
         std::unique_ptr<RHIShader> CompileShader(EShaderType type, const char* hlslSource,
             const char* entryPoint, const char* shaderModel,
-            const ShaderMacro* macros = nullptr, uint32_t macroCount = 0);
+            const ShaderMacro* macros = nullptr, uint32_t macroCount = 0) override;
+
+        // 创建图形管线状态（完整 DX12 PSO）
+        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader,
+            RHIShader* pixelShader,
+            RHIInputLayout* inputLayout) override;
+
+        // ---- ImGui 集成 ----
+        void InitImGui(void* windowHandle) override;
+        void ShutdownImGui() override;
+        void ImGuiNewFrame() override;
+        void ImGuiRenderDrawData(RHICommandContext* ctx) override;
 
         // DX12 native access
         ID3D12Device* GetD3DDevice() const { return m_Device.Get(); }
@@ -287,6 +299,7 @@ namespace Kiwi
         ComPtr<ID3D12RootSignature> m_RootSignature;
 
         void CreateRootSignature();
+        bool m_ImGuiInitialized = false;
 
     public:
         ID3D12RootSignature* GetRootSignature() const { return m_RootSignature.Get(); }
@@ -299,10 +312,15 @@ namespace Kiwi
     class DX12CommandContext : public RHICommandContext
     {
     public:
-        DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue);
+        DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue,
+                           ID3D12RootSignature* rootSignature, ID3D12DescriptorHeap* srvHeap);
         ~DX12CommandContext() override;
 
         void* GetNativeHandle() const override { return m_CommandList.Get(); }
+
+        // Frame lifecycle
+        void BeginFrame(RHISwapChain* swapChain) override;
+        void EndFrame(RHISwapChain* swapChain) override;
 
         // Resource barriers
         void ResourceBarrier(RHITexture* texture, int stateBefore, int stateAfter) override;
@@ -359,6 +377,8 @@ namespace Kiwi
         uint64_t                             m_FenceValue = 0;
         HANDLE                               m_FenceEvent = nullptr;
         bool                                 m_IsOpen = false;
+        ID3D12RootSignature*                 m_RootSignature = nullptr;
+        ID3D12DescriptorHeap*                m_SRVHeap = nullptr;
     };
 
 } // namespace Kiwi

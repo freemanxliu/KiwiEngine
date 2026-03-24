@@ -1,4 +1,7 @@
 #include "RHI/DX11/DX11Device.h"
+#include <imgui.h>
+#include <imgui_impl_win32.h>
+#include <imgui_impl_dx11.h>
 #include <stdexcept>
 
 namespace Kiwi
@@ -314,7 +317,20 @@ namespace Kiwi
         td.Format = ToDXGIFormat(desc.Format);
         td.SampleDesc.Count = desc.SampleCount;
         td.Usage = ToDX11Usage(desc.Usage);
-        td.BindFlags = desc.BindFlags;
+
+        // 处理 BindFlags：如果设置了 TEXTURE_HINT_DEPTH_STENCIL 或格式是深度格式，
+        // 自动设置正确的 DX11 绑定标志
+        if (desc.BindFlags & TEXTURE_HINT_DEPTH_STENCIL ||
+            desc.Format == EFormat::D24_UNORM_S8_UINT ||
+            desc.Format == EFormat::D32_FLOAT)
+        {
+            td.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+        }
+        else
+        {
+            td.BindFlags = desc.BindFlags;
+        }
+
         td.CPUAccessFlags = 0;
 
         if (desc.Usage == EResourceUsage::Dynamic)
@@ -809,6 +825,52 @@ namespace Kiwi
     void DX11CommandContext::Flush()
     {
         m_Context->Flush();
+    }
+
+    // ============================================================
+    // DX11 CreateGraphicsPipelineState
+    // ============================================================
+
+    std::unique_ptr<RHIPipelineState> DX11Device::CreateGraphicsPipelineState(
+        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
+    {
+        // DX11 doesn't bundle pipeline state like DX12.
+        // Return an empty PSO — shader binding is done via SetVertexShader/SetPixelShader.
+        return CreatePipelineState();
+    }
+
+    // ============================================================
+    // DX11 ImGui Integration
+    // ============================================================
+
+    void DX11Device::InitImGui(void* windowHandle)
+    {
+        if (!m_ImGuiInitialized)
+        {
+            ImGui_ImplWin32_Init((HWND)windowHandle);
+        }
+        ImGui_ImplDX11_Init(m_Device.Get(), m_Context.Get());
+        m_ImGuiInitialized = true;
+    }
+
+    void DX11Device::ShutdownImGui()
+    {
+        if (m_ImGuiInitialized)
+        {
+            ImGui_ImplDX11_Shutdown();
+            ImGui_ImplWin32_Shutdown();
+            m_ImGuiInitialized = false;
+        }
+    }
+
+    void DX11Device::ImGuiNewFrame()
+    {
+        ImGui_ImplDX11_NewFrame();
+    }
+
+    void DX11Device::ImGuiRenderDrawData(RHICommandContext* ctx)
+    {
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     }
 
     // ============================================================

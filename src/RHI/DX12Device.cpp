@@ -1,4 +1,7 @@
 #include "RHI/DX12/DX12Device.h"
+#include <imgui.h>
+#include <imgui_impl_win32.h>
+#include <imgui_impl_dx12.h>
 #include <stdexcept>
 #include <vector>
 #include <cstring>
@@ -482,10 +485,58 @@ namespace Kiwi
 
     std::unique_ptr<RHIPipelineState> DX12Device::CreatePipelineState()
     {
-        // This is a placeholder - actual PSO creation requires VS/PS/IL info
-        // In DX12, PSO must be created with the full pipeline description
-        // We'll create it properly in main.cpp
         return std::make_unique<DX12PipelineState>(nullptr);
+    }
+
+    std::unique_ptr<RHIPipelineState> DX12Device::CreateGraphicsPipelineState(
+        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
+    {
+        auto dx12InputLayout = static_cast<DX12InputLayout*>(inputLayout);
+        auto vsShader = static_cast<DX12Shader*>(vertexShader);
+        auto psShader = static_cast<DX12Shader*>(pixelShader);
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.pRootSignature = m_RootSignature.Get();
+
+        psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
+        psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
+        psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
+        psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
+
+        const auto& elements = dx12InputLayout->GetElements();
+        psoDesc.InputLayout.pInputElementDescs = elements.data();
+        psoDesc.InputLayout.NumElements = (UINT)elements.size();
+
+        psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+        psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+        psoDesc.RasterizerState.DepthClipEnable = TRUE;
+
+        psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+        psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+        psoDesc.DepthStencilState.DepthEnable = TRUE;
+        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+        psoDesc.DepthStencilState.StencilEnable = FALSE;
+
+        psoDesc.SampleMask = UINT_MAX;
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psoDesc.NumRenderTargets = 1;
+        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        psoDesc.SampleDesc.Count = 1;
+
+        ComPtr<ID3D12PipelineState> pso;
+        HRESULT hr = m_Device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso));
+        if (FAILED(hr))
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Failed to create DX12 PSO (HRESULT: 0x%08X)", hr);
+            throw std::runtime_error(msg);
+        }
+
+        return std::make_unique<DX12PipelineState>(pso.Get());
     }
 
     std::unique_ptr<RHISampler> DX12Device::CreateSampler()
@@ -498,8 +549,9 @@ namespace Kiwi
     // DX12CommandContext
     // ============================================================
 
-    DX12CommandContext::DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue)
-        : m_Device(device), m_CommandQueue(cmdQueue)
+    DX12CommandContext::DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue,
+                                           ID3D12RootSignature* rootSignature, ID3D12DescriptorHeap* srvHeap)
+        : m_Device(device), m_CommandQueue(cmdQueue), m_RootSignature(rootSignature), m_SRVHeap(srvHeap)
     {
         HRESULT hr = m_Device->CreateCommandAllocator(
             D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -531,6 +583,35 @@ namespace Kiwi
         {
             CloseHandle(m_FenceEvent);
             m_FenceEvent = nullptr;
+        }
+    }
+
+    void DX12CommandContext::BeginFrame(RHISwapChain* swapChain)
+    {
+        // Reset command list
+        Reset();
+
+        // Set root signature and descriptor heaps
+        if (m_RootSignature)
+            m_CommandList->SetGraphicsRootSignature(m_RootSignature);
+        if (m_SRVHeap)
+            m_CommandList->SetDescriptorHeaps(1, &m_SRVHeap);
+
+        // Transition back buffer to render target
+        if (swapChain)
+        {
+            auto backBuffer = swapChain->GetBackBuffer(swapChain->GetCurrentBackBufferIndex());
+            ResourceBarrier(backBuffer, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        }
+    }
+
+    void DX12CommandContext::EndFrame(RHISwapChain* swapChain)
+    {
+        // Transition back buffer to present
+        if (swapChain)
+        {
+            auto backBuffer = swapChain->GetBackBuffer(swapChain->GetCurrentBackBufferIndex());
+            ResourceBarrier(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
         }
     }
 
@@ -725,6 +806,54 @@ namespace Kiwi
     }
 
     // ============================================================
+    // DX12 ImGui Integration
+    // ============================================================
+
+    void DX12Device::InitImGui(void* windowHandle)
+    {
+        if (!m_ImGuiInitialized)
+        {
+            ImGui_ImplWin32_Init((HWND)windowHandle);
+        }
+
+        ImGui_ImplDX12_Init(
+            m_Device.Get(),
+            2, // num frames in flight
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            m_SRVHeap.Get(),
+            m_SRVHeap->GetCPUDescriptorHandleForHeapStart(),
+            m_SRVHeap->GetGPUDescriptorHandleForHeapStart());
+        m_ImGuiInitialized = true;
+    }
+
+    void DX12Device::ShutdownImGui()
+    {
+        if (m_ImGuiInitialized)
+        {
+            ImGui_ImplDX12_Shutdown();
+            ImGui_ImplWin32_Shutdown();
+            m_ImGuiInitialized = false;
+        }
+    }
+
+    void DX12Device::ImGuiNewFrame()
+    {
+        ImGui_ImplDX12_NewFrame();
+    }
+
+    void DX12Device::ImGuiRenderDrawData(RHICommandContext* ctx)
+    {
+        auto dx12Ctx = static_cast<DX12CommandContext*>(ctx);
+        // Re-set descriptor heaps for ImGui (it needs SRV heap)
+        if (m_SRVHeap)
+        {
+            ID3D12DescriptorHeap* heaps[] = { m_SRVHeap.Get() };
+            dx12Ctx->GetCommandList()->SetDescriptorHeaps(1, heaps);
+        }
+        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), dx12Ctx->GetCommandList());
+    }
+
+    // ============================================================
     // DX12 RHI Factory
     // ============================================================
 
@@ -735,7 +864,8 @@ namespace Kiwi
     {
         auto device = std::make_unique<DX12Device>(params.EnableDebug);
         auto context = std::make_unique<DX12CommandContext>(
-            device->GetD3DDevice(), device->GetCommandQueue());
+            device->GetD3DDevice(), device->GetCommandQueue(),
+            device->GetRootSignature(), device->GetSRVHeap());
 
         outDevice = std::move(device);
         outContext = std::move(context);

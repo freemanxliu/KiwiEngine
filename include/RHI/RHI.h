@@ -6,6 +6,9 @@
 namespace Kiwi
 {
 
+    // Forward declarations
+    class RHICommandContext;
+
     // ============================================================
     // RHI 资源接口 - 所有图形资源（缓冲、纹理等）的基类
     // ============================================================
@@ -106,6 +109,9 @@ namespace Kiwi
     // RHI Device - 创建所有图形资源
     // ============================================================
 
+    // 深度缓冲绑定标志提示 (让后端自行处理)
+    constexpr uint32_t TEXTURE_HINT_DEPTH_STENCIL = 0x8000;
+
     class RHIDevice
     {
     public:
@@ -135,11 +141,20 @@ namespace Kiwi
             int mipSlice = -1,
             int arraySlice = -1) = 0;
 
-        // 创建着色器
+        // 创建着色器（从字节码）
         virtual std::unique_ptr<RHIShader> CreateShader(
             EShaderType type,
             const void* byteCode,
             size_t byteCodeSize) = 0;
+
+        // 从 HLSL 源码编译着色器（统一接口，后端自行处理编译细节）
+        virtual std::unique_ptr<RHIShader> CompileShader(
+            EShaderType type,
+            const char* hlslSource,
+            const char* entryPoint,
+            const char* shaderModel,
+            const ShaderMacro* macros = nullptr,
+            uint32_t macroCount = 0) = 0;
 
         // 创建输入布局
         virtual std::unique_ptr<RHIInputLayout> CreateInputLayout(
@@ -147,8 +162,14 @@ namespace Kiwi
             uint32_t elementCount,
             RHIShader* vertexShader) = 0;
 
-        // 创建管线状态
+        // 创建空管线状态（DX11 用）
         virtual std::unique_ptr<RHIPipelineState> CreatePipelineState() = 0;
+
+        // 创建图形管线状态（带 VS + PS，DX12 创建完整 PSO，DX11 返回轻量包装）
+        virtual std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader,
+            RHIShader* pixelShader,
+            RHIInputLayout* inputLayout) = 0;
 
         // 创建采样器
         virtual std::unique_ptr<RHISampler> CreateSampler() = 0;
@@ -158,6 +179,12 @@ namespace Kiwi
 
         // 获取当前创建的命令上下文（for immediate mode APIs like DX11）
         virtual void* GetImmediateContext() const = 0;
+
+        // ---- ImGui 集成（后端自行处理初始化/关闭/渲染）----
+        virtual void InitImGui(void* windowHandle) = 0;
+        virtual void ShutdownImGui() = 0;
+        virtual void ImGuiNewFrame() = 0;
+        virtual void ImGuiRenderDrawData(RHICommandContext* ctx) = 0;
     };
 
     // ============================================================
@@ -169,6 +196,10 @@ namespace Kiwi
     public:
         virtual ~RHICommandContext() = default;
         virtual void* GetNativeHandle() const = 0;
+
+        // ---- 帧生命周期（DX12: Reset/RootSig/DescriptorHeaps/Barrier；DX11: 空操作）----
+        virtual void BeginFrame(RHISwapChain* swapChain) {}
+        virtual void EndFrame(RHISwapChain* swapChain) {}
 
         // 资源屏障（DX12/Vulkan 用，DX11 空实现）
         virtual void ResourceBarrier(RHITexture* texture, int stateBefore, int stateAfter) {}

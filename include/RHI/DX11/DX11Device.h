@@ -85,14 +85,14 @@ namespace Kiwi
             const void* byteCode,
             size_t byteCodeSize) override;
 
-        // 从 HLSL 源码编译着色器（方便工具函数）
+        // 从 HLSL 源码编译着色器
         std::unique_ptr<RHIShader> CompileShader(
             EShaderType type,
             const char* hlslSource,
             const char* entryPoint,
             const char* shaderModel,
             const ShaderMacro* macros = nullptr,
-            uint32_t macroCount = 0);
+            uint32_t macroCount = 0) override;
 
         // Input Layout
         std::unique_ptr<RHIInputLayout> CreateInputLayout(
@@ -100,13 +100,25 @@ namespace Kiwi
             uint32_t elementCount,
             RHIShader* vertexShader) override;
 
-        // Pipeline State
+        // Pipeline State (empty — DX11 uses separate Set* calls)
         std::unique_ptr<RHIPipelineState> CreatePipelineState() override;
+
+        // Graphics Pipeline State (DX11: stores VS+PS references for binding)
+        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader,
+            RHIShader* pixelShader,
+            RHIInputLayout* inputLayout) override;
 
         // Sampler
         std::unique_ptr<RHISampler> CreateSampler() override;
 
         bool IsFeatureSupported(const char* feature) const override { return true; }
+
+        // ---- ImGui 集成 ----
+        void InitImGui(void* windowHandle) override;
+        void ShutdownImGui() override;
+        void ImGuiNewFrame() override;
+        void ImGuiRenderDrawData(RHICommandContext* ctx) override;
 
         // 获取原生指针
         ID3D11Device* GetD3DDevice() const { return m_Device.Get(); }
@@ -119,6 +131,7 @@ namespace Kiwi
         ComPtr<IDXGIAdapter>           m_Adapter;
         ComPtr<ID3D11Debug>            m_Debug;
         bool                           m_EnableDebug;
+        bool                           m_ImGuiInitialized = false;
     };
 
     // ============================================================
