@@ -14,7 +14,7 @@ namespace Kiwi
         float ViewMatrix[16];       // 4x4 matrix
         float ProjectionMatrix[16]; // 4x4 matrix
         float ObjectColor[4];       // Object color (RGBA)
-        float Selected;             // 1.0 if selected, 0.0 otherwise
+        float Selected;             // 1.0 if selected, 0.0 otherwise (kept for CB layout compat)
         float Padding[3];           // Pad to 16-byte alignment
     };
 
@@ -104,10 +104,10 @@ namespace Kiwi
         float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
         finalColor += float3(0.3, 0.3, 0.3) * spec * 0.5;
 
-        // Selection highlight: add orange tint
-        if (g_Selected > 0.5)
+        // Gizmo / unlit mode: if g_Selected > 1.5 we treat it as unlit (pure vertex color)
+        if (g_Selected > 1.5)
         {
-            finalColor = lerp(finalColor, float3(1.0, 0.6, 0.1), 0.25);
+            return float4(input.Color.rgb * g_ObjectColor.rgb, input.Color.a);
         }
 
         return float4(finalColor, input.Color.a);

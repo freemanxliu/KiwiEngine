@@ -20,10 +20,11 @@ A lightweight 3D rendering engine built from scratch with C++17 and DirectX, fea
 - **Scene Editor** — Interactive scene management with object selection, transform editing, and JSON serialization
 - **Mesh Generation** — Procedural cube, sphere, cylinder, and floor primitives
 - **Runtime Shader Compilation** — HLSL vertex/pixel shaders compiled at startup via D3DCompile
-- **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading with selection highlight
+- **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading
+- **Translation Gizmo** — 3-axis translation gizmo (X=red, Y=green, Z=blue) rendered on selected objects; drag axes to move objects in world space
 - **RenderDoc Integration** — One-click frame capture button with auto-open in RenderDoc
 - **ImGui UI** — Full-featured editor interface with menu bar, scene panel, detail inspector, and object placer
-- **Ray Picking** — Click objects in the viewport to select them (Ray-AABB intersection)
+- **Ray Picking** — Click objects in the viewport to select them; gizmo axes have picking priority over scene objects
 
 ## 🔍 RenderDoc Integration
 
@@ -123,7 +124,8 @@ A 1280×720 window will appear showing a **3D scene editor** with Phong lighting
 
 - **Switch RHI**: Menu bar → Rendering → RHI → Direct3D 11 / Direct3D 12
 - **Add objects**: Scene Panel → Placer tab → Click Cube/Sphere/Cylinder/Floor
-- **Select objects**: Click in the viewport or select from the object list
+- **Select objects**: Click in the viewport or select from the object list — a 3-axis translation gizmo appears on the selected object
+- **Move objects**: Drag the gizmo axes (red=X, green=Y, blue=Z) to translate objects; the active axis turns yellow while dragging
 - **Edit transforms**: Scene Panel → Detail tab → Drag Position/Rotation/Scale
 - **Edit colors**: Scene Panel → Detail tab → Color picker
 - **Capture frames**: Click the capture button (top-right) — auto-opens in RenderDoc

@@ -128,6 +128,148 @@ static void ComputeWorldAABB(const SceneObject& obj, Vec3& outMin, Vec3& outMax)
 }
 
 // ============================================================
+// Gizmo — Translation Arrows (3 axis cylinders + cones)
+// ============================================================
+
+enum class EGizmoAxis { None = 0, X, Y, Z };
+
+struct GizmoMeshData
+{
+    std::vector<Vertex> Vertices;
+    std::vector<uint32_t> Indices;
+};
+
+static GizmoMeshData CreateGizmoArrow(const Vec3& axisDir, const Vec4& color, float length = 1.2f, float shaftRadius = 0.02f, float headRadius = 0.06f, float headLength = 0.2f)
+{
+    GizmoMeshData gizmo;
+    const uint32_t segments = 12;
+    float shaftLength = length - headLength;
+
+    // Build an orthonormal basis where Z = axisDir
+    Vec3 up = axisDir;
+    Vec3 right;
+    if (std::abs(up.y) < 0.99f)
+        right = Vec3(0, 1, 0).Cross(up).Normalize();
+    else
+        right = Vec3(1, 0, 0).Cross(up).Normalize();
+    Vec3 forward = up.Cross(right).Normalize();
+
+    auto addVert = [&](Vec3 pos, Vec3 norm)
+    {
+        gizmo.Vertices.push_back({ pos, norm, { 1.0f, 1.0f, 1.0f, 1.0f } });
+    };
+
+    // --- Shaft (cylinder along axis) ---
+    for (uint32_t i = 0; i <= segments; i++)
+    {
+        float theta = (float)i / segments * 2.0f * PI;
+        float ct = cosf(theta), st = sinf(theta);
+        Vec3 circleDir = right * ct + forward * st;
+        Vec3 normal = circleDir;
+        Vec3 bottom = circleDir * shaftRadius;
+        Vec3 top = circleDir * shaftRadius + up * shaftLength;
+        addVert(bottom, normal);
+        addVert(top, normal);
+    }
+    for (uint32_t i = 0; i < segments; i++)
+    {
+        uint32_t b = i * 2;
+        gizmo.Indices.push_back(b);
+        gizmo.Indices.push_back(b + 2);
+        gizmo.Indices.push_back(b + 1);
+        gizmo.Indices.push_back(b + 1);
+        gizmo.Indices.push_back(b + 2);
+        gizmo.Indices.push_back(b + 3);
+    }
+
+    // --- Cone (arrow head) ---
+    uint32_t coneBase = (uint32_t)gizmo.Vertices.size();
+    // Tip vertex
+    Vec3 tip = up * length;
+    addVert(tip, up);
+
+    // Base ring
+    for (uint32_t i = 0; i <= segments; i++)
+    {
+        float theta = (float)i / segments * 2.0f * PI;
+        float ct = cosf(theta), st = sinf(theta);
+        Vec3 circleDir = right * ct + forward * st;
+        Vec3 pos = circleDir * headRadius + up * shaftLength;
+        Vec3 norm = (circleDir + up * (headRadius / headLength)).Normalize();
+        addVert(pos, norm);
+    }
+    for (uint32_t i = 0; i < segments; i++)
+    {
+        gizmo.Indices.push_back(coneBase);          // tip
+        gizmo.Indices.push_back(coneBase + 1 + i);
+        gizmo.Indices.push_back(coneBase + 2 + i);
+    }
+
+    // Bottom cap of cone
+    uint32_t capCenter = (uint32_t)gizmo.Vertices.size();
+    addVert(up * shaftLength, up.Negate());
+    for (uint32_t i = 0; i <= segments; i++)
+    {
+        float theta = (float)i / segments * 2.0f * PI;
+        float ct = cosf(theta), st = sinf(theta);
+        Vec3 circleDir = right * ct + forward * st;
+        Vec3 pos = circleDir * headRadius + up * shaftLength;
+        addVert(pos, up.Negate());
+    }
+    for (uint32_t i = 0; i < segments; i++)
+    {
+        gizmo.Indices.push_back(capCenter);
+        gizmo.Indices.push_back(capCenter + 2 + i);
+        gizmo.Indices.push_back(capCenter + 1 + i);
+    }
+
+    return gizmo;
+}
+
+// Ray-axis closest point for gizmo dragging
+// Returns the parameter t along 'axis' direction starting from 'axisOrigin'
+// such that (axisOrigin + axis * t) is closest to the ray.
+static float RayAxisClosestParam(const Ray& ray, const Vec3& axisOrigin, const Vec3& axisDir)
+{
+    Vec3 w = ray.Origin - axisOrigin;
+    float a = axisDir.Dot(axisDir);       // == 1 if normalized
+    float b = axisDir.Dot(ray.Direction);
+    float c = ray.Direction.Dot(ray.Direction); // == 1 if normalized
+    float d = axisDir.Dot(w);
+    float e = ray.Direction.Dot(w);
+
+    float denom = a * c - b * b;
+    if (std::abs(denom) < 1e-6f) return 0.0f;
+    return (b * e - c * d) / denom;
+}
+
+// Check if ray is close enough to a gizmo axis to pick it
+static bool RayPicksGizmoAxis(const Ray& ray, const Vec3& axisOrigin, const Vec3& axisDir,
+                               float axisLength, float pickRadius, float& outT)
+{
+    float tAxis = RayAxisClosestParam(ray, axisOrigin, axisDir);
+    if (tAxis < 0.0f || tAxis > axisLength) return false;
+
+    // Find closest point on ray to the axis point
+    Vec3 axisPoint = axisOrigin + axisDir * tAxis;
+
+    // Project axisPoint onto ray to get tRay
+    float tRay = (axisPoint - ray.Origin).Dot(ray.Direction);
+    if (tRay < 0.0f) return false;
+
+    Vec3 rayPoint = ray.Origin + ray.Direction * tRay;
+    Vec3 diff = axisPoint - rayPoint;
+    float dist = diff.Length();
+
+    if (dist < pickRadius)
+    {
+        outT = tRay;
+        return true;
+    }
+    return false;
+}
+
+// ============================================================
 // KiwiEngineApp
 // ============================================================
 
@@ -188,6 +330,10 @@ protected:
 
         RebuildAllGPUBuffers();
 
+        // ---- Init Gizmo ----
+        InitGizmoMeshes();
+        BuildGizmoGPUBuffers();
+
         std::cout << "[Kiwi] Scene Editor initialized!" << std::endl;
     }
 
@@ -199,9 +345,65 @@ protected:
         if (!io.WantCaptureMouse)
         {
             const auto& mouse = GetWindow()->GetMouseState();
+
             if (mouse.LeftClicked)
             {
-                PickObject(mouse.X, mouse.Y);
+                // Try to pick gizmo axis first
+                if (m_Scene.GetSelectedObject())
+                {
+                    m_DragAxis = PickGizmoAxis(mouse.X, mouse.Y);
+                    if (m_DragAxis != EGizmoAxis::None)
+                    {
+                        m_IsDragging = true;
+                        m_DragStartMouseX = mouse.X;
+                        m_DragStartMouseY = mouse.Y;
+                        auto* sel = m_Scene.GetSelectedObject();
+                        m_DragStartPos = sel->TransformData.Position;
+                    }
+                    else
+                    {
+                        PickObject(mouse.X, mouse.Y);
+                    }
+                }
+                else
+                {
+                    PickObject(mouse.X, mouse.Y);
+                }
+            }
+
+            // Handle dragging
+            if (m_IsDragging && mouse.LeftDown)
+            {
+                auto* sel = m_Scene.GetSelectedObject();
+                if (sel && m_DragAxis != EGizmoAxis::None)
+                {
+                    uint32_t w = GetWindow()->GetWidth();
+                    uint32_t h = GetWindow()->GetHeight();
+
+                    Ray rayNow = ScreenToRay(mouse.X, mouse.Y, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                    Ray rayStart = ScreenToRay(m_DragStartMouseX, m_DragStartMouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
+
+                    Vec3 axisDir;
+                    switch (m_DragAxis)
+                    {
+                    case EGizmoAxis::X: axisDir = { 1, 0, 0 }; break;
+                    case EGizmoAxis::Y: axisDir = { 0, 1, 0 }; break;
+                    case EGizmoAxis::Z: axisDir = { 0, 0, 1 }; break;
+                    default: break;
+                    }
+
+                    float tNow = RayAxisClosestParam(rayNow, m_DragStartPos, axisDir);
+                    float tStart = RayAxisClosestParam(rayStart, m_DragStartPos, axisDir);
+                    float delta = tNow - tStart;
+
+                    sel->TransformData.Position = m_DragStartPos + axisDir * delta;
+                }
+            }
+
+            if (!mouse.LeftDown && m_IsDragging)
+            {
+                m_IsDragging = false;
+                m_DragAxis = EGizmoAxis::None;
             }
         }
     }
@@ -304,7 +506,7 @@ protected:
             cbd.ObjectColor[1] = obj.Color.y;
             cbd.ObjectColor[2] = obj.Color.z;
             cbd.ObjectColor[3] = obj.Color.w;
-            cbd.Selected = obj.Selected ? 1.0f : 0.0f;
+            cbd.Selected = 0.0f; // No shader highlight; gizmo used instead
 
             void* mapped = m_ConstantBuffer->Map();
             if (mapped)
@@ -316,6 +518,9 @@ protected:
 
             ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
         }
+
+        // ---- Draw Gizmo for selected object ----
+        DrawGizmo(ctx);
 
         // ---- ImGui Render ----
         if (isDX12)
@@ -371,6 +576,13 @@ protected:
         m_PipelineState.reset();
         m_DX12PSO.reset();
 
+        // Release Gizmo GPU resources
+        for (int i = 0; i < 3; i++)
+        {
+            m_GizmoVB[i].reset();
+            m_GizmoIB[i].reset();
+        }
+
         // Shutdown ImGui backend
         ShutdownImGui();
     }
@@ -384,6 +596,9 @@ protected:
 
         // Rebuild GPU mesh buffers
         RebuildAllGPUBuffers();
+
+        // Rebuild Gizmo GPU buffers
+        BuildGizmoGPUBuffers();
     }
 
 private:
@@ -883,6 +1098,145 @@ private:
     }
 
     // ============================================================
+    // Gizmo
+    // ============================================================
+
+    void InitGizmoMeshes()
+    {
+        m_GizmoMeshData[0] = CreateGizmoArrow({ 1, 0, 0 }, { 1, 0, 0, 1 }); // X - Red
+        m_GizmoMeshData[1] = CreateGizmoArrow({ 0, 1, 0 }, { 0, 1, 0, 1 }); // Y - Green
+        m_GizmoMeshData[2] = CreateGizmoArrow({ 0, 0, 1 }, { 0, 0, 1, 1 }); // Z - Blue
+    }
+
+    void BuildGizmoGPUBuffers()
+    {
+        auto device = GetDevice();
+        Vec4 colors[3] = {
+            { 1, 0, 0, 1 }, // X - Red
+            { 0, 1, 0, 1 }, // Y - Green
+            { 0, 0, 1, 1 }, // Z - Blue
+        };
+
+        for (int i = 0; i < 3; i++)
+        {
+            auto& data = m_GizmoMeshData[i];
+            m_GizmoVertexCount[i] = (uint32_t)data.Vertices.size();
+            m_GizmoIndexCount[i] = (uint32_t)data.Indices.size();
+
+            if (m_GizmoVertexCount[i] == 0) continue;
+
+            BufferDesc vbDesc;
+            vbDesc.SizeInBytes = m_GizmoVertexCount[i] * sizeof(Vertex);
+            vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
+            vbDesc.Usage = EResourceUsage::Immutable;
+            m_GizmoVB[i] = device->CreateBuffer(vbDesc, data.Vertices.data());
+
+            BufferDesc ibDesc;
+            ibDesc.SizeInBytes = m_GizmoIndexCount[i] * sizeof(uint32_t);
+            ibDesc.BindFlags = BUFFER_USAGE_INDEX;
+            ibDesc.Usage = EResourceUsage::Immutable;
+            m_GizmoIB[i] = device->CreateBuffer(ibDesc, data.Indices.data());
+        }
+    }
+
+    void DrawGizmo(RHICommandContext* ctx)
+    {
+        SceneObject* sel = m_Scene.GetSelectedObject();
+        if (!sel) return;
+
+        Vec3 gizmoPos = sel->TransformData.Position;
+        Vec4 colors[3] = {
+            { 1.0f, 0.2f, 0.2f, 1.0f }, // X - Red
+            { 0.2f, 1.0f, 0.2f, 1.0f }, // Y - Green
+            { 0.2f, 0.4f, 1.0f, 1.0f }, // Z - Blue
+        };
+
+        // Highlight the dragged axis
+        if (m_IsDragging)
+        {
+            int axisIdx = (int)m_DragAxis - 1;
+            if (axisIdx >= 0 && axisIdx < 3)
+                colors[axisIdx] = { 1.0f, 1.0f, 0.3f, 1.0f }; // Yellow highlight
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (!m_GizmoVB[i] || !m_GizmoIB[i]) continue;
+
+            VertexBufferView vbView;
+            vbView.BufferLocation = 0;
+            vbView.SizeInBytes = m_GizmoVertexCount[i] * sizeof(Vertex);
+            vbView.StrideInBytes = sizeof(Vertex);
+
+            RHIBuffer* vbPtr = m_GizmoVB[i].get();
+            ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+            IndexBufferView ibView;
+            ibView.BufferLocation = 0;
+            ibView.SizeInBytes = m_GizmoIndexCount[i] * sizeof(uint32_t);
+            ibView.Format = EFormat::R32_UINT;
+            ctx->SetIndexBuffer(m_GizmoIB[i].get(), &ibView);
+
+            // World matrix = translation to gizmo position
+            Mat4 worldMatrix = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
+
+            ConstantBufferData cbd = {};
+            memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+            memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+            memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+            cbd.ObjectColor[0] = colors[i].x;
+            cbd.ObjectColor[1] = colors[i].y;
+            cbd.ObjectColor[2] = colors[i].z;
+            cbd.ObjectColor[3] = colors[i].w;
+            cbd.Selected = 2.0f; // > 1.5 => unlit/gizmo mode in pixel shader
+
+            void* mapped = m_ConstantBuffer->Map();
+            if (mapped)
+            {
+                memcpy(mapped, &cbd, sizeof(cbd));
+                m_ConstantBuffer->Unmap();
+            }
+            ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+
+            ctx->DrawIndexed(m_GizmoIndexCount[i], 0, 0);
+        }
+    }
+
+    EGizmoAxis PickGizmoAxis(int mouseX, int mouseY)
+    {
+        SceneObject* sel = m_Scene.GetSelectedObject();
+        if (!sel) return EGizmoAxis::None;
+
+        uint32_t w = GetWindow()->GetWidth();
+        uint32_t h = GetWindow()->GetHeight();
+        Ray ray = ScreenToRay(mouseX, mouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
+
+        Vec3 gizmoPos = sel->TransformData.Position;
+        float gizmoLength = 1.2f;
+        float pickRadius = 0.08f;
+
+        Vec3 axes[3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+        EGizmoAxis axisTypes[3] = { EGizmoAxis::X, EGizmoAxis::Y, EGizmoAxis::Z };
+
+        float closestT = 1e30f;
+        EGizmoAxis result = EGizmoAxis::None;
+
+        for (int i = 0; i < 3; i++)
+        {
+            float t;
+            if (RayPicksGizmoAxis(ray, gizmoPos, axes[i], gizmoLength, pickRadius, t))
+            {
+                if (t < closestT)
+                {
+                    closestT = t;
+                    result = axisTypes[i];
+                }
+            }
+        }
+        return result;
+    }
+
+    // ============================================================
     // Mouse Picking
     // ============================================================
 
@@ -984,6 +1338,20 @@ private:
     bool m_CaptureTriggered = false;
     bool m_AutoOpenRenderDoc = false;
     uint32_t m_LastCaptureCount = 0;
+
+    // Gizmo state
+    GizmoMeshData m_GizmoMeshData[3];                    // CPU mesh data for 3 axes
+    std::unique_ptr<RHIBuffer> m_GizmoVB[3];             // GPU vertex buffers
+    std::unique_ptr<RHIBuffer> m_GizmoIB[3];             // GPU index buffers
+    uint32_t m_GizmoVertexCount[3] = {};
+    uint32_t m_GizmoIndexCount[3] = {};
+
+    // Dragging state
+    bool m_IsDragging = false;
+    EGizmoAxis m_DragAxis = EGizmoAxis::None;
+    int m_DragStartMouseX = 0;
+    int m_DragStartMouseY = 0;
+    Vec3 m_DragStartPos;
 };
 
 // ============================================================
