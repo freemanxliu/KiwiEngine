@@ -50,6 +50,7 @@ set(HEADERS
     include/Math/Math.h
     include/Scene/Mesh.h
     include/Scene/Shaders.h
+    include/Scene/ShaderLibrary.h
     include/Scene/SceneObject.h
     include/Scene/Scene.h
     include/Debug/RenderDocIntegration.h
@@ -96,3 +97,11 @@ if(MSVC)
         $<$<CONFIG:Release>:/O2 /Ob2>
     )
 endif()
+
+# ---- Copy Shaders/ folder to output directory ----
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/Shaders
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Shaders
+    COMMENT "Copying Shaders/ to output directory"
+)

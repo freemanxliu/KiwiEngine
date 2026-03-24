@@ -66,6 +66,7 @@ namespace Kiwi
         EPrimitiveType PrimitiveType = EPrimitiveType::Cube;
         Transform      TransformData;
         Vec4           Color = { 0.8f, 0.8f, 0.8f, 1.0f }; // 物体颜色
+        std::string    ShaderName = "Default";               // 使用的 Shader 名称
 
         // 运行时数据（不序列化）
         Mesh           MeshData;

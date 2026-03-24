@@ -152,7 +152,8 @@ namespace Kiwi
             file << "      \"position\": [" << obj.TransformData.Position.x << ", " << obj.TransformData.Position.y << ", " << obj.TransformData.Position.z << "],\n";
             file << "      \"rotation\": [" << obj.TransformData.Rotation.x << ", " << obj.TransformData.Rotation.y << ", " << obj.TransformData.Rotation.z << "],\n";
             file << "      \"scale\": [" << obj.TransformData.Scale.x << ", " << obj.TransformData.Scale.y << ", " << obj.TransformData.Scale.z << "],\n";
-            file << "      \"color\": [" << obj.Color.x << ", " << obj.Color.y << ", " << obj.Color.z << ", " << obj.Color.w << "]\n";
+            file << "      \"color\": [" << obj.Color.x << ", " << obj.Color.y << ", " << obj.Color.z << ", " << obj.Color.w << "],\n";
+            file << "      \"shader\": \"" << EscapeString(obj.ShaderName) << "\"\n";
             file << "    }";
             if (i + 1 < m_Objects.size()) file << ",";
             file << "\n";
@@ -247,6 +248,9 @@ namespace Kiwi
             if (ReadVec3(objStr, "rotation", rot)) obj->TransformData.Rotation = rot;
             if (ReadVec3(objStr, "scale", scale))  obj->TransformData.Scale = scale;
             if (ReadVec4(objStr, "color", color))  obj->Color = color;
+
+            std::string shaderName = ReadQuotedString(objStr, "shader");
+            if (!shaderName.empty()) obj->ShaderName = shaderName;
         }
 
         std::cout << "[Kiwi] Scene loaded from: " << filepath

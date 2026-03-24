@@ -19,8 +19,9 @@ A lightweight 3D rendering engine built from scratch with C++17 and DirectX, fea
 - **Built-in Math Library** — Vec2/3/4, Mat4, perspective/orthographic projection, LookAt camera (left-hand coordinate system)
 - **Scene Editor** — Interactive scene management with object selection, transform editing, and JSON serialization
 - **Mesh Generation** — Procedural cube, sphere, cylinder, and floor primitives
-- **Runtime Shader Compilation** — HLSL vertex/pixel shaders compiled at startup via D3DCompile
-- **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading
+- **Shader Library** — File-based shader system: drop `.hlsl` files into the `Shaders/` folder and assign them per-object at runtime via the UI
+- **Runtime Shader Compilation** — HLSL shaders compiled at startup via D3DCompile; includes Default (Phong), Unlit, and Normal Visualization shaders
+- **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading (Default shader)
 - **Translation Gizmo** — 3-axis translation gizmo (X=red, Y=green, Z=blue) rendered on selected objects; drag axes to move objects in world space
 - **RenderDoc Integration** — One-click frame capture button with auto-open in RenderDoc
 - **ImGui UI** — Full-featured editor interface with menu bar, scene panel, detail inspector, and object placer
@@ -128,10 +129,39 @@ A 1280×720 window will appear showing a **3D scene editor** with Phong lighting
 - **Move objects**: Drag the gizmo axes (red=X, green=Y, blue=Z) to translate objects; the active axis turns yellow while dragging
 - **Edit transforms**: Scene Panel → Detail tab → Drag Position/Rotation/Scale
 - **Edit colors**: Scene Panel → Detail tab → Color picker
+- **Change shader**: Scene Panel → Detail tab → Shader dropdown (Default, Unlit, NormalVis, or any custom `.hlsl`)
 - **Capture frames**: Click the capture button (top-right) — auto-opens in RenderDoc
 - **Save/Load scenes**: Scene Panel → Save/Load buttons (JSON format)
 
 No external assets, textures, or config files are needed — everything (including shaders) is embedded in the source code.
+
+## 🎨 Custom Shaders
+
+KiwiEngine uses a file-based shader system. To add a new shader:
+
+1. Create a `.hlsl` file in the `Shaders/` folder (e.g. `MyShader.hlsl`)
+2. The file must contain both a vertex shader and pixel shader with entry points `VSMain` and `PSMain`
+3. Use the same constant buffer layout as the built-in shaders:
+   ```hlsl
+   cbuffer Constants : register(b0)
+   {
+       row_major float4x4 g_World;
+       row_major float4x4 g_View;
+       row_major float4x4 g_Projection;
+       float4 g_ObjectColor;
+       float  g_Selected;
+       float3 g_Padding;
+   };
+   ```
+4. Rebuild the project — the shader will be automatically copied to the output directory
+5. Run the engine — select an object, go to Detail tab, and choose your shader from the dropdown
+
+**Built-in shaders:**
+| Shader | Description |
+|---|---|
+| **Default** | Phong lighting (Lambert diffuse + Blinn-Phong specular) — built-in, always available |
+| **Unlit** | Pure color output, no lighting calculations |
+| **Wireframe** | Normal visualization — maps world-space normals to RGB colors |
 
 ## 📁 Project Structure
 
@@ -162,9 +192,10 @@ KiwiEngine/
 │   │   └── Math.h              # Math library (Vec2/3/4, Mat4, Perspective, LookAt)
 │   └── Scene/
 │       ├── Mesh.h              # Mesh data (vertices, indices)
-│       ├── SceneObject.h       # Scene object with transform and material
+│       ├── SceneObject.h       # Scene object with transform, material, and shader reference
 │       ├── Scene.h             # Scene management and serialization
-│       └── Shaders.h           # Embedded HLSL shaders (compiled at runtime)
+│       ├── ShaderLibrary.h     # Shader library — scan, compile, and manage multiple shaders
+│       └── Shaders.h           # Embedded HLSL shaders (built-in default, compiled at runtime)
 ├── src/
 │   ├── main.cpp                # Entry point — scene editor with ImGui UI
 │   ├── Core/
@@ -179,6 +210,10 @@ KiwiEngine/
 │   └── Scene/
 │       ├── Mesh.cpp            # Procedural mesh generation (Cube, Sphere, Cylinder, Floor)
 │       └── Scene.cpp           # Scene serialization (JSON)
+├── Shaders/                    # HLSL shader files (drop new .hlsl here to add shaders)
+│   ├── Default.hlsl            # Phong lighting (Lambert + Blinn-Phong)
+│   ├── Unlit.hlsl              # Pure color, no lighting
+│   └── Wireframe.hlsl          # Normal visualization (maps normals to RGB)
 ├── third_party/
 │   ├── imgui/                  # Dear ImGui v1.91.8 (DX11 + DX12 + Win32 backends)
 │   ├── renderdoc/

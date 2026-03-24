@@ -2,6 +2,7 @@
 #include "Core/Window.h"
 #include "Scene/Mesh.h"
 #include "Scene/Shaders.h"
+#include "Scene/ShaderLibrary.h"
 #include "Scene/Scene.h"
 #include "Scene/SceneObject.h"
 #include "Math/Math.h"
@@ -19,6 +20,7 @@
 #include <memory>
 #include <cmath>
 #include <algorithm>
+#include <filesystem>
 
 using namespace Kiwi;
 
@@ -294,6 +296,29 @@ protected:
     {
         std::cout << "[Kiwi] Initializing Scene Editor..." << std::endl;
 
+        // ---- Determine Shaders directory ----
+        // Try "Shaders" relative to exe, fallback to source directory
+        {
+            char exePath[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+            std::string exeDir(exePath);
+            size_t lastSlash = exeDir.find_last_of("\\/");
+            if (lastSlash != std::string::npos)
+                exeDir = exeDir.substr(0, lastSlash);
+            m_ShaderDir = exeDir + "\\Shaders";
+
+            // Fallback: try source directory relative path
+            namespace fs = std::filesystem;
+            if (!fs::exists(m_ShaderDir))
+            {
+                // Assume exe is in build/bin/ and source is ../../Shaders
+                std::string fallback = exeDir + "\\..\\..\\Shaders";
+                if (fs::exists(fallback))
+                    m_ShaderDir = fallback;
+            }
+            std::cout << "[Kiwi] Shader directory: " << m_ShaderDir << std::endl;
+        }
+
         // ---- Init ImGui context (once) ----
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -456,28 +481,45 @@ protected:
         ClearDepthStencilValue depthClear = { 1.0f, 0 };
         ctx->ClearDepthStencilView(GetDSV(), depthClear, 0x03);
 
-        // ---- Setup pipeline ----
-        if (isDX12 && m_DX12PSO)
-        {
-            ctx->SetPipelineState(m_DX12PSO.get());
-        }
-        else if (!isDX12)
+        // ---- Setup pipeline (shared state) ----
+        if (!isDX12)
         {
             ctx->SetPipelineState(m_PipelineState.get());
-            ctx->SetVertexShader(m_VertexShader.get());
-            ctx->SetPixelShader(m_PixelShader.get());
             ctx->SetInputLayout(m_InputLayout.get());
         }
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
-        // ---- Draw all scene objects ----
+        // ---- Draw all scene objects (per-object shader switching) ----
         auto& objects = m_Scene.GetObjects();
+        std::string lastShaderName; // Track last bound shader to avoid redundant switches
         for (size_t i = 0; i < objects.size(); i++)
         {
             auto& obj = objects[i];
 
             if (i >= m_GPUMeshes.size() || !m_GPUMeshes[i].VertexBuffer)
                 continue;
+
+            // --- Per-object shader switching ---
+            const std::string& shaderName = obj.ShaderName;
+            if (shaderName != lastShaderName)
+            {
+                CompiledShader* shader = m_ShaderLibrary.GetShader(shaderName);
+                if (!shader) shader = m_ShaderLibrary.GetDefault();
+
+                if (shader)
+                {
+                    if (isDX12 && shader->DX12PSO)
+                    {
+                        ctx->SetPipelineState(shader->DX12PSO.get());
+                    }
+                    else if (!isDX12)
+                    {
+                        ctx->SetVertexShader(shader->VertexShader.get());
+                        ctx->SetPixelShader(shader->PixelShader.get());
+                    }
+                    lastShaderName = shaderName;
+                }
+            }
 
             auto& gpuMesh = m_GPUMeshes[i];
 
@@ -570,11 +612,11 @@ protected:
         // Release all GPU resources
         m_GPUMeshes.clear();
         m_ConstantBuffer.reset();
-        m_VertexShader.reset();
-        m_PixelShader.reset();
         m_InputLayout.reset();
         m_PipelineState.reset();
-        m_DX12PSO.reset();
+
+        // Release all shaders via ShaderLibrary
+        m_ShaderLibrary.ReleaseAll();
 
         // Release Gizmo GPU resources
         for (int i = 0; i < 3; i++)
@@ -673,22 +715,17 @@ private:
         {
             auto dx12Device = static_cast<DX12Device*>(device);
 
-            // Compile shaders
-            m_VertexShader = dx12Device->CompileShader(
+            // We need a temporary VS to create the shared input layout first
+            auto tempVS = dx12Device->CompileShader(
                 EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
-            m_PixelShader = dx12Device->CompileShader(
-                EShaderType::Pixel, g_PixelShaderHLSL, "main", "ps_5_0");
 
-            // Create input layout
+            // Create input layout (shared across all shaders — same vertex format)
             InputElementDesc inputElements[] = {
                 { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
                 { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
                 { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
             };
-            m_InputLayout = device->CreateInputLayout(inputElements, 3, m_VertexShader.get());
-
-            // Create DX12 PSO
-            CreateDX12PSO();
+            m_InputLayout = device->CreateInputLayout(inputElements, 3, tempVS.get());
 
             // Constant buffer
             BufferDesc cbDesc;
@@ -696,6 +733,12 @@ private:
             cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
             cbDesc.Usage = EResourceUsage::Dynamic;
             m_ConstantBuffer = device->CreateBuffer(cbDesc);
+
+            // Pipeline state (DX11 only, but keep the member)
+            // DX12 PSOs are managed per-shader inside ShaderLibrary
+
+            // Initialize ShaderLibrary
+            m_ShaderLibrary.Initialize(m_ShaderDir, device, RHI_API_TYPE::DX12, m_InputLayout.get());
 
             // Init ImGui for DX12
             InitImGuiForDX12();
@@ -704,11 +747,9 @@ private:
         {
             auto dx11Device = static_cast<DX11Device*>(device);
 
-            // Compile shaders
-            m_VertexShader = dx11Device->CompileShader(
+            // We need a temporary VS to create the shared input layout
+            auto tempVS = dx11Device->CompileShader(
                 EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
-            m_PixelShader = dx11Device->CompileShader(
-                EShaderType::Pixel, g_PixelShaderHLSL, "main", "ps_5_0");
 
             // Input layout
             InputElementDesc inputElements[] = {
@@ -716,7 +757,7 @@ private:
                 { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
                 { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
             };
-            m_InputLayout = device->CreateInputLayout(inputElements, 3, m_VertexShader.get());
+            m_InputLayout = device->CreateInputLayout(inputElements, 3, tempVS.get());
 
             // Constant buffer
             BufferDesc cbDesc;
@@ -725,70 +766,18 @@ private:
             cbDesc.Usage = EResourceUsage::Dynamic;
             m_ConstantBuffer = device->CreateBuffer(cbDesc);
 
-            // Pipeline state
+            // Pipeline state (empty — DX11 uses separate Set* calls)
             m_PipelineState = device->CreatePipelineState();
+
+            // Initialize ShaderLibrary
+            m_ShaderLibrary.Initialize(m_ShaderDir, device, RHI_API_TYPE::DX11, m_InputLayout.get());
 
             // Init ImGui for DX11
             InitImGuiForDX11();
         }
     }
 
-    void CreateDX12PSO()
-    {
-        auto dx12Device = static_cast<DX12Device*>(GetDevice());
-        auto dx12InputLayout = static_cast<DX12InputLayout*>(m_InputLayout.get());
-        auto vsShader = static_cast<DX12Shader*>(m_VertexShader.get());
-        auto psShader = static_cast<DX12Shader*>(m_PixelShader.get());
-
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-        psoDesc.pRootSignature = dx12Device->GetRootSignature();
-
-        // Shaders
-        psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
-        psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
-        psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
-        psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
-
-        // Input layout
-        const auto& elements = dx12InputLayout->GetElements();
-        psoDesc.InputLayout.pInputElementDescs = elements.data();
-        psoDesc.InputLayout.NumElements = (UINT)elements.size();
-
-        // Rasterizer
-        psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
-        psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
-        psoDesc.RasterizerState.DepthClipEnable = TRUE;
-
-        // Blend
-        psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
-        psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-
-        // Depth stencil
-        psoDesc.DepthStencilState.DepthEnable = TRUE;
-        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-        psoDesc.DepthStencilState.StencilEnable = FALSE;
-
-        psoDesc.SampleMask = UINT_MAX;
-        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        psoDesc.NumRenderTargets = 1;
-        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-        psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
-        psoDesc.SampleDesc.Count = 1;
-
-        ComPtr<ID3D12PipelineState> pso;
-        HRESULT hr = dx12Device->GetD3DDevice()->CreateGraphicsPipelineState(
-            &psoDesc, IID_PPV_ARGS(&pso));
-        if (FAILED(hr))
-        {
-            char msg[256];
-            snprintf(msg, sizeof(msg), "Failed to create DX12 PSO (HRESULT: 0x%08X)", hr);
-            throw std::runtime_error(msg);
-        }
-
-        m_DX12PSO = std::make_unique<DX12PipelineState>(pso.Get());
-    }
+    // DX12 PSO creation is now handled by ShaderLibrary
 
     // ============================================================
     // Menu Bar (fixed at top)
@@ -1050,8 +1039,35 @@ private:
         ImGui::ColorEdit4("Color", &sel->Color.x);
 
         ImGui::Separator();
-        ImGui::Text("Shader: Default Phong");
-        ImGui::TextWrapped("Vertex: vs_5_0 | Pixel: ps_5_0\nLambert Diffuse + Blinn-Phong Specular");
+        ImGui::Text("Shader");
+        {
+            const auto& shaderNames = m_ShaderLibrary.GetShaderNames();
+            // Find current index
+            int currentIdx = 0;
+            for (int si = 0; si < (int)shaderNames.size(); si++)
+            {
+                if (shaderNames[si] == sel->ShaderName)
+                {
+                    currentIdx = si;
+                    break;
+                }
+            }
+            // Build combo items
+            if (ImGui::BeginCombo("##ShaderCombo", sel->ShaderName.c_str()))
+            {
+                for (int si = 0; si < (int)shaderNames.size(); si++)
+                {
+                    bool isSelected = (si == currentIdx);
+                    if (ImGui::Selectable(shaderNames[si].c_str(), isSelected))
+                    {
+                        sel->ShaderName = shaderNames[si];
+                    }
+                    if (isSelected)
+                        ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+        }
 
         ImGui::Separator();
         ImGui::Text("Mesh Info");
@@ -1143,6 +1159,22 @@ private:
     {
         SceneObject* sel = m_Scene.GetSelectedObject();
         if (!sel) return;
+
+        // Gizmo always uses the Default shader (which has unlit mode when g_Selected > 1.5)
+        bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
+        CompiledShader* defaultShader = m_ShaderLibrary.GetDefault();
+        if (defaultShader)
+        {
+            if (isDX12 && defaultShader->DX12PSO)
+            {
+                ctx->SetPipelineState(defaultShader->DX12PSO.get());
+            }
+            else if (!isDX12)
+            {
+                ctx->SetVertexShader(defaultShader->VertexShader.get());
+                ctx->SetPixelShader(defaultShader->PixelShader.get());
+            }
+        }
 
         Vec3 gizmoPos = sel->TransformData.Position;
         Vec4 colors[3] = {
@@ -1314,13 +1346,14 @@ private:
     Scene m_Scene;
     std::vector<GPUMeshData> m_GPUMeshes;
 
+    // Shader Library — manages all loaded shaders
+    ShaderLibrary m_ShaderLibrary;
+    std::string m_ShaderDir; // Path to Shaders/ folder
+
     // RHI resources (shared interface)
-    std::unique_ptr<RHIShader>        m_VertexShader;
-    std::unique_ptr<RHIShader>        m_PixelShader;
     std::unique_ptr<RHIInputLayout>   m_InputLayout;
     std::unique_ptr<RHIBuffer>        m_ConstantBuffer;
     std::unique_ptr<RHIPipelineState> m_PipelineState;  // DX11
-    std::unique_ptr<DX12PipelineState> m_DX12PSO;        // DX12
 
     // Camera
     Mat4 m_ViewMatrix;
