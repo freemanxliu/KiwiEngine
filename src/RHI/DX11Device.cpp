@@ -832,7 +832,15 @@ namespace Kiwi
             break;
         }
         case RHI_API_TYPE::DX12:
-            throw std::runtime_error("DX12 RHI backend is not yet implemented");
+        {
+            // DX12 is created in DX12Device.cpp
+            // Forward-declare and call from there
+            extern void CreateDX12RHI(const RHIInitParams& params,
+                std::unique_ptr<RHIDevice>& outDevice,
+                std::unique_ptr<RHICommandContext>& outContext);
+            CreateDX12RHI(params, outDevice, outContext);
+            break;
+        }
         case RHI_API_TYPE::VULKAN:
             throw std::runtime_error("Vulkan RHI backend is not yet implemented");
         default:

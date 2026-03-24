@@ -20,6 +20,7 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_dx12.cpp
     ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
 )
 
@@ -29,6 +30,7 @@ set(SOURCES
     src/Core/Window.cpp
     src/Core/Application.cpp
     src/RHI/DX11Device.cpp
+    src/RHI/DX12Device.cpp
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
 )
@@ -40,6 +42,8 @@ set(HEADERS
     include/RHI/DX11/DX11Utils.h
     include/RHI/DX11/DX11Resources.h
     include/RHI/DX11/DX11Device.h
+    include/RHI/DX12/DX12Headers.h
+    include/RHI/DX12/DX12Device.h
     include/Core/Window.h
     include/Core/Application.h
     include/Math/Math.h
@@ -62,6 +66,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # ---- 链接 Windows 系统库 ----
 target_link_libraries(${PROJECT_NAME} PRIVATE
     d3d11
+    d3d12
     d3dcompiler
     dxgi
     dxguid

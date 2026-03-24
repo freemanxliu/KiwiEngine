@@ -24,6 +24,12 @@ namespace Kiwi
         RHITextureView*    GetDSV() const { return m_DSV.get(); }
         Window*            GetWindow() const { return m_Window.get(); }
 
+        // 获取当前 RHI 类型
+        RHI_API_TYPE GetCurrentRHIType() const { return m_CurrentRHIType; }
+
+        // 运行时切换 RHI
+        void SwitchRHI(RHI_API_TYPE newType);
+
     protected:
         // 子类覆写
         virtual void OnInit() {}
@@ -31,8 +37,17 @@ namespace Kiwi
         virtual void OnUpdate(float deltaTime) {}
         virtual void OnRender() {}
 
+        // RHI 切换前后的回调
+        virtual void OnRHIShutdown() {}  // 在销毁旧 RHI 之前调用（释放 GPU 资源）
+        virtual void OnRHIReady() {}     // 在创建新 RHI 之后调用（重建 GPU 资源）
+
+        // 标记需要切换 RHI（在下一帧开头安全时刻执行）
+        bool m_PendingRHISwitch = false;
+        RHI_API_TYPE m_PendingRHIType = RHI_API_TYPE::DX11;
+
     private:
         void Frame();
+        void RecreateDepthStencil(uint32_t width, uint32_t height);
 
         std::unique_ptr<Window>            m_Window;
         std::unique_ptr<RHIDevice>          m_Device;
@@ -44,6 +59,8 @@ namespace Kiwi
         std::unique_ptr<RHITextureView>     m_DSV;
 
         bool m_Initialized = false;
+        RHI_API_TYPE m_CurrentRHIType = RHI_API_TYPE::DX11;
+        RHIInitParams m_RHIParams;
 
         // Timing
         using Clock = std::chrono::high_resolution_clock;

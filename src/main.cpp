@@ -7,10 +7,12 @@
 #include "Math/Math.h"
 #include "RHI/RHI.h"
 #include "RHI/DX11/DX11Device.h"
+#include "RHI/DX12/DX12Device.h"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
+#include <imgui_impl_dx12.h>
 
 #include <iostream>
 #include <memory>
@@ -44,39 +46,23 @@ struct Ray
 static Ray ScreenToRay(int mouseX, int mouseY, uint32_t screenW, uint32_t screenH,
                        const Mat4& view, const Mat4& proj)
 {
-    // NDC coordinates
     float ndcX = (2.0f * mouseX / screenW) - 1.0f;
     float ndcY = 1.0f - (2.0f * mouseY / screenH);
 
-    // In our row-major LH projection: x' = x * proj[0][0], y' = y * proj[1][1]
-    // Unproject to view space
     float viewX = ndcX / proj.m[0][0];
     float viewY = ndcY / proj.m[1][1];
 
-    // Ray in view space: origin at 0, direction (viewX, viewY, 1) for LH
     Vec3 rayDirView = { viewX, viewY, 1.0f };
 
-    // We need the inverse of the view matrix to transform to world space
-    // For a rigid view matrix, the inverse is:
-    // R^T applied to direction, then add eye position
-    // view matrix row-major:
-    // [xAxis.x, yAxis.x, zAxis.x, 0]
-    // [xAxis.y, yAxis.y, zAxis.y, 0]
-    // [xAxis.z, yAxis.z, zAxis.z, 0]
-    // [tx,      ty,      tz,      1]
-
-    // Extracting axes from view matrix (transposed rotation part)
     Vec3 right  = { view.m[0][0], view.m[1][0], view.m[2][0] };
     Vec3 up     = { view.m[0][1], view.m[1][1], view.m[2][1] };
     Vec3 fwd    = { view.m[0][2], view.m[1][2], view.m[2][2] };
 
-    // Camera position: solve for eye from translation
     Vec3 eye;
     eye.x = -(view.m[3][0] * right.x + view.m[3][1] * up.x + view.m[3][2] * fwd.x);
     eye.y = -(view.m[3][0] * right.y + view.m[3][1] * up.y + view.m[3][2] * fwd.y);
     eye.z = -(view.m[3][0] * right.z + view.m[3][1] * up.z + view.m[3][2] * fwd.z);
 
-    // Transform ray direction to world space
     Vec3 rayDirWorld;
     rayDirWorld.x = rayDirView.x * right.x + rayDirView.y * up.x + rayDirView.z * fwd.x;
     rayDirWorld.y = rayDirView.x * right.y + rayDirView.y * up.y + rayDirView.z * fwd.y;
@@ -85,7 +71,6 @@ static Ray ScreenToRay(int mouseX, int mouseY, uint32_t screenW, uint32_t screen
     return { eye, rayDirWorld.Normalize() };
 }
 
-// Simple AABB intersection
 static bool RayIntersectsAABB(const Ray& ray, const Vec3& aabbMin, const Vec3& aabbMax, float& tOut)
 {
     float tmin = -1e30f;
@@ -116,7 +101,6 @@ static bool RayIntersectsAABB(const Ray& ray, const Vec3& aabbMin, const Vec3& a
     return true;
 }
 
-// Compute AABB for an object in world space
 static void ComputeWorldAABB(const SceneObject& obj, Vec3& outMin, Vec3& outMax)
 {
     Mat4 world = obj.TransformData.GetWorldMatrix();
@@ -133,7 +117,6 @@ static void ComputeWorldAABB(const SceneObject& obj, Vec3& outMin, Vec3& outMax)
 
     for (const auto& v : verts)
     {
-        // Transform vertex by world matrix (row-major, row vector * matrix)
         float wx = v.Position.x * world.m[0][0] + v.Position.y * world.m[1][0] + v.Position.z * world.m[2][0] + world.m[3][0];
         float wy = v.Position.x * world.m[0][1] + v.Position.y * world.m[1][1] + v.Position.z * world.m[2][1] + world.m[3][1];
         float wz = v.Position.x * world.m[0][2] + v.Position.y * world.m[1][2] + v.Position.z * world.m[2][2] + world.m[3][2];
@@ -159,8 +142,7 @@ public:
 
     ~KiwiEngineApp()
     {
-        ImGui_ImplDX11_Shutdown();
-        ImGui_ImplWin32_Shutdown();
+        ShutdownImGui();
         ImGui::DestroyContext();
     }
 
@@ -169,32 +151,15 @@ protected:
     {
         std::cout << "[Kiwi] Initializing Scene Editor..." << std::endl;
 
-        auto device = GetDevice();
-        auto dx11Device = static_cast<DX11Device*>(device);
+        // ---- Init ImGui context (once) ----
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        ImGui::StyleColorsDark();
 
-        // ---- Compile shaders ----
-        m_VertexShader = dx11Device->CompileShader(
-            EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
-        m_PixelShader = dx11Device->CompileShader(
-            EShaderType::Pixel, g_PixelShaderHLSL, "main", "ps_5_0");
-
-        // ---- Input layout ----
-        InputElementDesc inputElements[] = {
-            { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
-            { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
-            { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
-        };
-        m_InputLayout = device->CreateInputLayout(inputElements, _countof(inputElements), m_VertexShader.get());
-
-        // ---- Constant buffer ----
-        BufferDesc cbDesc;
-        cbDesc.SizeInBytes = sizeof(ConstantBufferData);
-        cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-        cbDesc.Usage = EResourceUsage::Dynamic;
-        m_ConstantBuffer = device->CreateBuffer(cbDesc);
-
-        // ---- Pipeline state ----
-        m_PipelineState = device->CreatePipelineState();
+        // ---- Init RHI-specific resources ----
+        InitRHIResources();
 
         // ---- Camera ----
         m_CameraPosition = Vec3(0.0f, 3.0f, -6.0f);
@@ -208,7 +173,6 @@ protected:
         float aspect = (float)w / (float)h;
         m_ProjectionMatrix = Mat4::Perspective(DegToRad(45.0f), aspect, 0.1f, 100.0f);
 
-        // Resize callback
         GetWindow()->SetResizeCallback([this](uint32_t width, uint32_t height) {
             float aspect = (float)width / (float)height;
             m_ProjectionMatrix = Mat4::Perspective(DegToRad(45.0f), aspect, 0.1f, 100.0f);
@@ -221,21 +185,7 @@ protected:
         auto* cube = m_Scene.AddObject(EPrimitiveType::Cube, "Cube_1");
         cube->TransformData.Position = { 0.0f, 0.5f, 0.0f };
 
-        // Create GPU buffers for initial objects
         RebuildAllGPUBuffers();
-
-        // ---- Init ImGui ----
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        ImGui::StyleColorsDark();
-
-        // ImGui DX11 backend
-        ImGui_ImplWin32_Init(GetWindow()->GetHWND());
-        ImGui_ImplDX11_Init(
-            dx11Device->GetD3DDevice(),
-            dx11Device->GetD3DContext());
 
         std::cout << "[Kiwi] Scene Editor initialized!" << std::endl;
     }
@@ -244,7 +194,6 @@ protected:
     {
         (void)deltaTime;
 
-        // Handle mouse picking (only when ImGui doesn't want the mouse)
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantCaptureMouse)
         {
@@ -260,10 +209,43 @@ protected:
     {
         auto ctx = GetContext();
         auto swapChain = GetSwapChain();
+        bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
+
+        // ---- DX12: Reset command list and transition back buffer ----
+        if (isDX12)
+        {
+            auto dx12Ctx = static_cast<DX12CommandContext*>(ctx);
+            dx12Ctx->Reset();
+
+            // Set root signature and descriptor heaps
+            auto dx12Device = static_cast<DX12Device*>(GetDevice());
+            dx12Ctx->SetRootSignature(dx12Device->GetRootSignature());
+            ID3D12DescriptorHeap* heaps[] = { dx12Device->GetSRVHeap() };
+            dx12Ctx->SetDescriptorHeaps(heaps, 1);
+
+            // Transition back buffer to render target
+            auto backBuffer = swapChain->GetBackBuffer(swapChain->GetCurrentBackBufferIndex());
+            dx12Ctx->ResourceBarrier(backBuffer,
+                D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        }
 
         // ---- Set render targets ----
         auto backBufferRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
         ctx->SetRenderTargets(&backBufferRTV, 1, GetDSV());
+
+        // ---- Set viewport and scissor ----
+        Viewport vp;
+        vp.TopLeftX = 0; vp.TopLeftY = 0;
+        vp.Width = (float)GetWindow()->GetWidth();
+        vp.Height = (float)GetWindow()->GetHeight();
+        vp.MinDepth = 0.0f; vp.MaxDepth = 1.0f;
+        ctx->SetViewports(&vp, 1);
+
+        ScissorRect sr;
+        sr.Left = 0; sr.Top = 0;
+        sr.Right = (int32_t)GetWindow()->GetWidth();
+        sr.Bottom = (int32_t)GetWindow()->GetHeight();
+        ctx->SetScissorRects(&sr, 1);
 
         // ---- Clear ----
         ClearColorValue clearColor = { 0.12f, 0.12f, 0.18f, 1.0f };
@@ -272,11 +254,18 @@ protected:
         ctx->ClearDepthStencilView(GetDSV(), depthClear, 0x03);
 
         // ---- Setup pipeline ----
-        ctx->SetPipelineState(m_PipelineState.get());
+        if (isDX12 && m_DX12PSO)
+        {
+            ctx->SetPipelineState(m_DX12PSO.get());
+        }
+        else if (!isDX12)
+        {
+            ctx->SetPipelineState(m_PipelineState.get());
+            ctx->SetVertexShader(m_VertexShader.get());
+            ctx->SetPixelShader(m_PixelShader.get());
+            ctx->SetInputLayout(m_InputLayout.get());
+        }
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
-        ctx->SetVertexShader(m_VertexShader.get());
-        ctx->SetPixelShader(m_PixelShader.get());
-        ctx->SetInputLayout(m_InputLayout.get());
 
         // ---- Draw all scene objects ----
         auto& objects = m_Scene.GetObjects();
@@ -284,13 +273,11 @@ protected:
         {
             auto& obj = objects[i];
 
-            // Check if GPU buffers exist
             if (i >= m_GPUMeshes.size() || !m_GPUMeshes[i].VertexBuffer)
                 continue;
 
             auto& gpuMesh = m_GPUMeshes[i];
 
-            // Vertex buffer
             VertexBufferView vbView;
             vbView.BufferLocation = 0;
             vbView.SizeInBytes = gpuMesh.VertexCount * sizeof(Vertex);
@@ -299,7 +286,6 @@ protected:
             RHIBuffer* vbPtr = gpuMesh.VertexBuffer.get();
             ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
 
-            // Index buffer
             IndexBufferView ibView;
             ibView.BufferLocation = 0;
             ibView.SizeInBytes = gpuMesh.IndexCount * sizeof(uint32_t);
@@ -327,24 +313,299 @@ protected:
             }
             ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
 
-            // Draw
             ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
         }
 
         // ---- ImGui Render ----
-        ImGui_ImplDX11_NewFrame();
+        if (isDX12)
+        {
+            ImGui_ImplDX12_NewFrame();
+        }
+        else
+        {
+            ImGui_ImplDX11_NewFrame();
+        }
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+        DrawMenuBar();
         DrawUI();
 
         ImGui::Render();
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+        if (isDX12)
+        {
+            auto dx12Ctx = static_cast<DX12CommandContext*>(ctx);
+            auto dx12Device = static_cast<DX12Device*>(GetDevice());
+            ID3D12DescriptorHeap* heaps[] = { dx12Device->GetSRVHeap() };
+            dx12Ctx->GetCommandList()->SetDescriptorHeaps(1, heaps);
+            ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), dx12Ctx->GetCommandList());
+
+            // Transition back buffer to present
+            auto backBuffer = swapChain->GetBackBuffer(swapChain->GetCurrentBackBufferIndex());
+            dx12Ctx->ResourceBarrier(backBuffer,
+                D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        }
+        else
+        {
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        }
 
         ctx->Flush();
     }
 
+    // ---- RHI Switch callbacks ----
+
+    void OnRHIShutdown() override
+    {
+        std::cout << "[Kiwi] Releasing GPU resources for RHI switch..." << std::endl;
+
+        // Release all GPU resources
+        m_GPUMeshes.clear();
+        m_ConstantBuffer.reset();
+        m_VertexShader.reset();
+        m_PixelShader.reset();
+        m_InputLayout.reset();
+        m_PipelineState.reset();
+        m_DX12PSO.reset();
+
+        // Shutdown ImGui backend
+        ShutdownImGui();
+    }
+
+    void OnRHIReady() override
+    {
+        std::cout << "[Kiwi] Rebuilding GPU resources after RHI switch..." << std::endl;
+
+        // Reinit RHI-specific resources
+        InitRHIResources();
+
+        // Rebuild GPU mesh buffers
+        RebuildAllGPUBuffers();
+    }
+
 private:
+
+    // ============================================================
+    // ImGui backend management
+    // ============================================================
+
+    void ShutdownImGui()
+    {
+        if (m_ImGuiDX11Initialized)
+        {
+            ImGui_ImplDX11_Shutdown();
+            m_ImGuiDX11Initialized = false;
+        }
+        if (m_ImGuiDX12Initialized)
+        {
+            ImGui_ImplDX12_Shutdown();
+            m_ImGuiDX12Initialized = false;
+        }
+        if (m_ImGuiWin32Initialized)
+        {
+            ImGui_ImplWin32_Shutdown();
+            m_ImGuiWin32Initialized = false;
+        }
+    }
+
+    void InitImGuiForDX11()
+    {
+        auto dx11Device = static_cast<DX11Device*>(GetDevice());
+
+        if (!m_ImGuiWin32Initialized)
+        {
+            ImGui_ImplWin32_Init(GetWindow()->GetHWND());
+            m_ImGuiWin32Initialized = true;
+        }
+
+        ImGui_ImplDX11_Init(dx11Device->GetD3DDevice(), dx11Device->GetD3DContext());
+        m_ImGuiDX11Initialized = true;
+    }
+
+    void InitImGuiForDX12()
+    {
+        auto dx12Device = static_cast<DX12Device*>(GetDevice());
+
+        if (!m_ImGuiWin32Initialized)
+        {
+            ImGui_ImplWin32_Init(GetWindow()->GetHWND());
+            m_ImGuiWin32Initialized = true;
+        }
+
+        ImGui_ImplDX12_Init(
+            dx12Device->GetD3DDevice(),
+            2, // num frames in flight
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            dx12Device->GetSRVHeap(),
+            dx12Device->GetSRVHeap()->GetCPUDescriptorHandleForHeapStart(),
+            dx12Device->GetSRVHeap()->GetGPUDescriptorHandleForHeapStart());
+        m_ImGuiDX12Initialized = true;
+    }
+
+    // ============================================================
+    // RHI Resource Initialization
+    // ============================================================
+
+    void InitRHIResources()
+    {
+        auto device = GetDevice();
+        bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
+
+        if (isDX12)
+        {
+            auto dx12Device = static_cast<DX12Device*>(device);
+
+            // Compile shaders
+            m_VertexShader = dx12Device->CompileShader(
+                EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
+            m_PixelShader = dx12Device->CompileShader(
+                EShaderType::Pixel, g_PixelShaderHLSL, "main", "ps_5_0");
+
+            // Create input layout
+            InputElementDesc inputElements[] = {
+                { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
+                { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
+                { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
+            };
+            m_InputLayout = device->CreateInputLayout(inputElements, 3, m_VertexShader.get());
+
+            // Create DX12 PSO
+            CreateDX12PSO();
+
+            // Constant buffer
+            BufferDesc cbDesc;
+            cbDesc.SizeInBytes = sizeof(ConstantBufferData);
+            cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
+            cbDesc.Usage = EResourceUsage::Dynamic;
+            m_ConstantBuffer = device->CreateBuffer(cbDesc);
+
+            // Init ImGui for DX12
+            InitImGuiForDX12();
+        }
+        else
+        {
+            auto dx11Device = static_cast<DX11Device*>(device);
+
+            // Compile shaders
+            m_VertexShader = dx11Device->CompileShader(
+                EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
+            m_PixelShader = dx11Device->CompileShader(
+                EShaderType::Pixel, g_PixelShaderHLSL, "main", "ps_5_0");
+
+            // Input layout
+            InputElementDesc inputElements[] = {
+                { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
+                { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
+                { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
+            };
+            m_InputLayout = device->CreateInputLayout(inputElements, 3, m_VertexShader.get());
+
+            // Constant buffer
+            BufferDesc cbDesc;
+            cbDesc.SizeInBytes = sizeof(ConstantBufferData);
+            cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
+            cbDesc.Usage = EResourceUsage::Dynamic;
+            m_ConstantBuffer = device->CreateBuffer(cbDesc);
+
+            // Pipeline state
+            m_PipelineState = device->CreatePipelineState();
+
+            // Init ImGui for DX11
+            InitImGuiForDX11();
+        }
+    }
+
+    void CreateDX12PSO()
+    {
+        auto dx12Device = static_cast<DX12Device*>(GetDevice());
+        auto dx12InputLayout = static_cast<DX12InputLayout*>(m_InputLayout.get());
+        auto vsShader = static_cast<DX12Shader*>(m_VertexShader.get());
+        auto psShader = static_cast<DX12Shader*>(m_PixelShader.get());
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.pRootSignature = dx12Device->GetRootSignature();
+
+        // Shaders
+        psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
+        psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
+        psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
+        psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
+
+        // Input layout
+        const auto& elements = dx12InputLayout->GetElements();
+        psoDesc.InputLayout.pInputElementDescs = elements.data();
+        psoDesc.InputLayout.NumElements = (UINT)elements.size();
+
+        // Rasterizer
+        psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+        psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+        psoDesc.RasterizerState.DepthClipEnable = TRUE;
+
+        // Blend
+        psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+        psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+        // Depth stencil
+        psoDesc.DepthStencilState.DepthEnable = TRUE;
+        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+        psoDesc.DepthStencilState.StencilEnable = FALSE;
+
+        psoDesc.SampleMask = UINT_MAX;
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psoDesc.NumRenderTargets = 1;
+        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        psoDesc.SampleDesc.Count = 1;
+
+        ComPtr<ID3D12PipelineState> pso;
+        HRESULT hr = dx12Device->GetD3DDevice()->CreateGraphicsPipelineState(
+            &psoDesc, IID_PPV_ARGS(&pso));
+        if (FAILED(hr))
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Failed to create DX12 PSO (HRESULT: 0x%08X)", hr);
+            throw std::runtime_error(msg);
+        }
+
+        m_DX12PSO = std::make_unique<DX12PipelineState>(pso.Get());
+    }
+
+    // ============================================================
+    // Menu Bar (fixed at top)
+    // ============================================================
+
+    void DrawMenuBar()
+    {
+        if (ImGui::BeginMainMenuBar())
+        {
+            if (ImGui::BeginMenu("Rendering"))
+            {
+                if (ImGui::BeginMenu("RHI"))
+                {
+                    bool isDX11 = (GetCurrentRHIType() == RHI_API_TYPE::DX11);
+                    bool isDX12 = (GetCurrentRHIType() == RHI_API_TYPE::DX12);
+
+                    if (ImGui::MenuItem("Direct3D 11", nullptr, isDX11, !isDX11))
+                    {
+                        m_PendingRHISwitch = true;
+                        m_PendingRHIType = RHI_API_TYPE::DX11;
+                    }
+                    if (ImGui::MenuItem("Direct3D 12", nullptr, isDX12, !isDX12))
+                    {
+                        m_PendingRHISwitch = true;
+                        m_PendingRHIType = RHI_API_TYPE::DX12;
+                    }
+
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMainMenuBar();
+        }
+    }
 
     // ============================================================
     // UI
@@ -352,12 +613,19 @@ private:
 
     void DrawUI()
     {
-        // Side panel
-        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(320, (float)GetWindow()->GetHeight()), ImGuiCond_Always);
+        float menuBarHeight = ImGui::GetFrameHeight();
+
+        // Side panel below menu bar
+        ImGui::SetNextWindowPos(ImVec2(0, menuBarHeight), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320, (float)GetWindow()->GetHeight() - menuBarHeight), ImGuiCond_Always);
 
         ImGui::Begin("Scene Panel", nullptr,
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
+        // Show current RHI
+        const char* rhiName = (GetCurrentRHIType() == RHI_API_TYPE::DX11) ? "Direct3D 11" : "Direct3D 12";
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "RHI: %s", rhiName);
+        ImGui::Separator();
 
         // Menu bar within panel
         if (ImGui::Button("New Scene"))
@@ -458,7 +726,7 @@ private:
         ImGui::Text("  Indices:  %u", sel->MeshData.GetIndexCount());
         ImGui::Text("  Triangles: %u", sel->MeshData.GetIndexCount() / 3);
 
-        (void)changed; // Transform changes apply live
+        (void)changed;
     }
 
     void DrawPlacerTab()
@@ -484,11 +752,9 @@ private:
             if (ImGui::Button(entry.label, ImVec2(280, 35)))
             {
                 auto* obj = m_Scene.AddObject(entry.type);
-                // Place new object slightly above ground
                 if (entry.type != EPrimitiveType::Floor)
                 {
                     obj->TransformData.Position.y = 0.5f;
-                    // Offset randomly to avoid overlap
                     obj->TransformData.Position.x = (float)(rand() % 60 - 30) * 0.1f;
                     obj->TransformData.Position.z = (float)(rand() % 60 - 30) * 0.1f;
                 }
@@ -576,12 +842,13 @@ private:
     Scene m_Scene;
     std::vector<GPUMeshData> m_GPUMeshes;
 
-    // RHI resources
+    // RHI resources (shared interface)
     std::unique_ptr<RHIShader>        m_VertexShader;
     std::unique_ptr<RHIShader>        m_PixelShader;
     std::unique_ptr<RHIInputLayout>   m_InputLayout;
     std::unique_ptr<RHIBuffer>        m_ConstantBuffer;
-    std::unique_ptr<RHIPipelineState> m_PipelineState;
+    std::unique_ptr<RHIPipelineState> m_PipelineState;  // DX11
+    std::unique_ptr<DX12PipelineState> m_DX12PSO;        // DX12
 
     // Camera
     Mat4 m_ViewMatrix;
@@ -589,6 +856,11 @@ private:
     Vec3 m_CameraPosition;
     Vec3 m_CameraTarget;
     Vec3 m_CameraUp;
+
+    // ImGui state tracking
+    bool m_ImGuiWin32Initialized = false;
+    bool m_ImGuiDX11Initialized = false;
+    bool m_ImGuiDX12Initialized = false;
 };
 
 // ============================================================
@@ -601,6 +873,7 @@ int main()
     {
         std::cout << "========================================" << std::endl;
         std::cout << "  Kiwi Engine - Scene Editor" << std::endl;
+        std::cout << "  RHI: Direct3D 11 / Direct3D 12" << std::endl;
         std::cout << "========================================" << std::endl;
         std::cout << std::endl;
 
