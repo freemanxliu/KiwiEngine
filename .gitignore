@@ -1,0 +1,17 @@
+# Build output
+build/
+out/
+
+# IDE files
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.docstates
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# WorkBuddy
+.workbuddy/
