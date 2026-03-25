@@ -135,11 +135,13 @@ namespace Kiwi
         }
 
         case WM_MOUSEMOVE:
-            window->m_Mouse.X = (int32_t)LOWORD(lParam);
-            window->m_Mouse.Y = (int32_t)HIWORD(lParam);
+            window->m_Mouse.X = (int32_t)(short)LOWORD(lParam);
+            window->m_Mouse.Y = (int32_t)(short)HIWORD(lParam);
             break;
 
         case WM_LBUTTONDOWN:
+            window->m_Mouse.X = (int32_t)(short)LOWORD(lParam);
+            window->m_Mouse.Y = (int32_t)(short)HIWORD(lParam);
             window->m_Mouse.LeftDown = true;
             window->m_Mouse.LeftClicked = true;
             break;

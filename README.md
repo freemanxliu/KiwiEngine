@@ -119,7 +119,9 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 ### 🛠️ Editor & Tools
 
 - **ImGui UI** — Full-featured editor: menu bar (File, Rendering), scene panel with object list, detail inspector, and object placer tab.
-- **Translation Gizmo** — 3-axis gizmo (X=red, Y=green, Z=blue) on selected objects. Drag to translate; active axis turns yellow.
+- **Translation Gizmo** — 3-axis gizmo (X=red, Y=green, Z=blue) on selected objects. Drag to translate; active axis turns yellow. **Constant screen-space size** — gizmo auto-scales based on camera distance so it stays the same pixel size regardless of zoom level.
+- **Screen-Space Gizmo Picking** — Gizmo axis selection uses 2D screen-space distance (pixel threshold) instead of 3D ray casting, providing reliable and intuitive picking behavior regardless of camera angle or distance.
+- **Model Import** — Load external `.obj` (Wavefront OBJ via tinyobjloader) and `.fbx` (Autodesk FBX via ufbx) model files. Each sub-mesh becomes a separate mesh object with per-material diffuse color. Automatic vertex deduplication, polygon triangulation, flat/smooth normals, and UV coordinate flipping.
 - **Ray Picking** — Click viewport to select objects. Gizmo axes have picking priority.
 - **Mesh Generation** — Procedural primitives: Cube, Sphere, Cylinder, Floor.
 - **Built-in Math Library** — Vec2/3/4, Mat4 (with `Inverse()` via Cramer's rule for InvViewProj), perspective/orthographic projection, LookAt (left-hand coordinate system).
@@ -348,18 +350,21 @@ KiwiEngine/
 │       ├── ShaderLibrary.h           # File-based shader scanning & compilation
 │       ├── PostProcessShaders.h      # Post-process shader definitions (fullscreen VS)
 │       ├── PostProcessShaderLibrary.h # Post-process shader scanning & compilation
+│       ├── ModelImporter.h            # OBJ/FBX model import (tinyobjloader + ufbx)
 │       └── ViewMode.h                # View mode enum (Lit, Unlit, BaseColor, Roughness, Metallic)
 ├── src/
 │   ├── main.cpp                      # Entry point & scene editor (ImGui UI, rendering)
 │   ├── Core/                         # Window, Application, EngineConfig implementations
 │   ├── RHI/                          # DX11, DX12, Vulkan backend implementations
-│   ├── Scene/                        # Mesh generation, Scene serialization
+│   ├── Scene/                        # Mesh generation, Scene serialization, Model import
 │   └── Debug/                        # RenderDoc runtime loading
 ├── Shaders/                          # Scene HLSL shaders (Default, Unlit, Wireframe, GBufferPass, DeferredLighting, ShadowPass, BufferVisualization)
 ├── PostProcessShaders/               # Post-process HLSL shaders (Grayscale, Vignette)
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8
 │   ├── renderdoc/                    # RenderDoc In-App API header
+│   ├── tinyobjloader/                # Wavefront OBJ loader
+│   ├── ufbx/                         # Autodesk FBX loader
 │   └── vulkan-headers/               # Vulkan SDK headers
 └── tools/
     └── compile_shaders.mjs           # GLSL → SPIR-V compiler (Vulkan)

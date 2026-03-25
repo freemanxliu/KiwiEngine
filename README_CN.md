@@ -119,7 +119,9 @@
 ### 🛠️ 编辑器与工具
 
 - **ImGui 界面** — 完整的编辑器界面：菜单栏（File、Rendering）、场景面板（物体列表）、属性面板、物体放置面板。
-- **平移 Gizmo** — 三轴 Gizmo（X=红、Y=绿、Z=蓝），拖拽平移物体，活动轴变为黄色。
+- **平移 Gizmo** — 三轴 Gizmo（X=红、Y=绿、Z=蓝），拖拽平移物体，活动轴变为黄色。**恒定屏幕大小** — Gizmo 根据相机距离自动缩放，无论缩放级别如何，始终保持相同的像素大小。
+- **屏幕空间 Gizmo 拾取** — Gizmo 轴选择使用 2D 屏幕空间距离（像素阈值）而非 3D 射线检测，无论相机角度或距离如何，都能提供可靠直觉的拾取体验。
+- **模型导入** — 加载外部 `.obj`（Wavefront OBJ，通过 tinyobjloader）和 `.fbx`（Autodesk FBX，通过 ufbx）模型文件。每个子网格成为独立的网格物体，附带材质漫反射颜色。自动顶点去重、多边形三角化、平面/平滑法线计算和 UV 坐标翻转。
 - **射线拾取** — 点击视口选择物体，Gizmo 轴优先于场景物体。
 - **程序化网格** — 内置图元：立方体、球体、圆柱体、地面。
 - **内置数学库** — Vec2/3/4、Mat4（含 `Inverse()` Cramer 法则实现，用于 InvViewProj）、透视/正交投影、LookAt（左手坐标系）。
@@ -348,18 +350,21 @@ KiwiEngine/
 │       ├── ShaderLibrary.h           # 文件着色器扫描与编译
 │       ├── PostProcessShaders.h      # 后处理着色器定义（全屏 VS）
 │       ├── PostProcessShaderLibrary.h # 后处理着色器扫描与编译
+│       ├── ModelImporter.h            # OBJ/FBX 模型导入（tinyobjloader + ufbx）
 │       └── ViewMode.h                # 视图模式枚举（Lit、Unlit、BaseColor、Roughness、Metallic）
 ├── src/
 │   ├── main.cpp                      # 入口点与场景编辑器（ImGui UI、渲染）
 │   ├── Core/                         # Window、Application、EngineConfig 实现
 │   ├── RHI/                          # DX11、DX12、Vulkan 后端实现
-│   ├── Scene/                        # 网格生成、场景序列化
+│   ├── Scene/                        # 网格生成、场景序列化、模型导入
 │   └── Debug/                        # RenderDoc 运行时加载
 ├── Shaders/                          # 场景 HLSL 着色器（Default、Unlit、Wireframe、GBufferPass、DeferredLighting、ShadowPass、BufferVisualization）
 ├── PostProcessShaders/               # 后处理 HLSL 着色器（Grayscale、Vignette）
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8
 │   ├── renderdoc/                    # RenderDoc In-App API 头文件
+│   ├── tinyobjloader/                # Wavefront OBJ 加载器
+│   ├── ufbx/                         # Autodesk FBX 加载器
 │   └── vulkan-headers/               # Vulkan SDK 头文件
 └── tools/
     └── compile_shaders.mjs           # GLSL → SPIR-V 编译器（Vulkan 用）

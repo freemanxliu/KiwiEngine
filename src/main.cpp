@@ -3209,6 +3209,17 @@ private:
         }
     }
 
+    // Compute gizmo scale factor so it maintains constant screen size regardless of camera distance
+    float ComputeGizmoScale(const Vec3& gizmoPos) const
+    {
+        Vec3 diff = gizmoPos - m_CameraPosition;
+        float dist = diff.Length();
+        // Scale factor: at distance 5 the gizmo is 1x size. Closer = smaller, farther = bigger.
+        // This keeps it roughly the same pixel size on screen.
+        const float referenceDistance = 5.0f;
+        return std::max(0.1f, dist / referenceDistance);
+    }
+
     void DrawGizmo(RHICommandContext* ctx)
     {
         SceneObject* sel = m_Scene.GetSelectedObject();
@@ -3230,6 +3241,8 @@ private:
         }
 
         Vec3 gizmoPos = sel->GetPosition();
+        float gizmoScale = ComputeGizmoScale(gizmoPos);
+
         Vec4 colors[3] = {
             { 1.0f, 0.2f, 0.2f, 1.0f }, // X - Red
             { 0.2f, 1.0f, 0.2f, 1.0f }, // Y - Green
@@ -3262,8 +3275,10 @@ private:
             ibView.Format = EFormat::R32_UINT;
             ctx->SetIndexBuffer(m_GizmoIB[i].get(), &ibView);
 
-            // World matrix = translation to gizmo position
-            Mat4 worldMatrix = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
+            // World matrix = scale * translation (screen-space constant size gizmo)
+            Mat4 scaleMat = Mat4::Scaling(gizmoScale, gizmoScale, gizmoScale);
+            Mat4 transMat = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
+            Mat4 worldMatrix = scaleMat * transMat;
 
             ConstantBufferData cbd = {};
             memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
@@ -3321,8 +3336,9 @@ private:
             rotMat.m[1][0] = up.x;    rotMat.m[1][1] = up.y;    rotMat.m[1][2] = up.z;
             rotMat.m[2][0] = fwd.x;   rotMat.m[2][1] = fwd.y;   rotMat.m[2][2] = fwd.z;
 
+            Mat4 scaleMat = Mat4::Scaling(gizmoScale, gizmoScale, gizmoScale);
             Mat4 transMat = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
-            Mat4 worldMatrix = rotMat * transMat;
+            Mat4 worldMatrix = scaleMat * rotMat * transMat;
 
             ConstantBufferData cbd = {};
             memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
@@ -3350,6 +3366,40 @@ private:
         }
     }
 
+    // Project a world-space point to screen-space pixel coordinates
+    Vec2 WorldToScreen(const Vec3& worldPos, uint32_t screenW, uint32_t screenH,
+                       const Mat4& view, const Mat4& proj) const
+    {
+        // Transform to clip space: pos * View * Proj (row-major, left-multiply)
+        Mat4 vp = view * proj;
+        float x = worldPos.x * vp.m[0][0] + worldPos.y * vp.m[1][0] + worldPos.z * vp.m[2][0] + vp.m[3][0];
+        float y = worldPos.x * vp.m[0][1] + worldPos.y * vp.m[1][1] + worldPos.z * vp.m[2][1] + vp.m[3][1];
+        float w = worldPos.x * vp.m[0][3] + worldPos.y * vp.m[1][3] + worldPos.z * vp.m[2][3] + vp.m[3][3];
+        if (std::abs(w) < 1e-6f) return { -1, -1 };
+        float ndcX = x / w;
+        float ndcY = y / w;
+        float sx = (ndcX + 1.0f) * 0.5f * screenW;
+        float sy = (1.0f - ndcY) * 0.5f * screenH;
+        return { sx, sy };
+    }
+
+    // Compute distance from a 2D point to a 2D line segment (A->B)
+    static float PointToSegmentDist2D(const Vec2& p, const Vec2& a, const Vec2& b)
+    {
+        Vec2 ab = b - a;
+        Vec2 ap = p - a;
+        float abLenSq = ab.x * ab.x + ab.y * ab.y;
+        if (abLenSq < 1e-6f) // degenerate segment
+        {
+            return std::sqrt(ap.x * ap.x + ap.y * ap.y);
+        }
+        float t = (ap.x * ab.x + ap.y * ab.y) / abLenSq;
+        t = std::max(0.0f, std::min(1.0f, t));
+        Vec2 closest = { a.x + ab.x * t, a.y + ab.y * t };
+        Vec2 diff = { p.x - closest.x, p.y - closest.y };
+        return std::sqrt(diff.x * diff.x + diff.y * diff.y);
+    }
+
     EGizmoAxis PickGizmoAxis(int mouseX, int mouseY)
     {
         SceneObject* sel = m_Scene.GetSelectedObject();
@@ -3357,28 +3407,35 @@ private:
 
         uint32_t w = GetWindow()->GetWidth();
         uint32_t h = GetWindow()->GetHeight();
-        Ray ray = ScreenToRay(mouseX, mouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
 
         Vec3 gizmoPos = sel->GetPosition();
-        float gizmoLength = 1.2f;
-        float pickRadius = 0.08f;
+        float gizmoScale = ComputeGizmoScale(gizmoPos);
+        float gizmoLength = 1.2f * gizmoScale;
 
-        Vec3 axes[3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+        // Screen-space picking: project gizmo origin and axis tips, then measure pixel distance
+        Vec2 originSS = WorldToScreen(gizmoPos, w, h, m_ViewMatrix, m_ProjectionMatrix);
+        if (originSS.x < 0) return EGizmoAxis::None; // behind camera
+
+        Vec3 axisWorldDirs[3] = { {1,0,0}, {0,1,0}, {0,0,1} };
         EGizmoAxis axisTypes[3] = { EGizmoAxis::X, EGizmoAxis::Y, EGizmoAxis::Z };
 
-        float closestT = 1e30f;
+        Vec2 mousePos = { (float)mouseX, (float)mouseY };
+        const float pickThresholdPixels = 12.0f; // generous pixel threshold
+
+        float closestDist = 1e30f;
         EGizmoAxis result = EGizmoAxis::None;
 
         for (int i = 0; i < 3; i++)
         {
-            float t;
-            if (RayPicksGizmoAxis(ray, gizmoPos, axes[i], gizmoLength, pickRadius, t))
+            Vec3 tipWorld = gizmoPos + axisWorldDirs[i] * gizmoLength;
+            Vec2 tipSS = WorldToScreen(tipWorld, w, h, m_ViewMatrix, m_ProjectionMatrix);
+            if (tipSS.x < 0) continue; // behind camera
+
+            float dist = PointToSegmentDist2D(mousePos, originSS, tipSS);
+            if (dist < pickThresholdPixels && dist < closestDist)
             {
-                if (t < closestT)
-                {
-                    closestT = t;
-                    result = axisTypes[i];
-                }
+                closestDist = dist;
+                result = axisTypes[i];
             }
         }
         return result;
