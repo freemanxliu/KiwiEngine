@@ -103,6 +103,10 @@ namespace Kiwi
         // Pipeline State (empty — DX11 uses separate Set* calls)
         std::unique_ptr<RHIPipelineState> CreatePipelineState() override;
 
+        // Pipeline State with explicit cull mode control
+        // enableBackCull=true for geometry passes, false for fullscreen passes
+        std::unique_ptr<RHIPipelineState> CreatePipelineStateWithCull(bool enableBackCull);
+
         // Graphics Pipeline State (DX11: stores VS+PS references for binding)
         std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
             RHIShader* vertexShader,

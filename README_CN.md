@@ -74,6 +74,7 @@
   | 着色器 | 描述 |
   |---|---|
   | **Default** | Phong 光照 — Lambert 漫反射 + Blinn-Phong 高光，支持方向光和点光源（最多 8 盏），二次衰减 |
+  | **DefaultLit** | 标准 PBR 风格材质 — 响应粗糙度和金属度属性，新物体默认着色器 |
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
   | **GBufferPass** | G-Buffer 几何 Pass — 输出位置、法线+粗糙度、反照率+金属度到 3 个 MRT |
@@ -112,7 +113,7 @@
 
 ### 🛠️ 编辑器与工具
 
-- **ImGui 界面** — 完整的编辑器界面：菜单栏、场景面板（物体列表）、属性面板、物体放置面板。
+- **ImGui 界面** — 完整的编辑器界面：菜单栏（File、Rendering）、场景面板（物体列表）、属性面板、物体放置面板。
 - **平移 Gizmo** — 三轴 Gizmo（X=红、Y=绿、Z=蓝），拖拽平移物体，活动轴变为黄色。
 - **射线拾取** — 点击视口选择物体，Gizmo 轴优先于场景物体。
 - **程序化网格** — 内置图元：立方体、球体、圆柱体、地面。
@@ -196,7 +197,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 - **主相机**：Detail 面板 → 勾选 Main Camera（互斥）
 - **后处理**：Detail 面板 → 添加材质、调整顺序、调节强度、启用/禁用
 - **帧捕获**：点击右上角 🔵 按钮 → 自动打开 RenderDoc
-- **保存/加载**：Scene Panel → Save / Load 按钮（JSON 格式）
+- **场景管理**：File 菜单 → Create Scene / Open Scene / Save Scene（JSON 格式）
 
 ---
 

@@ -74,6 +74,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | Shader | Description |
   |---|---|
   | **Default** | Phong lighting — Lambert diffuse + Blinn-Phong specular, supports directional & point lights (up to 8), quadratic falloff |
+  | **DefaultLit** | Standard PBR-style material — responds to Roughness and Metallic properties, default shader for new objects |
   | **Unlit** | Pure color output, no lighting |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
   | **GBufferPass** | G-Buffer geometry pass — outputs Position, Normal+Roughness, Albedo+Metallic to 3 MRT |
@@ -112,7 +113,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 
 ### 🛠️ Editor & Tools
 
-- **ImGui UI** — Full-featured editor: menu bar, scene panel with object list, detail inspector, and object placer tab.
+- **ImGui UI** — Full-featured editor: menu bar (File, Rendering), scene panel with object list, detail inspector, and object placer tab.
 - **Translation Gizmo** — 3-axis gizmo (X=red, Y=green, Z=blue) on selected objects. Drag to translate; active axis turns yellow.
 - **Ray Picking** — Click viewport to select objects. Gizmo axes have picking priority.
 - **Mesh Generation** — Procedural primitives: Cube, Sphere, Cylinder, Floor.
@@ -196,7 +197,7 @@ A 1280×720 window opens showing a 3D scene editor. You can:
 - **Main Camera**: Detail tab → toggle Main Camera checkbox (mutual exclusion)
 - **Post-Processing**: Detail tab → Add materials, reorder, adjust intensity, enable/disable
 - **Capture frames**: Click 🔵 button (top-right) — auto-opens in RenderDoc
-- **Save/Load**: Scene Panel → Save / Load buttons (JSON format)
+- **Scene management**: File menu → Create Scene / Open Scene / Save Scene (JSON format)
 
 ---
 

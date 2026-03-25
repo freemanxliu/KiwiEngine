@@ -321,16 +321,18 @@ namespace Kiwi
 
         // 处理 BindFlags：如果设置了 TEXTURE_HINT_DEPTH_STENCIL 或格式是深度格式，
         // 自动设置正确的 DX11 绑定标志
-        if (desc.BindFlags & TEXTURE_HINT_DEPTH_STENCIL ||
+        // R32_TYPELESS 必须在 TEXTURE_HINT_DEPTH_STENCIL 之前检查，
+        // 因为 shadow map 同时需要 DEPTH_STENCIL + SHADER_RESOURCE
+        if (desc.Format == EFormat::R32_TYPELESS)
+        {
+            // Shadow map: typeless format allows both DSV (D32_FLOAT) and SRV (R32_FLOAT)
+            td.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+        }
+        else if (desc.BindFlags & TEXTURE_HINT_DEPTH_STENCIL ||
             desc.Format == EFormat::D24_UNORM_S8_UINT ||
             desc.Format == EFormat::D32_FLOAT)
         {
             td.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-        }
-        else if (desc.Format == EFormat::R32_TYPELESS)
-        {
-            // Shadow map: typeless format allows both DSV (D32_FLOAT) and SRV (R32_FLOAT)
-            td.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
         }
         else
         {
@@ -426,13 +428,27 @@ namespace Kiwi
                 srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
                 srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
                 srvDesc.Texture2D.MostDetailedMip = 0;
-                if (FAILED(m_Device->CreateShaderResourceView(resource, &srvDesc, &srv)))
-                    throw std::runtime_error("Failed to create SRV");
+                HRESULT hr = m_Device->CreateShaderResourceView(resource, &srvDesc, &srv);
+                if (FAILED(hr))
+                {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Failed to create SRV (explicit desc, fmt=%d, texFmt=%d, w=%u, h=%u, hr=0x%08X)",
+                        (int)srvDesc.Format, (int)texture->GetDesc().Format,
+                        texture->GetDesc().Width, texture->GetDesc().Height, (unsigned)hr);
+                    throw std::runtime_error(msg);
+                }
             }
             else
             {
-                if (FAILED(m_Device->CreateShaderResourceView(resource, nullptr, &srv)))
-                    throw std::runtime_error("Failed to create SRV");
+                HRESULT hr = m_Device->CreateShaderResourceView(resource, nullptr, &srv);
+                if (FAILED(hr))
+                {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Failed to create SRV (null desc, texFmt=%d, w=%u, h=%u, hr=0x%08X)",
+                        (int)texture->GetDesc().Format,
+                        texture->GetDesc().Width, texture->GetDesc().Height, (unsigned)hr);
+                    throw std::runtime_error(msg);
+                }
             }
             return std::make_unique<DX11TextureView>(srv.Get());
         }
@@ -618,6 +634,52 @@ namespace Kiwi
         pso->SetRasterizerState(rasterState.Get());
 
         // 创建默认 depth stencil state
+        D3D11_DEPTH_STENCIL_DESC dsDesc = {};
+        dsDesc.DepthEnable = TRUE;
+        dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
+        dsDesc.StencilEnable = FALSE;
+
+        ComPtr<ID3D11DepthStencilState> dsState;
+        m_Device->CreateDepthStencilState(&dsDesc, &dsState);
+        pso->SetDepthStencilState(dsState.Get());
+
+        return pso;
+    }
+
+    std::unique_ptr<RHIPipelineState> DX11Device::CreatePipelineStateWithCull(bool enableBackCull)
+    {
+        auto pso = std::make_unique<DX11PipelineState>();
+
+        // Blend state
+        D3D11_BLEND_DESC blendDesc = {};
+        blendDesc.AlphaToCoverageEnable = FALSE;
+        blendDesc.IndependentBlendEnable = FALSE;
+        blendDesc.RenderTarget[0].BlendEnable = FALSE;
+        blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+        ComPtr<ID3D11BlendState> blendState;
+        m_Device->CreateBlendState(&blendDesc, &blendState);
+        pso->SetBlendState(blendState.Get());
+
+        // Rasterizer state — fullscreen passes (no InputLayout) use CULL_NONE
+        D3D11_RASTERIZER_DESC rasterDesc = {};
+        rasterDesc.FillMode = D3D11_FILL_SOLID;
+        rasterDesc.CullMode = enableBackCull ? D3D11_CULL_BACK : D3D11_CULL_NONE;
+        rasterDesc.FrontCounterClockwise = FALSE;
+        rasterDesc.DepthBias = 0;
+        rasterDesc.DepthBiasClamp = 0.0f;
+        rasterDesc.SlopeScaledDepthBias = 0.0f;
+        rasterDesc.DepthClipEnable = TRUE;
+        rasterDesc.ScissorEnable = FALSE;
+        rasterDesc.MultisampleEnable = FALSE;
+        rasterDesc.AntialiasedLineEnable = FALSE;
+
+        ComPtr<ID3D11RasterizerState> rasterState;
+        m_Device->CreateRasterizerState(&rasterDesc, &rasterState);
+        pso->SetRasterizerState(rasterState.Get());
+
+        // Depth stencil state
         D3D11_DEPTH_STENCIL_DESC dsDesc = {};
         dsDesc.DepthEnable = TRUE;
         dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
@@ -959,17 +1021,17 @@ namespace Kiwi
         RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
     {
         // DX11 doesn't bundle pipeline state like DX12.
-        // Return an empty PSO — shader binding is done via SetVertexShader/SetPixelShader.
-        return CreatePipelineState();
+        // Return a PSO with appropriate cull mode — no InputLayout means fullscreen pass, disable culling.
+        return CreatePipelineStateWithCull(inputLayout != nullptr);
     }
 
     std::unique_ptr<RHIPipelineState> DX11Device::CreateGraphicsPipelineState(
         RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
         const PipelineStateDesc& pipelineDesc)
     {
-        (void)pipelineDesc;
         // DX11: MRT formats are handled at SetRenderTargets time, not PSO creation.
-        return CreatePipelineState();
+        // Use appropriate cull mode based on whether we have an input layout.
+        return CreatePipelineStateWithCull(inputLayout != nullptr);
     }
 
     // ============================================================

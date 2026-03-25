@@ -855,6 +855,7 @@ protected:
         DrawMenuBar();
         DrawRenderDocOverlay();
         DrawStatsOverlay();
+        DrawViewModeButton();
         DrawUI();
 
         ImGui::Render();
@@ -1352,6 +1353,7 @@ protected:
 
         // Release deferred rendering resources
         ReleaseGBufferResources();
+        ReleaseDeferredShaders();
 
         // Release shadow map resources
         ReleaseShadowResources();
@@ -1576,12 +1578,17 @@ private:
 
     void ReleaseGBufferResources()
     {
+        // Only release RT/RTV/SRV — shader/PSO are managed separately
         for (int i = 0; i < GBUFFER_COUNT; i++)
         {
             m_GBufferSRV[i].reset();
             m_GBufferRTV[i].reset();
             m_GBufferRT[i].reset();
         }
+    }
+
+    void ReleaseDeferredShaders()
+    {
         m_GBufferVS.reset();
         m_GBufferPS.reset();
         m_GBufferPSO.reset();
@@ -2120,6 +2127,28 @@ private:
     {
         if (ImGui::BeginMainMenuBar())
         {
+            if (ImGui::BeginMenu("File"))
+            {
+                if (ImGui::MenuItem("Create Scene"))
+                {
+                    m_Scene.Clear();
+                    m_GPUMeshes.clear();
+                    m_Scene.SetName("New Scene");
+                }
+                if (ImGui::MenuItem("Open Scene"))
+                {
+                    if (m_Scene.LoadFromFile("scene.json"))
+                    {
+                        RebuildAllGPUBuffers();
+                    }
+                }
+                if (ImGui::MenuItem("Save Scene"))
+                {
+                    m_Scene.SaveToFile("scene.json");
+                }
+                ImGui::EndMenu();
+            }
+
             if (ImGui::BeginMenu("Rendering"))
             {
                 if (ImGui::BeginMenu("RHI"))
@@ -2142,39 +2171,7 @@ private:
                     ImGui::EndMenu();
                 }
 
-                if (ImGui::BeginMenu("View Mode"))
-                {
-                    if (ImGui::MenuItem("Lit", nullptr, m_ViewMode == EViewMode::Lit))
-                        m_ViewMode = EViewMode::Lit;
-
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Buffer Visualization");
-
-                    if (ImGui::MenuItem("BaseColor", nullptr, m_ViewMode == EViewMode::BaseColor))
-                        m_ViewMode = EViewMode::BaseColor;
-                    if (ImGui::MenuItem("Roughness", nullptr, m_ViewMode == EViewMode::Roughness))
-                        m_ViewMode = EViewMode::Roughness;
-                    if (ImGui::MenuItem("Metallic", nullptr, m_ViewMode == EViewMode::Metallic))
-                        m_ViewMode = EViewMode::Metallic;
-
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Debug");
-
-                    if (ImGui::MenuItem("Unlit", nullptr, m_ViewMode == EViewMode::Unlit))
-                        m_ViewMode = EViewMode::Unlit;
-
-                    ImGui::EndMenu();
-                }
-
                 ImGui::EndMenu();
-            }
-
-            // Show current view mode indicator in menu bar
-            if (m_ViewMode != EViewMode::Lit)
-            {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                    "[%s]", GetViewModeName(m_ViewMode));
             }
 
             ImGui::EndMainMenuBar();
@@ -2300,11 +2297,11 @@ private:
         float menuBarHeight = ImGui::GetFrameHeight();
         float windowWidth = (float)GetWindow()->GetWidth();
         float btnSize = 32.0f;
+        float btnGap = 6.0f;
 
-        // Position: to the left of the RenderDoc button
-        // RenderDoc is at (windowWidth - 32 - 12), so stats button is at (windowWidth - 32*2 - 12 - 6)
+        // Right-to-left layout: RenderDoc | Stats | ViewMode
         float rdocBtnX = windowWidth - btnSize - 12.0f;
-        float statsBtnX = rdocBtnX - btnSize - 6.0f;
+        float statsBtnX = rdocBtnX - btnSize - btnGap;
 
         ImGui::SetNextWindowPos(
             ImVec2(statsBtnX, menuBarHeight + 6.0f),
@@ -2503,6 +2500,121 @@ private:
     }
 
     // ============================================================
+    // View Mode Button (top-right, left of Stats button)
+    // ============================================================
+
+    void DrawViewModeButton()
+    {
+        float menuBarHeight = ImGui::GetFrameHeight();
+        float windowWidth = (float)GetWindow()->GetWidth();
+        float btnSize = 32.0f;
+        float btnGap = 6.0f;
+
+        // Right-to-left layout: RenderDoc | Stats | ViewMode
+        float rdocBtnX = windowWidth - btnSize - 12.0f;
+        float statsBtnX = rdocBtnX - btnSize - btnGap;
+        float viewModeBtnX = statsBtnX - btnSize - btnGap;
+
+        ImGui::SetNextWindowPos(
+            ImVec2(viewModeBtnX, menuBarHeight + 6.0f),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.0f);
+
+        ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+        if (ImGui::Begin("##ViewModeBtn", nullptr, flags))
+        {
+            bool isLit = (m_ViewMode == EViewMode::Lit);
+
+            // Non-Lit modes get a yellow/orange tint to indicate active override
+            ImVec4 btnColor    = isLit ? ImVec4(0.25f, 0.32f, 0.38f, 0.95f)
+                                       : ImVec4(0.55f, 0.45f, 0.10f, 0.95f);
+            ImVec4 hoverColor  = isLit ? ImVec4(0.32f, 0.42f, 0.50f, 1.0f)
+                                       : ImVec4(0.65f, 0.55f, 0.15f, 1.0f);
+            ImVec4 activeColor = isLit ? ImVec4(0.18f, 0.25f, 0.30f, 1.0f)
+                                       : ImVec4(0.45f, 0.35f, 0.08f, 1.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+
+            if (ImGui::Button("##ViewModeIcon", ImVec2(btnSize, btnSize)))
+            {
+                ImGui::OpenPopup("ViewModePopup");
+            }
+
+            ImGui::PopStyleVar(1);  // FrameRounding
+            ImGui::PopStyleColor(4);
+
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("View Mode: %s", GetViewModeName(m_ViewMode));
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Click to change view mode");
+                ImGui::EndTooltip();
+            }
+
+            // Draw eye icon on the button
+            ImVec2 btnMin = ImGui::GetItemRectMin();
+            ImVec2 btnMax = ImGui::GetItemRectMax();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 center = ImVec2((btnMin.x + btnMax.x) * 0.5f, (btnMin.y + btnMax.y) * 0.5f);
+
+            // Draw a simple eye shape
+            ImU32 iconColor = isLit ? IM_COL32(200, 200, 200, 255) : IM_COL32(255, 220, 80, 255);
+            float r = 7.0f;
+            // Eye outline (horizontal ellipse)
+            drawList->AddEllipse(center, ImVec2(r, r * 0.55f), iconColor, 0.0f, 0, 1.5f);
+            // Pupil
+            drawList->AddCircleFilled(center, 2.5f, iconColor);
+
+            // Popup menu for view mode selection
+            if (ImGui::BeginPopup("ViewModePopup"))
+            {
+                ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "View Mode");
+                ImGui::Separator();
+
+                if (ImGui::MenuItem("Lit", nullptr, m_ViewMode == EViewMode::Lit))
+                    m_ViewMode = EViewMode::Lit;
+
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Buffer Visualization");
+
+                if (ImGui::MenuItem("BaseColor", nullptr, m_ViewMode == EViewMode::BaseColor))
+                    m_ViewMode = EViewMode::BaseColor;
+                if (ImGui::MenuItem("Roughness", nullptr, m_ViewMode == EViewMode::Roughness))
+                    m_ViewMode = EViewMode::Roughness;
+                if (ImGui::MenuItem("Metallic", nullptr, m_ViewMode == EViewMode::Metallic))
+                    m_ViewMode = EViewMode::Metallic;
+
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Debug");
+
+                if (ImGui::MenuItem("Unlit", nullptr, m_ViewMode == EViewMode::Unlit))
+                    m_ViewMode = EViewMode::Unlit;
+
+                ImGui::EndPopup();
+            }
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+    }
+
+    // ============================================================
     // UI
     // ============================================================
 
@@ -2520,29 +2632,6 @@ private:
         // Show current RHI
         const char* rhiName = (GetCurrentRHIType() == RHI_API_TYPE::DX11) ? "Direct3D 11" : "Direct3D 12";
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "RHI: %s", rhiName);
-        ImGui::Separator();
-
-        // Menu bar within panel
-        if (ImGui::Button("New Scene"))
-        {
-            m_Scene.Clear();
-            m_GPUMeshes.clear();
-            m_Scene.SetName("New Scene");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Save"))
-        {
-            m_Scene.SaveToFile("scene.json");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Load"))
-        {
-            if (m_Scene.LoadFromFile("scene.json"))
-            {
-                RebuildAllGPUBuffers();
-            }
-        }
-
         ImGui::Separator();
 
         // Scene object list
