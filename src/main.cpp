@@ -23,8 +23,96 @@
 #include <cmath>
 #include <algorithm>
 #include <filesystem>
+#include <string>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 
 using namespace Kiwi;
+
+// ============================================================
+// Pass Timer — High-resolution CPU timing for render passes
+// ============================================================
+
+struct PassTimingEntry
+{
+    std::string Name;
+    double      TimeMs = 0.0;   // Last measured time in milliseconds
+};
+
+class PassTimer
+{
+public:
+    PassTimer()
+    {
+        QueryPerformanceFrequency(&m_Frequency);
+    }
+
+    void Begin(const std::string& name)
+    {
+        m_CurrentName = name;
+        QueryPerformanceCounter(&m_StartTime);
+    }
+
+    void End()
+    {
+        LARGE_INTEGER endTime;
+        QueryPerformanceCounter(&endTime);
+        double elapsed = (double)(endTime.QuadPart - m_StartTime.QuadPart) /
+                         (double)m_Frequency.QuadPart * 1000.0;
+
+        // Update or insert entry
+        bool found = false;
+        for (auto& entry : m_Entries)
+        {
+            if (entry.Name == m_CurrentName)
+            {
+                // Smooth with exponential moving average (alpha=0.1)
+                entry.TimeMs = entry.TimeMs * 0.9 + elapsed * 0.1;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            m_Entries.push_back({ m_CurrentName, elapsed });
+        }
+
+        m_TotalMs = m_TotalMs * 0.9 + elapsed * 0.1;
+    }
+
+    void FrameReset()
+    {
+        m_TotalMs = 0.0;
+        // Don't clear entries — keep smoothed values
+    }
+
+    void BeginFrame()
+    {
+        // Reset per-frame total, but keep smoothed per-pass data
+        m_FrameTotalMs = 0.0;
+    }
+
+    void EndFrame()
+    {
+        m_FrameTotalMs = 0.0;
+        for (auto& e : m_Entries)
+            m_FrameTotalMs += e.TimeMs;
+    }
+
+    const std::vector<PassTimingEntry>& GetEntries() const { return m_Entries; }
+    double GetFrameTotalMs() const { return m_FrameTotalMs; }
+
+private:
+    LARGE_INTEGER m_Frequency = {};
+    LARGE_INTEGER m_StartTime = {};
+    std::string   m_CurrentName;
+    std::vector<PassTimingEntry> m_Entries;
+    double m_TotalMs = 0.0;
+    double m_FrameTotalMs = 0.0;
+};
 
 // ============================================================
 // GPU Mesh Data — holds buffers for a single mesh
@@ -533,26 +621,35 @@ protected:
         ctx->SetInputLayout(m_InputLayout.get());
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
+        m_PassTimer.BeginFrame();
+
         // ---- Draw all mesh components (sorted by InitView) ----
         ctx->BeginEvent("Geometry Pass");
+        m_PassTimer.Begin("Geometry Pass");
         DrawSceneMeshes(ctx);
+        m_PassTimer.End();
         ctx->EndEvent();
 
         // ---- Draw Gizmo for selected object ----
         ctx->BeginEvent("Gizmo Pass");
+        m_PassTimer.Begin("Gizmo Pass");
         DrawGizmo(ctx);
+        m_PassTimer.End();
         ctx->EndEvent();
 
         // ---- Post-Process Pass ----
         if (hasPostProcess)
         {
             ctx->BeginEvent("Post-Process Pass");
+            m_PassTimer.Begin("Post-Process Pass");
             ExecutePostProcessPasses(ctx, device, activeEffects, swapChain);
+            m_PassTimer.End();
             ctx->EndEvent();
         }
 
         // ---- ImGui ----
         ctx->BeginEvent("ImGui Pass");
+        m_PassTimer.Begin("ImGui Pass");
         // ImGui always renders to the backbuffer
         auto backBufferRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
         ctx->SetRenderTargets(&backBufferRTV, 1, nullptr);
@@ -564,11 +661,15 @@ protected:
 
         DrawMenuBar();
         DrawRenderDocOverlay();
+        DrawStatsOverlay();
         DrawUI();
 
         ImGui::Render();
         device->ImGuiRenderDrawData(ctx);
+        m_PassTimer.End();
         ctx->EndEvent();
+
+        m_PassTimer.EndFrame();
 
         // ---- End frame (DX12: BackBuffer->Present barrier; DX11: no-op) ----
         ctx->EndFrame(swapChain);
@@ -1264,6 +1365,217 @@ private:
         }
         ImGui::End();
         ImGui::PopStyleVar(2);  // WindowPadding, WindowBorderSize
+    }
+
+    // ============================================================
+    // Stats Overlay (compact button + expandable stats panel)
+    // ============================================================
+
+    void DrawStatsOverlay()
+    {
+        float menuBarHeight = ImGui::GetFrameHeight();
+        float windowWidth = (float)GetWindow()->GetWidth();
+        float btnSize = 32.0f;
+
+        // Position: to the left of the RenderDoc button
+        // RenderDoc is at (windowWidth - 32 - 12), so stats button is at (windowWidth - 32*2 - 12 - 6)
+        float rdocBtnX = windowWidth - btnSize - 12.0f;
+        float statsBtnX = rdocBtnX - btnSize - 6.0f;
+
+        ImGui::SetNextWindowPos(
+            ImVec2(statsBtnX, menuBarHeight + 6.0f),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.0f);
+
+        ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+        if (ImGui::Begin("##StatsBtn", nullptr, flags))
+        {
+            // Button style: teal/cyan for stats
+            ImVec4 btnColor    = m_ShowStats ? ImVec4(0.15f, 0.50f, 0.45f, 0.95f)
+                                             : ImVec4(0.25f, 0.32f, 0.38f, 0.95f);
+            ImVec4 hoverColor  = m_ShowStats ? ImVec4(0.20f, 0.60f, 0.55f, 1.0f)
+                                             : ImVec4(0.32f, 0.42f, 0.50f, 1.0f);
+            ImVec4 activeColor = m_ShowStats ? ImVec4(0.10f, 0.40f, 0.35f, 1.0f)
+                                             : ImVec4(0.18f, 0.25f, 0.30f, 1.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+
+            if (ImGui::Button("##StatsIcon", ImVec2(btnSize, btnSize)))
+            {
+                m_ShowStats = !m_ShowStats;
+            }
+
+            ImGui::PopStyleVar(1);  // FrameRounding
+            ImGui::PopStyleColor(4);
+
+            // Tooltip
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("Render Stats");
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                    m_ShowStats ? "Click to hide stats" : "Click to show stats");
+                ImGui::EndTooltip();
+            }
+
+            // Draw bar chart icon on the button
+            ImVec2 btnMin = ImGui::GetItemRectMin();
+            ImVec2 btnMax = ImGui::GetItemRectMax();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImU32 white = IM_COL32(255, 255, 255, 220);
+
+            float cx = (btnMin.x + btnMax.x) * 0.5f;
+            float cy = (btnMin.y + btnMax.y) * 0.5f;
+            float barW = 3.0f;
+            float gap = 2.0f;
+            float baseY = cy + 6.0f;
+
+            // Three bars of different heights (bar chart icon)
+            float heights[] = { 8.0f, 14.0f, 11.0f };
+            float startX = cx - (barW * 3 + gap * 2) * 0.5f;
+            for (int i = 0; i < 3; i++)
+            {
+                float x = startX + i * (barW + gap);
+                drawList->AddRectFilled(
+                    ImVec2(x, baseY - heights[i]),
+                    ImVec2(x + barW, baseY),
+                    white, 1.0f);
+            }
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+
+        // ---- Stats Panel (expanded view) ----
+        if (m_ShowStats)
+        {
+            DrawStatsPanel();
+        }
+    }
+
+    void DrawStatsPanel()
+    {
+        float menuBarHeight = ImGui::GetFrameHeight();
+        float windowWidth = (float)GetWindow()->GetWidth();
+        float panelWidth = 240.0f;
+
+        ImGui::SetNextWindowPos(
+            ImVec2(windowWidth - panelWidth - 8.0f, menuBarHeight + 44.0f),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(panelWidth, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.85f);
+
+        ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.14f, 0.18f, 0.92f));
+
+        if (ImGui::Begin("##StatsPanel", nullptr, flags))
+        {
+            // Header
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.75f, 1.0f), "Render Stats");
+            ImGui::Separator();
+
+            // FPS
+            ImGuiIO& io = ImGui::GetIO();
+            ImGui::Text("FPS: %.1f (%.2f ms)", io.Framerate, 1000.0f / io.Framerate);
+
+            // RHI backend
+            const char* rhiName = (GetCurrentRHIType() == RHI_API_TYPE::DX11) ? "DX11" : "DX12";
+            ImGui::Text("RHI: %s", rhiName);
+
+            ImGui::Separator();
+
+            // Pass timings
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Pass Timings (CPU)");
+
+            const auto& entries = m_PassTimer.GetEntries();
+            double totalMs = m_PassTimer.GetFrameTotalMs();
+
+            // Bar width for visual proportions
+            float maxBarWidth = panelWidth - 100.0f;
+
+            for (const auto& entry : entries)
+            {
+                // Color-code by pass name
+                ImVec4 barColor = ImVec4(0.4f, 0.6f, 0.8f, 0.8f); // default blue
+                if (entry.Name.find("Geometry") != std::string::npos)
+                    barColor = ImVec4(0.3f, 0.75f, 0.4f, 0.8f);   // green
+                else if (entry.Name.find("Gizmo") != std::string::npos)
+                    barColor = ImVec4(0.9f, 0.7f, 0.2f, 0.8f);    // yellow
+                else if (entry.Name.find("Post-Process") != std::string::npos)
+                    barColor = ImVec4(0.7f, 0.4f, 0.8f, 0.8f);    // purple
+                else if (entry.Name.find("ImGui") != std::string::npos)
+                    barColor = ImVec4(0.8f, 0.45f, 0.3f, 0.8f);   // orange
+
+                // Pass name and time
+                ImGui::Text("%s", entry.Name.c_str());
+                ImGui::SameLine(140.0f);
+                ImGui::Text("%.3f ms", entry.TimeMs);
+
+                // Proportion bar
+                float fraction = (totalMs > 0.001) ? (float)(entry.TimeMs / totalMs) : 0.0f;
+                float barWidth = fraction * maxBarWidth;
+                if (barWidth < 2.0f) barWidth = 2.0f;
+
+                ImVec2 cursor = ImGui::GetCursorScreenPos();
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                drawList->AddRectFilled(
+                    cursor,
+                    ImVec2(cursor.x + barWidth, cursor.y + 4.0f),
+                    ImGui::GetColorU32(barColor),
+                    2.0f);
+                // Also draw background bar
+                drawList->AddRectFilled(
+                    ImVec2(cursor.x + barWidth, cursor.y),
+                    ImVec2(cursor.x + maxBarWidth, cursor.y + 4.0f),
+                    IM_COL32(60, 60, 60, 100),
+                    2.0f);
+                ImGui::Dummy(ImVec2(maxBarWidth, 6.0f));
+            }
+
+            if (!entries.empty())
+            {
+                ImGui::Separator();
+                ImGui::Text("Total");
+                ImGui::SameLine(140.0f);
+                ImGui::Text("%.3f ms", totalMs);
+            }
+
+            // Render list info
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Scene");
+            ImGui::Text("Objects: %d", (int)m_Scene.GetObjects().size());
+            ImGui::Text("Visible: %d", (int)m_RenderList.size());
+        }
+        ImGui::End();
+        ImGui::PopStyleColor(1);
+        ImGui::PopStyleVar(2);
     }
 
     // ============================================================
@@ -1987,6 +2299,10 @@ private:
     bool m_CaptureTriggered = false;
     bool m_AutoOpenRenderDoc = false;
     uint32_t m_LastCaptureCount = 0;
+
+    // Stats overlay state
+    PassTimer m_PassTimer;
+    bool m_ShowStats = false;
 
     // Gizmo state
     GizmoMeshData m_GizmoMeshData[3];                    // CPU mesh data for 3 axes
