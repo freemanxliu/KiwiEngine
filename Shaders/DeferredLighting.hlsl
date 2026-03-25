@@ -1,23 +1,17 @@
 // ============================================================
-// Default Phong Shader
-// Lambert Diffuse + Blinn-Phong Specular
-// Supports multiple lights (Directional + Point)
-// Supports optional texture sampling
+// Deferred Lighting Pass Shader
+// Reads G-Buffer (Position, Normal, Albedo) and computes lighting
+// Uses fullscreen triangle (SV_VertexID)
 // ============================================================
 
-// Maximum number of lights supported
 #define MAX_LIGHTS 8
-
-// Light types
-#define LIGHT_TYPE_DIRECTIONAL 0
-#define LIGHT_TYPE_POINT       1
 
 struct LightData
 {
-    float3 ColorIntensity;  // LightColor * Intensity
-    int    Type;            // 0 = Directional, 1 = Point
-    float3 DirectionOrPos;  // Direction (Directional) or Position (Point)
-    float  Radius;          // Point light radius (0 for directional)
+    float3 ColorIntensity;
+    int    Type;
+    float3 DirectionOrPos;
+    float  Radius;
 };
 
 cbuffer Constants : register(b0)
@@ -34,66 +28,56 @@ cbuffer Constants : register(b0)
     LightData g_Lights[MAX_LIGHTS];
 };
 
-// Texture and sampler (optional — used when texture is bound)
-Texture2D g_AlbedoTexture : register(t0);
-SamplerState g_TextureSampler : register(s1);
+// G-Buffer textures
+Texture2D g_PositionBuffer : register(t0);
+Texture2D g_NormalBuffer   : register(t1);
+Texture2D g_AlbedoBuffer   : register(t2);
 
-struct VSInput
-{
-    float3 Position : POSITION;
-    float3 Normal   : NORMAL;
-    float4 Color    : COLOR;
-    float2 TexCoord : TEXCOORD;
-};
+SamplerState g_GBufferSampler : register(s0); // Linear clamp
 
 struct VSOutput
 {
-    float4 PositionCS : SV_POSITION;
-    float3 PositionWS : POSITION;
-    float3 NormalWS   : NORMAL;
-    float4 Color      : COLOR;
-    float2 TexCoord   : TEXCOORD;
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
 };
 
-// ---- Vertex Shader ----
-VSOutput VSMain(VSInput input)
+// ---- Fullscreen Triangle Vertex Shader ----
+VSOutput VSMain(uint vertexID : SV_VertexID)
 {
     VSOutput output;
 
-    float4 worldPos = mul(float4(input.Position, 1.0), g_World);
-    float4 viewPos = mul(worldPos, g_View);
-    float4 projPos = mul(viewPos, g_Projection);
-
-    output.PositionCS = projPos;
-    output.PositionWS = worldPos.xyz;
-    output.NormalWS = mul(input.Normal, (float3x3)g_World);
-    output.Color = input.Color * g_ObjectColor;
-    output.TexCoord = input.TexCoord;
-
+    // Generate full-screen triangle from vertex ID
+    float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
+    output.Position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
+    output.TexCoord = float2(uv.x, 1.0 - uv.y);
     return output;
 }
 
-// ---- Pixel Shader ----
+// ---- Lighting Pixel Shader ----
 float4 PSMain(VSOutput input) : SV_TARGET
 {
-    // Gizmo / unlit mode: if g_Selected > 1.5 we treat it as unlit (pure vertex color)
-    if (g_Selected > 1.5)
+    // Sample G-Buffer
+    float4 positionData = g_PositionBuffer.Sample(g_GBufferSampler, input.TexCoord);
+    float4 normalData   = g_NormalBuffer.Sample(g_GBufferSampler, input.TexCoord);
+    float4 albedoData   = g_AlbedoBuffer.Sample(g_GBufferSampler, input.TexCoord);
+
+    // Skip pixels with no geometry (alpha == 0 in albedo)
+    if (albedoData.a < 0.01)
     {
-        return float4(input.Color.rgb * g_ObjectColor.rgb, input.Color.a);
+        return float4(0.12, 0.12, 0.18, 1.0); // Background color
     }
 
-    float3 normal = normalize(input.NormalWS);
-    float3 viewDir = normalize(g_CameraPos - input.PositionWS);
+    float3 worldPos = positionData.xyz;
+    float3 normal = normalize(normalData.xyz * 2.0 - 1.0); // Unpack from [0,1] to [-1,1]
+    float3 albedo = albedoData.rgb;
 
-    // Base color from vertex color (texture sampling can be added here)
-    float3 albedo = input.Color.rgb;
+    float3 viewDir = normalize(g_CameraPos - worldPos);
 
     // Ambient
     float3 ambient = float3(0.15, 0.15, 0.15);
     float3 totalDiffuse = float3(0, 0, 0);
     float3 totalSpecular = float3(0, 0, 0);
 
-    // Accumulate light contributions
     int numLights = min(g_NumLights, MAX_LIGHTS);
     for (int i = 0; i < numLights; i++)
     {
@@ -101,13 +85,13 @@ float4 PSMain(VSOutput input) : SV_TARGET
         float3 lightDir;
         float attenuation = 1.0;
 
-        if (g_Lights[i].Type == LIGHT_TYPE_DIRECTIONAL)
+        if (g_Lights[i].Type == 0) // Directional
         {
             lightDir = normalize(g_Lights[i].DirectionOrPos);
         }
-        else // LIGHT_TYPE_POINT
+        else // Point
         {
-            float3 toLight = g_Lights[i].DirectionOrPos - input.PositionWS;
+            float3 toLight = g_Lights[i].DirectionOrPos - worldPos;
             float dist = length(toLight);
             lightDir = toLight / max(dist, 0.0001);
 
@@ -127,7 +111,7 @@ float4 PSMain(VSOutput input) : SV_TARGET
         totalSpecular += lightColor * spec * 0.3 * attenuation;
     }
 
-    // If no lights in scene, use a default directional light (fallback)
+    // Fallback light if no lights in scene
     if (numLights == 0)
     {
         float3 defaultLightDir = normalize(float3(0.5, 0.7, 0.3));
@@ -141,5 +125,5 @@ float4 PSMain(VSOutput input) : SV_TARGET
 
     float3 finalColor = albedo * (ambient + totalDiffuse) + totalSpecular;
 
-    return float4(finalColor, input.Color.a);
+    return float4(finalColor, 1.0);
 }

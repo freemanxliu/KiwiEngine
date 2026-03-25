@@ -109,6 +109,13 @@ namespace Kiwi
             RHIShader* pixelShader,
             RHIInputLayout* inputLayout) override;
 
+        // MRT variant (DX11: same as above, RTV formats handled by SetRenderTargets)
+        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader,
+            RHIShader* pixelShader,
+            RHIInputLayout* inputLayout,
+            const PipelineStateDesc& pipelineDesc) override;
+
         // Sampler
         std::unique_ptr<RHISampler> CreateSampler() override;
 
@@ -145,6 +152,11 @@ namespace Kiwi
         ~DX11CommandContext() override;
 
         void* GetNativeHandle() const override { return m_Context.Get(); }
+
+        // GPU debug annotations (RenderDoc / PIX)
+        void BeginEvent(const char* name) override;
+        void EndEvent() override;
+        void SetMarker(const char* name) override;
 
         // Render Targets
         void SetRenderTargets(
@@ -199,6 +211,7 @@ namespace Kiwi
 
     private:
         ComPtr<ID3D11DeviceContext> m_Context;
+        ComPtr<ID3DUserDefinedAnnotation> m_Annotation;
     };
 
 } // namespace Kiwi

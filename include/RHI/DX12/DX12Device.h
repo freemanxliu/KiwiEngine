@@ -17,6 +17,8 @@ namespace Kiwi
         switch (format)
         {
         case EFormat::R8G8B8A8_UNORM:     return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case EFormat::R16G16B16A16_FLOAT:  return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case EFormat::R16G16_FLOAT:        return DXGI_FORMAT_R16G16_FLOAT;
         case EFormat::R32G32B32A32_FLOAT:  return DXGI_FORMAT_R32G32B32A32_FLOAT;
         case EFormat::R32G32B32_FLOAT:     return DXGI_FORMAT_R32G32B32_FLOAT;
         case EFormat::R32G32_FLOAT:        return DXGI_FORMAT_R32G32_FLOAT;
@@ -264,6 +266,13 @@ namespace Kiwi
             RHIShader* pixelShader,
             RHIInputLayout* inputLayout) override;
 
+        // 创建图形管线状态（MRT — 指定渲染目标格式）
+        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader,
+            RHIShader* pixelShader,
+            RHIInputLayout* inputLayout,
+            const PipelineStateDesc& pipelineDesc) override;
+
         // ---- ImGui 集成 ----
         void InitImGui(void* windowHandle) override;
         void ShutdownImGui() override;
@@ -291,12 +300,12 @@ namespace Kiwi
         HANDLE                      m_FenceEvent = nullptr;
         bool                        m_EnableDebug;
 
-        // SRV heap for ImGui + post-process (16 descriptors, index 0 = ImGui)
+        // SRV heap for ImGui + post-process + G-Buffer (32 descriptors, index 0 = ImGui)
         ComPtr<ID3D12DescriptorHeap> m_SRVHeap;
         uint32_t m_SRVDescriptorSize = 0;
         uint32_t m_SRVAllocated = 1; // index 0 reserved for ImGui
 
-        // RTV heap for offscreen render targets (separate from SwapChain's RTV heap)
+        // RTV heap for offscreen render targets + G-Buffer (separate from SwapChain's RTV heap)
         ComPtr<ID3D12DescriptorHeap> m_OffscreenRTVHeap;
         uint32_t m_OffscreenRTVDescriptorSize = 0;
         uint32_t m_OffscreenRTVAllocated = 0;
@@ -332,6 +341,11 @@ namespace Kiwi
         // Frame lifecycle
         void BeginFrame(RHISwapChain* swapChain) override;
         void EndFrame(RHISwapChain* swapChain) override;
+
+        // GPU debug annotations (RenderDoc / PIX)
+        void BeginEvent(const char* name) override;
+        void EndEvent() override;
+        void SetMarker(const char* name) override;
 
         // Resource barriers
         void ResourceBarrier(RHITexture* texture, int stateBefore, int stateAfter) override;

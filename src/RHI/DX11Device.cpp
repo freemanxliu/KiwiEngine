@@ -3,6 +3,7 @@
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 #include <stdexcept>
+#include <vector>
 
 namespace Kiwi
 {
@@ -628,10 +629,38 @@ namespace Kiwi
     DX11CommandContext::DX11CommandContext(ID3D11DeviceContext* context)
         : m_Context(context)
     {
+        // Query ID3DUserDefinedAnnotation for GPU debug markers (RenderDoc / PIX)
+        context->QueryInterface(__uuidof(ID3DUserDefinedAnnotation),
+            reinterpret_cast<void**>(m_Annotation.GetAddressOf()));
     }
 
     DX11CommandContext::~DX11CommandContext()
     {
+    }
+
+    void DX11CommandContext::BeginEvent(const char* name)
+    {
+        if (!m_Annotation || !name) return;
+        // Convert to wide string
+        int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
+        std::vector<wchar_t> wname(len);
+        MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
+        m_Annotation->BeginEvent(wname.data());
+    }
+
+    void DX11CommandContext::EndEvent()
+    {
+        if (m_Annotation)
+            m_Annotation->EndEvent();
+    }
+
+    void DX11CommandContext::SetMarker(const char* name)
+    {
+        if (!m_Annotation || !name) return;
+        int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
+        std::vector<wchar_t> wname(len);
+        MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
+        m_Annotation->SetMarker(wname.data());
     }
 
     void DX11CommandContext::SetRenderTargets(
@@ -872,6 +901,15 @@ namespace Kiwi
     {
         // DX11 doesn't bundle pipeline state like DX12.
         // Return an empty PSO — shader binding is done via SetVertexShader/SetPixelShader.
+        return CreatePipelineState();
+    }
+
+    std::unique_ptr<RHIPipelineState> DX11Device::CreateGraphicsPipelineState(
+        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
+        const PipelineStateDesc& pipelineDesc)
+    {
+        (void)pipelineDesc;
+        // DX11: MRT formats are handled at SetRenderTargets time, not PSO creation.
         return CreatePipelineState();
     }
 

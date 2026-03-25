@@ -8,7 +8,7 @@ namespace Kiwi
         Mesh mesh;
         float half = size * 0.5f;
 
-        // 定义8个顶点
+        // 8 corner positions
         Vec3 positions[8] = {
             { -half, -half, -half }, // 0
             {  half, -half, -half }, // 1
@@ -20,7 +20,6 @@ namespace Kiwi
             { -half,  half,  half }, // 7
         };
 
-        // 为每个面定义不同的颜色
         Vec4 faceColors[6] = {
             { 1.0f, 0.2f, 0.2f, 1.0f }, // Front  - Red
             { 0.2f, 1.0f, 0.2f, 1.0f }, // Back   - Green
@@ -30,7 +29,6 @@ namespace Kiwi
             { 0.2f, 1.0f, 1.0f, 1.0f }, // Left   - Cyan
         };
 
-        // 定义6个面（每面2个三角形，24个顶点）
         struct Face
         {
             int indices[4];
@@ -38,18 +36,20 @@ namespace Kiwi
         };
 
         Face faces[6] = {
-            // Front (Z+)  - CW from outside: 4→5→6, 4→6→7
-            { { 4, 5, 6, 7 }, {  0,  0,  1 } },
-            // Back (Z-)   - CW from outside: 1→0→3, 1→3→2
-            { { 1, 0, 3, 2 }, {  0,  0, -1 } },
-            // Top (Y+)    - CW from outside: 7→6→2, 7→2→3
-            { { 7, 6, 2, 3 }, {  0,  1,  0 } },
-            // Bottom (Y-) - CW from outside: 4→0→1, 4→1→5
-            { { 4, 0, 1, 5 }, {  0, -1,  0 } },
-            // Right (X+)  - CW from outside: 5→1→2, 5→2→6
-            { { 5, 1, 2, 6 }, {  1,  0,  0 } },
-            // Left (X-)   - CW from outside: 0→4→7, 0→7→3
-            { { 0, 4, 7, 3 }, { -1,  0,  0 } },
+            { { 4, 5, 6, 7 }, {  0,  0,  1 } }, // Front  (Z+)
+            { { 1, 0, 3, 2 }, {  0,  0, -1 } }, // Back   (Z-)
+            { { 7, 6, 2, 3 }, {  0,  1,  0 } }, // Top    (Y+)
+            { { 4, 0, 1, 5 }, {  0, -1,  0 } }, // Bottom (Y-)
+            { { 5, 1, 2, 6 }, {  1,  0,  0 } }, // Right  (X+)
+            { { 0, 4, 7, 3 }, { -1,  0,  0 } }, // Left   (X-)
+        };
+
+        // UV corners for each face quad
+        Vec2 faceUVs[4] = {
+            { 0.0f, 1.0f }, // bottom-left
+            { 1.0f, 1.0f }, // bottom-right
+            { 1.0f, 0.0f }, // top-right
+            { 0.0f, 0.0f }, // top-left
         };
 
         for (int f = 0; f < 6; f++)
@@ -57,17 +57,16 @@ namespace Kiwi
             Vec4 color = faceColors[f];
             Vec3 normal = faces[f].normal;
 
-            // 4个顶点
             for (int i = 0; i < 4; i++)
             {
                 Vertex v;
                 v.Position = positions[faces[f].indices[i]];
                 v.Normal = normal;
                 v.Color = color;
+                v.TexCoord = faceUVs[i];
                 mesh.m_Vertices.push_back(v);
             }
 
-            // 2个三角形（使用 4个顶点中的索引）
             uint32_t base = (uint32_t)(f * 4);
             mesh.m_Indices.push_back(base + 0);
             mesh.m_Indices.push_back(base + 1);
@@ -85,7 +84,6 @@ namespace Kiwi
     {
         Mesh mesh;
 
-        // 经纬线球体生成
         for (uint32_t y = 0; y <= segments; y++)
         {
             float phi = (float)y / segments * PI;
@@ -100,12 +98,16 @@ namespace Kiwi
 
                 v.Normal = v.Position.Normalize();
 
-                // 简单颜色：根据位置
                 v.Color = Vec4(
                     0.5f + 0.5f * v.Normal.x,
                     0.5f + 0.5f * v.Normal.y,
                     0.5f + 0.5f * v.Normal.z,
                     1.0f);
+
+                // Spherical UV mapping
+                v.TexCoord = Vec2(
+                    (float)x / (float)segments,
+                    (float)y / (float)segments);
 
                 mesh.m_Vertices.push_back(v);
             }
@@ -138,12 +140,13 @@ namespace Kiwi
         Mesh mesh;
         float halfH = height * 0.5f;
 
-        // Side vertices
+        // Side vertices with UV
         for (uint32_t i = 0; i <= segments; i++)
         {
             float theta = (float)i / segments * 2.0f * PI;
             float cosT = cosf(theta);
             float sinT = sinf(theta);
+            float u = (float)i / (float)segments;
 
             Vec3 normal = { cosT, 0.0f, sinT };
 
@@ -152,6 +155,7 @@ namespace Kiwi
             vBot.Position = { radius * cosT, -halfH, radius * sinT };
             vBot.Normal = normal;
             vBot.Color = { 0.5f + 0.5f * cosT, 0.7f, 0.5f + 0.5f * sinT, 1.0f };
+            vBot.TexCoord = { u, 1.0f };
             mesh.m_Vertices.push_back(vBot);
 
             // Top vertex
@@ -159,6 +163,7 @@ namespace Kiwi
             vTop.Position = { radius * cosT, halfH, radius * sinT };
             vTop.Normal = normal;
             vTop.Color = vBot.Color;
+            vTop.TexCoord = { u, 0.0f };
             mesh.m_Vertices.push_back(vTop);
         }
 
@@ -182,16 +187,20 @@ namespace Kiwi
             vc.Position = { 0, halfH, 0 };
             vc.Normal = { 0, 1, 0 };
             vc.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
+            vc.TexCoord = { 0.5f, 0.5f };
             mesh.m_Vertices.push_back(vc);
         }
 
         for (uint32_t i = 0; i <= segments; i++)
         {
             float theta = (float)i / segments * 2.0f * PI;
+            float ct = cosf(theta);
+            float st = sinf(theta);
             Vertex v;
-            v.Position = { radius * cosf(theta), halfH, radius * sinf(theta) };
+            v.Position = { radius * ct, halfH, radius * st };
             v.Normal = { 0, 1, 0 };
             v.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
+            v.TexCoord = { 0.5f + 0.5f * ct, 0.5f + 0.5f * st };
             mesh.m_Vertices.push_back(v);
         }
 
@@ -209,16 +218,20 @@ namespace Kiwi
             vc.Position = { 0, -halfH, 0 };
             vc.Normal = { 0, -1, 0 };
             vc.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
+            vc.TexCoord = { 0.5f, 0.5f };
             mesh.m_Vertices.push_back(vc);
         }
 
         for (uint32_t i = 0; i <= segments; i++)
         {
             float theta = (float)i / segments * 2.0f * PI;
+            float ct = cosf(theta);
+            float st = sinf(theta);
             Vertex v;
-            v.Position = { radius * cosf(theta), -halfH, radius * sinf(theta) };
+            v.Position = { radius * ct, -halfH, radius * st };
             v.Normal = { 0, -1, 0 };
             v.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
+            v.TexCoord = { 0.5f + 0.5f * ct, 0.5f - 0.5f * st };
             mesh.m_Vertices.push_back(v);
         }
 
@@ -239,10 +252,10 @@ namespace Kiwi
         float hw = width * 0.5f;
         float hh = height * 0.5f;
 
-        Vertex v0 = { { -hw, 0, -hh }, { 0, 1, 0 }, { 1, 1, 1, 1 } };
-        Vertex v1 = { {  hw, 0, -hh }, { 0, 1, 0 }, { 1, 1, 1, 1 } };
-        Vertex v2 = { {  hw, 0,  hh }, { 0, 1, 0 }, { 1, 1, 1, 1 } };
-        Vertex v3 = { { -hw, 0,  hh }, { 0, 1, 0 }, { 1, 1, 1, 1 } };
+        Vertex v0 = { { -hw, 0, -hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 0, 0 } };
+        Vertex v1 = { {  hw, 0, -hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 1, 0 } };
+        Vertex v2 = { {  hw, 0,  hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 1, 1 } };
+        Vertex v3 = { { -hw, 0,  hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 0, 1 } };
 
         mesh.m_Vertices.push_back(v0);
         mesh.m_Vertices.push_back(v1);

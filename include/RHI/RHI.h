@@ -171,6 +171,13 @@ namespace Kiwi
             RHIShader* pixelShader,
             RHIInputLayout* inputLayout) = 0;
 
+        // 创建图形管线状态（MRT — 指定渲染目标格式，用于延迟渲染 G-Buffer 等）
+        virtual std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader,
+            RHIShader* pixelShader,
+            RHIInputLayout* inputLayout,
+            const PipelineStateDesc& pipelineDesc) = 0;
+
         // 创建采样器
         virtual std::unique_ptr<RHISampler> CreateSampler() = 0;
 
@@ -200,6 +207,11 @@ namespace Kiwi
         // ---- 帧生命周期（DX12: Reset/RootSig/DescriptorHeaps/Barrier；DX11: 空操作）----
         virtual void BeginFrame(RHISwapChain* swapChain) {}
         virtual void EndFrame(RHISwapChain* swapChain) {}
+
+        // ---- GPU 调试标注（RenderDoc / PIX 可识别的 Pass 分组）----
+        virtual void BeginEvent(const char* name) {}
+        virtual void EndEvent() {}
+        virtual void SetMarker(const char* name) {}
 
         // 资源屏障（DX12/Vulkan 用，DX11 空实现）
         virtual void ResourceBarrier(RHITexture* texture, int stateBefore, int stateAfter) {}

@@ -32,6 +32,7 @@ struct VSInput
     float3 Position : POSITION;
     float3 Normal   : NORMAL;
     float4 Color    : COLOR;
+    float2 TexCoord : TEXCOORD;
 };
 
 struct VSOutput
@@ -40,6 +41,7 @@ struct VSOutput
     float3 PositionWS : POSITION;
     float3 NormalWS   : NORMAL;
     float4 Color      : COLOR;
+    float2 TexCoord   : TEXCOORD;
 };
 
 // ---- Vertex Shader ----
@@ -55,6 +57,7 @@ VSOutput VSMain(VSInput input)
     output.PositionWS = worldPos.xyz;
     output.NormalWS = mul(input.Normal, (float3x3)g_World);
     output.Color = input.Color * g_ObjectColor;
+    output.TexCoord = input.TexCoord;
 
     return output;
 }

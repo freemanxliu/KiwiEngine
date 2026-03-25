@@ -166,9 +166,9 @@ namespace Kiwi
             throw std::runtime_error("Failed to create DX12 fence");
         m_FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
-        // Create SRV heap for ImGui + post-process (16 descriptors)
+        // Create SRV heap for ImGui + post-process + G-Buffer (32 descriptors)
         D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-        srvHeapDesc.NumDescriptors = 16;
+        srvHeapDesc.NumDescriptors = 32;
         srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         hr = m_Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_SRVHeap));
@@ -178,7 +178,7 @@ namespace Kiwi
 
         // Create offscreen RTV heap (for post-process render targets)
         D3D12_DESCRIPTOR_HEAP_DESC offscreenRTVDesc = {};
-        offscreenRTVDesc.NumDescriptors = 8;
+        offscreenRTVDesc.NumDescriptors = 16;
         offscreenRTVDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         offscreenRTVDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
         hr = m_Device->CreateDescriptorHeap(&offscreenRTVDesc, IID_PPV_ARGS(&m_OffscreenRTVHeap));
@@ -214,10 +214,10 @@ namespace Kiwi
     void DX12Device::CreateRootSignature()
     {
         // Root parameter 0: CBV at b0 (constant buffer)
-        // Root parameter 1: Descriptor table with 1 SRV at t0 (for post-process input texture)
+        // Root parameter 1: Descriptor table with 4 SRVs at t0-t3 (G-Buffer + textures)
         D3D12_DESCRIPTOR_RANGE srvRange = {};
         srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        srvRange.NumDescriptors = 1;
+        srvRange.NumDescriptors = 4;
         srvRange.BaseShaderRegister = 0;
         srvRange.RegisterSpace = 0;
         srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -228,33 +228,52 @@ namespace Kiwi
         rootParams[0].Descriptor.ShaderRegister = 0;
         rootParams[0].Descriptor.RegisterSpace = 0;
         rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-        // Slot 1: SRV descriptor table
+        // Slot 1: SRV descriptor table (4 descriptors: t0-t3)
         rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
         rootParams[1].DescriptorTable.pDescriptorRanges = &srvRange;
         rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-        // Static sampler for post-process (linear clamp at s0)
-        D3D12_STATIC_SAMPLER_DESC staticSampler = {};
-        staticSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-        staticSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        staticSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        staticSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-        staticSampler.MipLODBias = 0.0f;
-        staticSampler.MaxAnisotropy = 1;
-        staticSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-        staticSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
-        staticSampler.MinLOD = 0.0f;
-        staticSampler.MaxLOD = D3D12_FLOAT32_MAX;
-        staticSampler.ShaderRegister = 0;
-        staticSampler.RegisterSpace = 0;
-        staticSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        // Two static samplers:
+        // s0 = linear clamp (post-process, G-Buffer sampling)
+        // s1 = linear wrap (material textures)
+        D3D12_STATIC_SAMPLER_DESC staticSamplers[2] = {};
+
+        // s0: Linear Clamp
+        staticSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        staticSamplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        staticSamplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        staticSamplers[0].MipLODBias = 0.0f;
+        staticSamplers[0].MaxAnisotropy = 1;
+        staticSamplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        staticSamplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+        staticSamplers[0].MinLOD = 0.0f;
+        staticSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+        staticSamplers[0].ShaderRegister = 0;
+        staticSamplers[0].RegisterSpace = 0;
+        staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+        // s1: Linear Wrap (for material textures)
+        staticSamplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        staticSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        staticSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        staticSamplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        staticSamplers[1].MipLODBias = 0.0f;
+        staticSamplers[1].MaxAnisotropy = 1;
+        staticSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        staticSamplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+        staticSamplers[1].MinLOD = 0.0f;
+        staticSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+        staticSamplers[1].ShaderRegister = 1;
+        staticSamplers[1].RegisterSpace = 0;
+        staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
         D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
         rootSigDesc.NumParameters = 2;
         rootSigDesc.pParameters = rootParams;
-        rootSigDesc.NumStaticSamplers = 1;
-        rootSigDesc.pStaticSamplers = &staticSampler;
+        rootSigDesc.NumStaticSamplers = 2;
+        rootSigDesc.pStaticSamplers = staticSamplers;
         rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
         ComPtr<ID3DBlob> signature;
@@ -655,6 +674,70 @@ namespace Kiwi
         return std::make_unique<DX12PipelineState>(pso.Get());
     }
 
+    std::unique_ptr<RHIPipelineState> DX12Device::CreateGraphicsPipelineState(
+        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
+        const PipelineStateDesc& pipelineDesc)
+    {
+        auto dx12InputLayout = static_cast<DX12InputLayout*>(inputLayout);
+        auto vsShader = static_cast<DX12Shader*>(vertexShader);
+        auto psShader = static_cast<DX12Shader*>(pixelShader);
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.pRootSignature = m_RootSignature.Get();
+
+        psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
+        psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
+        psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
+        psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
+
+        if (dx12InputLayout)
+        {
+            const auto& elements = dx12InputLayout->GetElements();
+            psoDesc.InputLayout.pInputElementDescs = elements.data();
+            psoDesc.InputLayout.NumElements = (UINT)elements.size();
+        }
+        else
+        {
+            psoDesc.InputLayout.pInputElementDescs = nullptr;
+            psoDesc.InputLayout.NumElements = 0;
+        }
+
+        psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        psoDesc.RasterizerState.CullMode = dx12InputLayout ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
+        psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+        psoDesc.RasterizerState.DepthClipEnable = TRUE;
+
+        for (uint32_t i = 0; i < pipelineDesc.NumRenderTargets; i++)
+        {
+            psoDesc.BlendState.RenderTarget[i].BlendEnable = FALSE;
+            psoDesc.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        }
+
+        psoDesc.DepthStencilState.DepthEnable = pipelineDesc.DepthEnabled;
+        psoDesc.DepthStencilState.DepthWriteMask = pipelineDesc.DepthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+        psoDesc.DepthStencilState.StencilEnable = FALSE;
+
+        psoDesc.SampleMask = UINT_MAX;
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psoDesc.NumRenderTargets = pipelineDesc.NumRenderTargets;
+        for (uint32_t i = 0; i < pipelineDesc.NumRenderTargets; i++)
+            psoDesc.RTVFormats[i] = DX12ToDXGIFormat(pipelineDesc.RTVFormats[i]);
+        psoDesc.DSVFormat = pipelineDesc.DepthEnabled ? DX12ToDXGIFormat(pipelineDesc.DSVFormat) : DXGI_FORMAT_UNKNOWN;
+        psoDesc.SampleDesc.Count = 1;
+
+        ComPtr<ID3D12PipelineState> pso;
+        HRESULT hr = m_Device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso));
+        if (FAILED(hr))
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Failed to create DX12 MRT PSO (HRESULT: 0x%08X)", hr);
+            throw std::runtime_error(msg);
+        }
+
+        return std::make_unique<DX12PipelineState>(pso.Get());
+    }
+
     std::unique_ptr<RHISampler> DX12Device::CreateSampler()
     {
         D3D12_CPU_DESCRIPTOR_HANDLE handle = {};
@@ -729,6 +812,32 @@ namespace Kiwi
             auto backBuffer = swapChain->GetBackBuffer(swapChain->GetCurrentBackBufferIndex());
             ResourceBarrier(backBuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
         }
+    }
+
+    void DX12CommandContext::BeginEvent(const char* name)
+    {
+        if (!name || !m_CommandList) return;
+        // Convert to wide string for PIX
+        int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
+        std::vector<wchar_t> wname(len);
+        MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
+        // PIX color: 0 = auto-assign color
+        m_CommandList->BeginEvent(0, wname.data(), (UINT)(len * sizeof(wchar_t)));
+    }
+
+    void DX12CommandContext::EndEvent()
+    {
+        if (m_CommandList)
+            m_CommandList->EndEvent();
+    }
+
+    void DX12CommandContext::SetMarker(const char* name)
+    {
+        if (!name || !m_CommandList) return;
+        int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
+        std::vector<wchar_t> wname(len);
+        MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
+        m_CommandList->SetMarker(0, wname.data(), (UINT)(len * sizeof(wchar_t)));
     }
 
     void DX12CommandContext::Reset()

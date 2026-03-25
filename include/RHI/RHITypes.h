@@ -19,6 +19,8 @@ namespace Kiwi
     {
         Unknown = 0,
         R8G8B8A8_UNORM,
+        R16G16B16A16_FLOAT,   // HDR render targets (G-Buffer, etc.)
+        R16G16_FLOAT,          // 2-channel half-float
         R32G32B32A32_FLOAT,
         R32G32B32_FLOAT,
         R32G32_FLOAT,
@@ -182,6 +184,16 @@ namespace Kiwi
     {
         float Depth;
         uint8_t Stencil;
+    };
+
+    // 管线状态描述（用于 MRT PSO 创建）
+    struct PipelineStateDesc
+    {
+        uint32_t NumRenderTargets = 1;
+        EFormat RTVFormats[8] = { EFormat::R8G8B8A8_UNORM };
+        EFormat DSVFormat = EFormat::D24_UNORM_S8_UINT;
+        bool DepthEnabled = true;
+        bool DepthWrite = true;
     };
 
 } // namespace Kiwi

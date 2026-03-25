@@ -27,6 +27,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Frame Lifecycle Abstraction** — `RHICommandContext::BeginFrame()` / `EndFrame()` encapsulate DX12's Reset/RootSignature/DescriptorHeaps/ResourceBarrier cycle (DX11: no-op).
 - **SRV Binding Abstraction** — `RHICommandContext::SetShaderResourceView()` for backend-agnostic texture binding.
 - **Resource State Management** — `EResourceState` enum and `ResourceBarrier()` for DX12 transitions (DX11: no-op).
+- **GPU Debug Annotations** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` for GPU debugger pass labeling. Each rendering pass (Geometry, Gizmo, Post-Process, ImGui) is annotated, making them clearly identifiable in RenderDoc, PIX, and other GPU profilers. DX12 uses `ID3D12GraphicsCommandList` event API; DX11 uses `ID3DUserDefinedAnnotation`.
 
 ### 🎬 Scene & Component System
 
@@ -251,6 +252,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **One-Click Capture**: 🔵 button in top-right corner
 - **Visual Feedback**: Orange during capture, hover shows count
 - **Zero Configuration**: Just run — RenderDoc is detected automatically
+- **GPU Pass Labels**: All rendering passes (Geometry, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
 
 **Custom DLL Path** (`Config/DefaultEngine.ini`):
 ```ini
@@ -349,6 +351,7 @@ KiwiEngine/
 | `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: full frame setup/teardown; DX11: no-op |
 | `RHICommandContext` | `SetShaderResourceView()` | Bind SRV to pixel shader slot |
 | `RHICommandContext` | `ResourceBarrier()` | DX12: state transitions; DX11: no-op |
+| `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU debug annotations for RenderDoc/PIX pass grouping |
 
 ### Adding a New Backend
 

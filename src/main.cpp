@@ -534,18 +534,25 @@ protected:
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
         // ---- Draw all mesh components (sorted by InitView) ----
+        ctx->BeginEvent("Geometry Pass");
         DrawSceneMeshes(ctx);
+        ctx->EndEvent();
 
         // ---- Draw Gizmo for selected object ----
+        ctx->BeginEvent("Gizmo Pass");
         DrawGizmo(ctx);
+        ctx->EndEvent();
 
         // ---- Post-Process Pass ----
         if (hasPostProcess)
         {
+            ctx->BeginEvent("Post-Process Pass");
             ExecutePostProcessPasses(ctx, device, activeEffects, swapChain);
+            ctx->EndEvent();
         }
 
         // ---- ImGui ----
+        ctx->BeginEvent("ImGui Pass");
         // ImGui always renders to the backbuffer
         auto backBufferRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
         ctx->SetRenderTargets(&backBufferRTV, 1, nullptr);
@@ -561,6 +568,7 @@ protected:
 
         ImGui::Render();
         device->ImGuiRenderDrawData(ctx);
+        ctx->EndEvent();
 
         // ---- End frame (DX12: BackBuffer->Present barrier; DX11: no-op) ----
         ctx->EndFrame(swapChain);
@@ -1003,8 +1011,9 @@ private:
             { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
             { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
             { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
+            { "TEXCOORD", 0, EFormat::R32G32_FLOAT,    (uint32_t)offsetof(Vertex, TexCoord), 0, 0 },
         };
-        m_InputLayout = device->CreateInputLayout(inputElements, 3, tempVS.get());
+        m_InputLayout = device->CreateInputLayout(inputElements, 4, tempVS.get());
 
         // Constant buffer
         BufferDesc cbDesc;

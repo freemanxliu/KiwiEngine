@@ -69,6 +69,7 @@ namespace Kiwi
         float3 Position : POSITION;
         float3 Normal   : NORMAL;
         float4 Color    : COLOR;
+        float2 TexCoord : TEXCOORD;
     };
 
     struct VSOutput
@@ -77,6 +78,7 @@ namespace Kiwi
         float3 PositionWS : POSITION;
         float3 NormalWS   : NORMAL;
         float4 Color      : COLOR;
+        float2 TexCoord   : TEXCOORD;
     };
 
     VSOutput main(VSInput input)
@@ -90,8 +92,8 @@ namespace Kiwi
         output.PositionCS = projPos;
         output.PositionWS = worldPos.xyz;
         output.NormalWS = mul(input.Normal, (float3x3)g_World);
-        // Multiply vertex color by object color
         output.Color = input.Color * g_ObjectColor;
+        output.TexCoord = input.TexCoord;
 
         return output;
     }
@@ -130,6 +132,7 @@ namespace Kiwi
         float3 PositionWS : POSITION;
         float3 NormalWS   : NORMAL;
         float4 Color      : COLOR;
+        float2 TexCoord   : TEXCOORD;
     };
 
     float4 main(PSInput input) : SV_TARGET

@@ -16,6 +16,7 @@ namespace Kiwi
         Vec3 Position;
         Vec3 Normal;
         Vec4 Color;
+        Vec2 TexCoord;    // UV coordinates for texture sampling
     };
 
     // ============================================================

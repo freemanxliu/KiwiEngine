@@ -1,6 +1,7 @@
 // ============================================================
-// Unlit Shader
-// Pure color output — no lighting calculations
+// G-Buffer Geometry Pass Shader
+// Writes to 3 MRT: Position, Normal, Albedo
+// Used in deferred rendering pipeline
 // ============================================================
 
 #define MAX_LIGHTS 8
@@ -38,10 +39,18 @@ struct VSInput
 struct VSOutput
 {
     float4 PositionCS : SV_POSITION;
-    float3 PositionWS : POSITION;
-    float3 NormalWS   : NORMAL;
+    float3 PositionWS : TEXCOORD0;
+    float3 NormalWS   : TEXCOORD1;
     float4 Color      : COLOR;
-    float2 TexCoord   : TEXCOORD;
+    float2 TexCoord   : TEXCOORD2;
+};
+
+// G-Buffer MRT output
+struct GBufferOutput
+{
+    float4 Position : SV_TARGET0;  // World-space position (RGB) + unused (A)
+    float4 Normal   : SV_TARGET1;  // World-space normal (RGB) + unused (A)
+    float4 Albedo   : SV_TARGET2;  // Albedo color (RGB) + alpha (A)
 };
 
 // ---- Vertex Shader ----
@@ -55,7 +64,7 @@ VSOutput VSMain(VSInput input)
 
     output.PositionCS = projPos;
     output.PositionWS = worldPos.xyz;
-    output.NormalWS = mul(input.Normal, (float3x3)g_World);
+    output.NormalWS = normalize(mul(input.Normal, (float3x3)g_World));
     output.Color = input.Color * g_ObjectColor;
     output.TexCoord = input.TexCoord;
 
@@ -63,7 +72,13 @@ VSOutput VSMain(VSInput input)
 }
 
 // ---- Pixel Shader ----
-float4 PSMain(VSOutput input) : SV_TARGET
+GBufferOutput PSMain(VSOutput input)
 {
-    return float4(input.Color.rgb, input.Color.a);
+    GBufferOutput output;
+
+    output.Position = float4(input.PositionWS, 1.0);
+    output.Normal = float4(normalize(input.NormalWS) * 0.5 + 0.5, 1.0); // Pack to [0,1]
+    output.Albedo = input.Color;
+
+    return output;
 }

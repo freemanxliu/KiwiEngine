@@ -27,6 +27,7 @@
 - **帧生命周期抽象** — `RHICommandContext::BeginFrame()` / `EndFrame()` 封装 DX12 的 Reset/RootSig/DescriptorHeaps/ResourceBarrier 流程（DX11 为空操作）。
 - **SRV 绑定抽象** — `RHICommandContext::SetShaderResourceView()` 实现后端无关的纹理绑定。
 - **资源状态管理** — `EResourceState` 枚举和 `ResourceBarrier()` 用于 DX12 资源状态转换（DX11 为空操作）。
+- **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（Geometry、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
 
 ### 🎬 场景与组件系统
 
@@ -251,6 +252,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **一键截帧**：右上角 🔵 按钮
 - **视觉反馈**：捕获时按钮变橙色，悬停显示捕获次数
 - **零配置**：直接运行即可，自动检测 RenderDoc
+- **GPU Pass 标签**：所有渲染阶段（Geometry、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
 
 **自定义 DLL 路径**（`Config/DefaultEngine.ini`）：
 ```ini
@@ -349,6 +351,7 @@ KiwiEngine/
 | `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: 完整帧设置/收尾；DX11: 空操作 |
 | `RHICommandContext` | `SetShaderResourceView()` | 绑定 SRV 到像素着色器槽位 |
 | `RHICommandContext` | `ResourceBarrier()` | DX12: 资源状态转换；DX11: 空操作 |
+| `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU 调试标注，用于 RenderDoc/PIX Pass 分组 |
 
 ### 添加新后端
 
