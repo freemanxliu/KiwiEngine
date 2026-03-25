@@ -1,13 +1,14 @@
 // ============================================================
 // Deferred Lighting Pass Shader (UE5-inspired GBuffer layout)
 // Reads G-Buffer + Depth and computes PBR-style lighting
-// Includes Cascaded Shadow Mapping (CSM)
+// Includes Cascaded Shadow Mapping (CSM) with single atlas
 // Uses fullscreen triangle (SV_VertexID)
 //
 // G-Buffer layout (all R8G8B8A8_UNORM):
 //   t0 GBufferA: Normal Octahedron(RG) + Metallic(B) + ShadingModelID(A)
 //   t1 GBufferB: BaseColor(RGB) + Roughness(A)
 //   t2 GBufferC: Emissive(RGB) + Specular(A)
+//   t3 ShadowAtlas: 2x2 cascade layout (R32_FLOAT depth)
 //   t7 DepthBuffer: Hardware depth (R32_FLOAT)
 //
 // CB slot g_World repurposed as InvViewProj matrix
@@ -58,11 +59,8 @@ Texture2D g_GBufferA     : register(t0); // Normal(RG) + Metallic(B) + ShadingMo
 Texture2D g_GBufferB     : register(t1); // BaseColor(RGB) + Roughness(A)
 Texture2D g_GBufferC     : register(t2); // Emissive(RGB) + Specular(A)
 
-// Shadow maps (one per cascade)
-Texture2D g_ShadowMap0 : register(t3);
-Texture2D g_ShadowMap1 : register(t4);
-Texture2D g_ShadowMap2 : register(t5);
-Texture2D g_ShadowMap3 : register(t6);
+// Shadow atlas (single texture, 2x2 cascade layout)
+Texture2D g_ShadowAtlas : register(t3);
 
 // Depth buffer for position reconstruction
 Texture2D g_DepthBuffer : register(t7);
@@ -116,23 +114,23 @@ float3 ReconstructWorldPos(float2 uv, float depth)
     return worldPos.xyz / worldPos.w;
 }
 
-// ---- PCF Shadow Sampling ----
-float SampleShadowMap(Texture2D shadowMap, float3 shadowCoord, float bias)
+// ---- PCF Shadow Sampling (on atlas) ----
+float SampleShadowAtlas(float2 atlasUV, float depth, float bias)
 {
-    float texelSize = 1.0 / g_ShadowMapSize;
-    float d = shadowCoord.z - bias;
+    float texelSize = 1.0 / g_ShadowMapSize; // g_ShadowMapSize = atlas total size
+    float d = depth - bias;
 
     float shadow = 0.0;
-    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy, d);
-    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(texelSize, 0), d);
-    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(-texelSize, 0), d);
-    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(0, texelSize), d);
-    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(0, -texelSize), d);
+    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV, d);
+    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(texelSize, 0), d);
+    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(-texelSize, 0), d);
+    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(0, texelSize), d);
+    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(0, -texelSize), d);
 
     return shadow / 5.0;
 }
 
-// ---- Compute shadow factor ----
+// ---- Compute shadow factor (atlas-based CSM) ----
 float ComputeShadow(float3 worldPos, float viewZ)
 {
     if (g_NumCascades <= 0)
@@ -155,20 +153,24 @@ float ComputeShadow(float3 worldPos, float viewZ)
     shadowCoord.y = 1.0 - shadowCoord.y;
     shadowCoord.z = shadowPos.z / shadowPos.w;
 
+    // Out-of-range check (in local cascade UV space [0,1])
     if (shadowCoord.x < 0 || shadowCoord.x > 1 ||
         shadowCoord.y < 0 || shadowCoord.y > 1 ||
         shadowCoord.z < 0 || shadowCoord.z > 1)
         return 1.0;
 
-    float shadow = 1.0;
-    if (cascadeIndex == 0)
-        shadow = SampleShadowMap(g_ShadowMap0, shadowCoord, g_ShadowBias);
-    else if (cascadeIndex == 1)
-        shadow = SampleShadowMap(g_ShadowMap1, shadowCoord, g_ShadowBias);
-    else if (cascadeIndex == 2)
-        shadow = SampleShadowMap(g_ShadowMap2, shadowCoord, g_ShadowBias);
-    else
-        shadow = SampleShadowMap(g_ShadowMap3, shadowCoord, g_ShadowBias);
+    // Atlas 2x2 layout: [0]=top-left, [1]=top-right, [2]=bottom-left, [3]=bottom-right
+    // Scale cascade UV [0,1] to atlas UV [0,0.5] and offset
+    static const float2 atlasOffsets[MAX_CSM_CASCADES] = {
+        float2(0.0, 0.0),  // Cascade 0: top-left
+        float2(0.5, 0.0),  // Cascade 1: top-right
+        float2(0.0, 0.5),  // Cascade 2: bottom-left
+        float2(0.5, 0.5)   // Cascade 3: bottom-right
+    };
+
+    float2 atlasUV = shadowCoord.xy * 0.5 + atlasOffsets[cascadeIndex];
+
+    float shadow = SampleShadowAtlas(atlasUV, shadowCoord.z, g_ShadowBias);
 
     return lerp(1.0, shadow, g_ShadowStrength);
 }

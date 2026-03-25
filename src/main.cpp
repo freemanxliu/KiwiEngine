@@ -707,11 +707,8 @@ protected:
                 ctx->SetShaderResourceView(1, m_GBufferSRV[1].get());
                 ctx->SetShaderResourceView(2, m_GBufferSRV[2].get());
 
-                // Bind shadow map SRVs (t3=Cascade0, t4=Cascade1, t5=Cascade2, t6=Cascade3)
-                for (int si = 0; si < MAX_SHADOW_CASCADES; si++)
-                {
-                    ctx->SetShaderResourceView(3 + si, m_ShadowMapSRV[si].get());
-                }
+                // Bind shadow atlas SRV (t3 = single atlas for all cascades)
+                ctx->SetShaderResourceView(3, m_ShadowAtlasSRV.get());
 
                 // Bind depth buffer SRV for position reconstruction (t7)
                 ctx->SetShaderResourceView(7, GetDepthSRV());
@@ -735,10 +732,7 @@ protected:
                 ctx->SetShaderResourceView(0, nullptr);
                 ctx->SetShaderResourceView(1, nullptr);
                 ctx->SetShaderResourceView(2, nullptr);
-                for (int si = 0; si < MAX_SHADOW_CASCADES; si++)
-                {
-                    ctx->SetShaderResourceView(3 + si, nullptr);
-                }
+                ctx->SetShaderResourceView(3, nullptr); // Shadow atlas
                 ctx->SetShaderResourceView(7, nullptr);
 
                 m_PassTimer.End();
@@ -1787,51 +1781,43 @@ private:
         }
     }
 
-    void CreateShadowMaps(RHIDevice* device, uint32_t size, int numCascades)
+    void CreateShadowMaps(RHIDevice* device, uint32_t cascadeSize, int numCascades)
     {
         // Release existing
         ReleaseShadowMaps();
 
-        m_ShadowMapSize = size;
-        int count = std::min(numCascades, MAX_SHADOW_CASCADES);
+        m_ShadowCascadeSize = cascadeSize;
+        uint32_t atlasSize = cascadeSize * 2; // 2x2 atlas layout
 
-        for (int i = 0; i < count; i++)
-        {
-            char shadowName[64];
-            snprintf(shadowName, sizeof(shadowName), "ShadowMap_Cascade%d", i);
+        TextureDesc desc;
+        desc.Width = atlasSize;
+        desc.Height = atlasSize;
+        desc.Format = EFormat::R32_TYPELESS; // Typeless for DSV(D32_FLOAT) + SRV(R32_FLOAT)
+        desc.BindFlags = TEXTURE_HINT_DEPTH_STENCIL | TEXTURE_BIND_SHADER_RESOURCE;
+        desc.Usage = EResourceUsage::Default;
+        desc.MipLevels = 1;
+        desc.SampleCount = 1;
+        desc.DebugName = "ShadowAtlas_CSM";
 
-            TextureDesc desc;
-            desc.Width = size;
-            desc.Height = size;
-            desc.Format = EFormat::R32_TYPELESS; // Typeless for DSV(D32_FLOAT) + SRV(R32_FLOAT)
-            desc.BindFlags = TEXTURE_HINT_DEPTH_STENCIL | TEXTURE_BIND_SHADER_RESOURCE;
-            desc.Usage = EResourceUsage::Default;
-            desc.MipLevels = 1;
-            desc.SampleCount = 1;
-            desc.DebugName = shadowName;
+        m_ShadowAtlasRT = device->CreateTexture(desc);
 
-            m_ShadowMapRT[i] = device->CreateTexture(desc);
+        // DSV view: D32_FLOAT format (covers entire atlas)
+        m_ShadowAtlasDSV = device->CreateTextureView(
+            m_ShadowAtlasRT.get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
 
-            // DSV view: D32_FLOAT format
-            m_ShadowMapDSV[i] = device->CreateTextureView(
-                m_ShadowMapRT[i].get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
+        // SRV view: R32_FLOAT format
+        m_ShadowAtlasSRV = device->CreateTextureView(
+            m_ShadowAtlasRT.get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
 
-            // SRV view: R32_FLOAT format (auto-handled by backend for R32_TYPELESS)
-            m_ShadowMapSRV[i] = device->CreateTextureView(
-                m_ShadowMapRT[i].get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
-        }
-
-        std::cout << "[Kiwi] Shadow maps created: " << count << " cascades @ " << size << "x" << size << std::endl;
+        std::cout << "[Kiwi] Shadow atlas created: " << numCascades << " cascades @ "
+                  << cascadeSize << "x" << cascadeSize << " (atlas " << atlasSize << "x" << atlasSize << ")" << std::endl;
     }
 
     void ReleaseShadowMaps()
     {
-        for (int i = 0; i < MAX_SHADOW_CASCADES; i++)
-        {
-            m_ShadowMapSRV[i].reset();
-            m_ShadowMapDSV[i].reset();
-            m_ShadowMapRT[i].reset();
-        }
+        m_ShadowAtlasSRV.reset();
+        m_ShadowAtlasDSV.reset();
+        m_ShadowAtlasRT.reset();
     }
 
     void ReleaseShadowResources()
@@ -1985,12 +1971,12 @@ private:
         m_ShadowCBData.ShadowBias = shadowLight->ShadowBias;
         m_ShadowCBData.NormalBias = shadowLight->NormalBias;
         m_ShadowCBData.ShadowStrength = shadowLight->ShadowStrength;
-        m_ShadowCBData.ShadowMapSize = (float)m_ShadowMapSize;
+        m_ShadowCBData.ShadowMapSize = (float)(m_ShadowCascadeSize * 2); // Atlas total size
 
         // Recreate shadow maps if resolution changed
         auto device = GetDevice();
-        if (m_ShadowMapSize != (uint32_t)shadowLight->ShadowMapResolution ||
-            !m_ShadowMapRT[0])
+        if (m_ShadowCascadeSize != (uint32_t)shadowLight->ShadowMapResolution ||
+            !m_ShadowAtlasRT)
         {
             CreateShadowMaps(device, (uint32_t)shadowLight->ShadowMapResolution, numCascades);
         }
@@ -2065,35 +2051,51 @@ private:
         ctx->SetInputLayout(m_InputLayout.get());
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
+        // Transition atlas to depth write
+        ctx->ResourceBarrier(m_ShadowAtlasRT.get(),
+            RESOURCE_STATE_COMMON, RESOURCE_STATE_DEPTH_WRITE);
+
+        // Set render target: depth only (no color RT), bind the whole atlas DSV
+        RHITextureView* nullRTV = nullptr;
+        ctx->SetRenderTargets(&nullRTV, 0, m_ShadowAtlasDSV.get());
+
+        // Clear entire atlas depth
+        uint32_t atlasSize = m_ShadowCascadeSize * 2;
+        Viewport fullVP;
+        fullVP.TopLeftX = 0; fullVP.TopLeftY = 0;
+        fullVP.Width = (float)atlasSize; fullVP.Height = (float)atlasSize;
+        fullVP.MinDepth = 0.0f; fullVP.MaxDepth = 1.0f;
+        ctx->SetViewports(&fullVP, 1);
+        ScissorRect fullSR;
+        fullSR.Left = 0; fullSR.Top = 0;
+        fullSR.Right = (int32_t)atlasSize; fullSR.Bottom = (int32_t)atlasSize;
+        ctx->SetScissorRects(&fullSR, 1);
+
+        ClearDepthStencilValue depthClear = { 1.0f, 0 };
+        ctx->ClearDepthStencilView(m_ShadowAtlasDSV.get(), depthClear, 0x01);
+
+        // Atlas 2x2 layout: [0]=top-left, [1]=top-right, [2]=bottom-left, [3]=bottom-right
+        static const int cascadeOffsetX[4] = { 0, 1, 0, 1 };
+        static const int cascadeOffsetY[4] = { 0, 0, 1, 1 };
+
         for (int cascade = 0; cascade < numCascades; cascade++)
         {
-            if (!m_ShadowMapRT[cascade]) continue;
+            // Set viewport/scissor for this cascade's region in the atlas
+            float ox = (float)(cascadeOffsetX[cascade] * m_ShadowCascadeSize);
+            float oy = (float)(cascadeOffsetY[cascade] * m_ShadowCascadeSize);
 
-            // Transition shadow map to depth write
-            ctx->ResourceBarrier(m_ShadowMapRT[cascade].get(),
-                RESOURCE_STATE_COMMON, RESOURCE_STATE_DEPTH_WRITE);
-
-            // Set render target: depth only (no color RT)
-            RHITextureView* nullRTV = nullptr;
-            ctx->SetRenderTargets(&nullRTV, 0, m_ShadowMapDSV[cascade].get());
-
-            // Set shadow map viewport
             Viewport shadowVP;
-            shadowVP.TopLeftX = 0; shadowVP.TopLeftY = 0;
-            shadowVP.Width = (float)m_ShadowMapSize;
-            shadowVP.Height = (float)m_ShadowMapSize;
+            shadowVP.TopLeftX = ox; shadowVP.TopLeftY = oy;
+            shadowVP.Width = (float)m_ShadowCascadeSize;
+            shadowVP.Height = (float)m_ShadowCascadeSize;
             shadowVP.MinDepth = 0.0f; shadowVP.MaxDepth = 1.0f;
             ctx->SetViewports(&shadowVP, 1);
 
             ScissorRect shadowSR;
-            shadowSR.Left = 0; shadowSR.Top = 0;
-            shadowSR.Right = (int32_t)m_ShadowMapSize;
-            shadowSR.Bottom = (int32_t)m_ShadowMapSize;
+            shadowSR.Left = (int32_t)ox; shadowSR.Top = (int32_t)oy;
+            shadowSR.Right = (int32_t)(ox + m_ShadowCascadeSize);
+            shadowSR.Bottom = (int32_t)(oy + m_ShadowCascadeSize);
             ctx->SetScissorRects(&shadowSR, 1);
-
-            // Clear depth
-            ClearDepthStencilValue depthClear = { 1.0f, 0 };
-            ctx->ClearDepthStencilView(m_ShadowMapDSV[cascade].get(), depthClear, 0x01);
 
             // Draw all mesh objects from light's perspective
             for (const auto& renderItem : m_RenderList)
@@ -2139,11 +2141,11 @@ private:
 
                 ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
             }
-
-            // Transition shadow map to shader resource for lighting pass
-            ctx->ResourceBarrier(m_ShadowMapRT[cascade].get(),
-                RESOURCE_STATE_DEPTH_WRITE, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         }
+
+        // Transition atlas to shader resource for lighting pass
+        ctx->ResourceBarrier(m_ShadowAtlasRT.get(),
+            RESOURCE_STATE_DEPTH_WRITE, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         m_PassTimer.End();
         ctx->EndEvent();
@@ -3481,12 +3483,12 @@ private:
     // ---- View Mode ----
     EViewMode m_ViewMode = EViewMode::Lit;
 
-    // ---- Cascaded Shadow Map (CSM) Resources ----
+    // ---- Cascaded Shadow Map (CSM) Resources — Single Atlas ----
     static constexpr int MAX_SHADOW_CASCADES = 4;
-    std::unique_ptr<RHITexture>     m_ShadowMapRT[MAX_SHADOW_CASCADES];
-    std::unique_ptr<RHITextureView> m_ShadowMapDSV[MAX_SHADOW_CASCADES];
-    std::unique_ptr<RHITextureView> m_ShadowMapSRV[MAX_SHADOW_CASCADES];
-    uint32_t m_ShadowMapSize = 0;
+    std::unique_ptr<RHITexture>     m_ShadowAtlasRT;       // Single atlas texture (2*size x 2*size)
+    std::unique_ptr<RHITextureView> m_ShadowAtlasDSV;      // DSV for the whole atlas
+    std::unique_ptr<RHITextureView> m_ShadowAtlasSRV;      // SRV for sampling in lighting pass
+    uint32_t m_ShadowCascadeSize = 0;                      // Per-cascade resolution (e.g. 2048)
 
     // Shadow pass shader and PSO
     std::unique_ptr<RHIShader> m_ShadowPassVS;

@@ -43,7 +43,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Depth-Based Position Reconstruction** — World-space position is reconstructed from hardware depth buffer + inverse ViewProjection matrix, eliminating the need for a dedicated position render target (~40% bandwidth savings vs R16F position RT).
 - **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`.
 - **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reconstructs world position from depth, decodes octahedron normals, reads material properties from G-Buffer, and computes **Cook-Torrance PBR** lighting (GGX NDF + Schlick Fresnel + Smith Geometry) with multi-light support. Applies cascaded shadow maps and Reinhard tone mapping.
-- **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades. Renders scene depth from the light's perspective into individual `R32_TYPELESS` shadow maps per cascade. PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. 5-tap PCF filtering with comparison sampler for soft shadow edges.
+- **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades rendered into a **single shadow atlas** (2x2 layout). Each cascade occupies one quadrant of the atlas texture (`R32_TYPELESS`, `2*cascadeSize × 2*cascadeSize`). PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. Shader selects cascade by view-space distance and computes UV offset into the atlas. 5-tap PCF filtering with comparison sampler for soft shadow edges.
 - **Forward Gizmo Pass** — Translation gizmo is rendered on top of the deferred result using forward rendering with depth for correct occlusion.
 - **Material Properties** — Each `MeshComponent` has `Roughness` [0,1] and `Metallic` [0,1] properties, stored in G-Buffer and editable via Inspector UI.
 
@@ -82,7 +82,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **Unlit** | Pure color output, no lighting |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
   | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, outputs Normal+Metallic, BaseColor+Roughness, Emissive+Specular to 3 MRT |
-  | **DeferredLighting** | Fullscreen PBR deferred lighting — depth position reconstruction, Cook-Torrance BRDF (GGX + Schlick + Smith), CSM shadows, Reinhard tone mapping |
+  | **DeferredLighting** | Fullscreen PBR deferred lighting — depth position reconstruction, Cook-Torrance BRDF (GGX + Schlick + Smith), CSM shadow atlas sampling with UV offset, Reinhard tone mapping |
   | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader) |
   | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels |
 - **Unified Constant Buffer** — World/View/Projection matrices, object color, selection state, light count, camera position, material properties (Roughness, Metallic), and GPU light data (up to 8 lights).
@@ -105,11 +105,12 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Multi-Light Support** — Up to 8 simultaneous lights (directional + point) in a single draw call.
 - **GPU Light Data** — Packed struct: color+intensity, type (0=Directional, 1=Point), direction/position, radius.
 - **Cascaded Shadow Mapping (CSM)** — Directional lights support real-time cascaded shadow maps:
-  - Up to **4 cascades** with configurable resolution (512–4096 per cascade)
+  - Up to **4 cascades** rendered into a **single shadow atlas** (2x2 layout, `2*cascadeSize × 2*cascadeSize`)
+  - **Shadow Atlas** — All cascades share one `R32_TYPELESS` depth texture; each cascade rendered via viewport/scissor into its quadrant
   - **PSSM split scheme** — Blends logarithmic and uniform cascade splits via lambda parameter
+  - **Atlas UV Mapping** — Shader selects cascade by view-space Z distance, then applies UV scale (0.5×) and offset to sample the correct atlas quadrant
   - **5-tap PCF** filtering with comparison sampler for soft shadow edges
   - Per-light configurable: shadow distance, depth bias, normal bias, shadow strength
-  - **R32_TYPELESS** shadow map format — allows DSV (D32_FLOAT) and SRV (R32_FLOAT) from the same texture
   - Shadow pass renders depth-only (no pixel shader) for maximum performance
   - Full UI controls in Detail inspector for all shadow parameters
 - **Fallback Lighting** — When no lights are in the scene, a default directional light (0.5, 0.7, 0.3) is used.
@@ -300,7 +301,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **Visual Feedback**: Orange during capture, hover shows count
 - **Zero Configuration**: Just run — RenderDoc is detected automatically
 - **GPU Pass Labels**: All rendering passes (Shadow Pass, G-Buffer, Deferred Lighting, Buffer Visualization, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
-- **GPU Resource Names**: All textures and buffers have descriptive names (e.g., `GBufferA_NormalMetallic`, `ShadowMap_Cascade0`, `MeshVB_Cube`) — visible in RenderDoc's Resource Inspector and Texture Viewer
+- **GPU Resource Names**: All textures and buffers have descriptive names (e.g., `GBufferA_NormalMetallic`, `ShadowAtlas_CSM`, `MeshVB_Cube`) — visible in RenderDoc's Resource Inspector and Texture Viewer
 
 **Custom DLL Path** (`Config/DefaultEngine.ini`):
 ```ini

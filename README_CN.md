@@ -43,7 +43,7 @@
 - **基于深度的位置重建** — 世界空间位置从硬件深度缓冲 + 逆 ViewProjection 矩阵重建，无需专用位置渲染目标（比 R16F 位置 RT 节省约 40% 带宽）。
 - **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。通过 `CreateGraphicsPipelineState()` 和 `PipelineStateDesc` 创建 MRT PSO。
 - **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 从深度重建世界坐标，解码 Octahedron 法线，读取 G-Buffer 材质属性，计算 **Cook-Torrance PBR** 光照（GGX NDF + Schlick Fresnel + Smith Geometry），支持多光源，应用级联阴影贴图和 Reinhard 色调映射。
-- **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联。从光源视角将场景深度渲染到独立的 `R32_TYPELESS` 阴影贴图中。PSSM 混合对数和均匀分割方案。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
+- **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联，所有级联渲染到**单张阴影 Atlas**（2x2 布局）。每个级联占 Atlas 纹理的一个象限（`R32_TYPELESS`，`2*cascadeSize × 2*cascadeSize`）。PSSM 混合对数和均匀分割方案。着色器根据视空间距离选择级联并计算 UV 偏移到 Atlas 对应区域。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
 - **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
 - **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer 中，可通过 Inspector UI 编辑。
 
@@ -82,7 +82,7 @@
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
   | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，输出法线+金属度、BaseColor+粗糙度、自发光+Specular 到 3 个 MRT |
-  | **DeferredLighting** | 全屏 PBR 延迟光照 — 深度位置重建、Cook-Torrance BRDF (GGX + Schlick + Smith)、CSM 阴影、Reinhard 色调映射 |
+  | **DeferredLighting** | 全屏 PBR 延迟光照 — 深度位置重建、Cook-Torrance BRDF (GGX + Schlick + Smith)、CSM 阴影 Atlas 采样（UV 偏移）、Reinhard 色调映射 |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
 - **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
@@ -105,11 +105,12 @@
 - **多光源支持** — 单次绘制调用中支持最多 8 盏灯光（方向光 + 点光源）。
 - **GPU 灯光数据** — 打包结构体：颜色+强度、类型（0=方向光、1=点光源）、方向/位置、半径。
 - **级联阴影贴图（CSM）** — 方向光支持实时级联阴影贴图：
-  - 最多 **4 级级联**，可配置分辨率（512–4096/级联）
+  - 最多 **4 级级联**，渲染到**单张阴影 Atlas**（2x2 布局，`2*cascadeSize × 2*cascadeSize`）
+  - **Shadow Atlas** — 所有级联共享一张 `R32_TYPELESS` 深度纹理；每个级联通过 viewport/scissor 渲染到各自象限
   - **PSSM 分割方案** — 通过 lambda 参数混合对数和均匀级联分割
+  - **Atlas UV 映射** — 着色器根据视空间 Z 距离选择级联，然后应用 UV 缩放 (0.5×) 和偏移采样正确的 Atlas 象限
   - **5 次 PCF 采样**，配合比较采样器实现柔和阴影边缘
   - 逐灯光可配置：阴影距离、深度偏移、法线偏移、阴影强度
-  - **R32_TYPELESS** 阴影贴图格式 — 同一纹理同时支持 DSV (D32_FLOAT) 和 SRV (R32_FLOAT)
   - 阴影 Pass 仅渲染深度（无像素着色器），性能最优
   - Detail 面板提供完整的阴影参数 UI 控件
 - **Fallback 光照** — 场景中无灯光时，使用默认方向光 (0.5, 0.7, 0.3)。
@@ -300,7 +301,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **视觉反馈**：捕获时按钮变橙色，悬停显示捕获次数
 - **零配置**：直接运行即可，自动检测 RenderDoc
 - **GPU Pass 标签**：所有渲染阶段（Shadow Pass、G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
-- **GPU 资源名称**：所有纹理和缓冲区都有描述性名称（如 `GBufferA_NormalMetallic`、`ShadowMap_Cascade0`、`MeshVB_Cube`），在 RenderDoc 的 Resource Inspector 和 Texture Viewer 中可见
+- **GPU 资源名称**：所有纹理和缓冲区都有描述性名称（如 `GBufferA_NormalMetallic`、`ShadowAtlas_CSM`、`MeshVB_Cube`），在 RenderDoc 的 Resource Inspector 和 Texture Viewer 中可见
 
 **自定义 DLL 路径**（`Config/DefaultEngine.ini`）：
 ```ini
