@@ -42,7 +42,7 @@
 - **Octahedron 法线编码** — 单位法线使用 Octahedron 映射存储在 2 个通道中，比线性 [0,1] 打包在 R8G8 格式下精度更高。
 - **基于深度的位置重建** — 世界空间位置从硬件深度缓冲 + 逆 ViewProjection 矩阵重建，无需专用位置渲染目标（比 R16F 位置 RT 节省约 40% 带宽）。
 - **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。通过 `CreateGraphicsPipelineState()` 和 `PipelineStateDesc` 创建 MRT PSO。
-- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 从深度重建世界坐标，解码 Octahedron 法线，读取 G-Buffer 材质属性，计算 **Cook-Torrance PBR** 光照（GGX NDF + Schlick Fresnel + Smith Geometry），支持多光源，应用级联阴影贴图和 Reinhard 色调映射。
+- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 从深度重建世界坐标，解码 Octahedron 法线，读取 G-Buffer 材质属性，计算 **UE5 风格 PBR 光照**。BRDF 对齐 UE5 `DefaultLitBxDF`：**D_GGX**（Trowbridge-Reitz NDF）、**Vis_SmithJointApprox**（联合 Smith 可见性，分母已内置）、**F_Schlick**（含 2% 反射率阴影阈值）、**Diffuse_Burley**（Disney 漫反射，粗糙度相关）、**EnvBRDFApprox**（Lazarov 2013 解析近似，无需 LUT）用于间接高光。支持多光源，应用级联阴影贴图和 Reinhard 色调映射。
 - **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联，所有级联渲染到**单张阴影 Atlas**（2x2 布局）。每个级联占 Atlas 纹理的一个象限（`R32_TYPELESS`，`2*cascadeSize × 2*cascadeSize`）。PSSM 混合对数和均匀分割方案。着色器根据视空间距离选择级联并计算 UV 偏移到 Atlas 对应区域。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
 - **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
 - **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer 中，可通过 Inspector UI 编辑。
@@ -53,7 +53,7 @@
 - **可用模式**：
   | 模式 | 类型 | 描述 |
   |---|---|---|
-  | **Lit** | 默认 | 完整延迟渲染 + PBR 光照 |
+  | **Lit** | 默认 | 完整延迟渲染 + UE5 风格 PBR 光照 |
   | **Unlit** | 调试 | 前向渲染，无光照（纯反照率） |
   | **BaseColor** | 缓冲区可视化 | G-Buffer BaseColor (GBufferB RGB) |
   | **Roughness** | 缓冲区可视化 | G-Buffer 粗糙度 (GBufferB Alpha, 灰度) |
@@ -82,7 +82,7 @@
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
   | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，输出法线+金属度、BaseColor+粗糙度、自发光+Specular 到 3 个 MRT |
-  | **DeferredLighting** | 全屏 PBR 延迟光照 — 深度位置重建、Cook-Torrance BRDF (GGX + Schlick + Smith)、CSM 阴影 Atlas 采样（UV 偏移）、Reinhard 色调映射 |
+  | **DeferredLighting** | 全屏 PBR 延迟光照（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样、Reinhard 色调映射 |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
 - **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
