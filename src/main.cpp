@@ -1372,6 +1372,8 @@ protected:
             m_GizmoVB[i].reset();
             m_GizmoIB[i].reset();
         }
+        m_DirLightIndicatorVB.reset();
+        m_DirLightIndicatorIB.reset();
 
         // Shutdown ImGui backend
         ShutdownImGui();
@@ -3142,6 +3144,9 @@ private:
         m_GizmoMeshData[0] = CreateGizmoArrow({ 1, 0, 0 }, { 1, 0, 0, 1 }); // X - Red
         m_GizmoMeshData[1] = CreateGizmoArrow({ 0, 1, 0 }, { 0, 1, 0, 1 }); // Y - Green
         m_GizmoMeshData[2] = CreateGizmoArrow({ 0, 0, 1 }, { 0, 0, 1, 1 }); // Z - Blue
+
+        // Direction indicator for directional lights (longer arrow, yellow)
+        m_DirLightIndicator = CreateGizmoArrow({ 0, 0, 1 }, { 1, 1, 0, 1 }, 2.0f, 0.03f, 0.08f, 0.3f);
     }
 
     void BuildGizmoGPUBuffers()
@@ -3178,12 +3183,41 @@ private:
             ibDesc.DebugName = (i < 3) ? gizmoAxisIBNames[i] : "GizmoIB";
             m_GizmoIB[i] = device->CreateBuffer(ibDesc, data.Indices.data());
         }
+
+        // Build direction indicator GPU buffers
+        {
+            auto& data = m_DirLightIndicator;
+            m_DirLightIndicatorVertexCount = (uint32_t)data.Vertices.size();
+            m_DirLightIndicatorIndexCount = (uint32_t)data.Indices.size();
+
+            if (m_DirLightIndicatorVertexCount > 0)
+            {
+                BufferDesc vbDesc;
+                vbDesc.SizeInBytes = m_DirLightIndicatorVertexCount * sizeof(Vertex);
+                vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
+                vbDesc.Usage = EResourceUsage::Immutable;
+                vbDesc.DebugName = "GizmoVB_DirLight";
+                m_DirLightIndicatorVB = device->CreateBuffer(vbDesc, data.Vertices.data());
+
+                BufferDesc ibDesc;
+                ibDesc.SizeInBytes = m_DirLightIndicatorIndexCount * sizeof(uint32_t);
+                ibDesc.BindFlags = BUFFER_USAGE_INDEX;
+                ibDesc.Usage = EResourceUsage::Immutable;
+                ibDesc.DebugName = "GizmoIB_DirLight";
+                m_DirLightIndicatorIB = device->CreateBuffer(ibDesc, data.Indices.data());
+            }
+        }
     }
 
     void DrawGizmo(RHICommandContext* ctx)
     {
         SceneObject* sel = m_Scene.GetSelectedObject();
         if (!sel) return;
+
+        // Skip gizmo for the active Main Camera (you're looking through it)
+        auto* camComp = sel->GetComponent<CameraComponent>();
+        if (camComp && camComp->IsMainCamera)
+            return;
 
         // Gizmo always uses the Default shader
         CompiledShader* defaultShader = m_ShaderLibrary.GetDefault();
@@ -3254,6 +3288,65 @@ private:
             ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
 
             ctx->DrawIndexed(m_GizmoIndexCount[i], 0, 0);
+        }
+
+        // ---- Directional Light Direction Indicator ----
+        // Draw a yellow arrow showing the light's forward direction
+        auto* dirLight = sel->GetComponent<DirectionalLightComponent>();
+        if (dirLight && m_DirLightIndicatorVB && m_DirLightIndicatorIB)
+        {
+            VertexBufferView vbView;
+            vbView.BufferLocation = 0;
+            vbView.SizeInBytes = m_DirLightIndicatorVertexCount * sizeof(Vertex);
+            vbView.StrideInBytes = sizeof(Vertex);
+
+            RHIBuffer* vbPtr = m_DirLightIndicatorVB.get();
+            ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+            IndexBufferView ibView;
+            ibView.BufferLocation = 0;
+            ibView.SizeInBytes = m_DirLightIndicatorIndexCount * sizeof(uint32_t);
+            ibView.Format = EFormat::R32_UINT;
+            ctx->SetIndexBuffer(m_DirLightIndicatorIB.get(), &ibView);
+
+            // Build a rotation matrix that maps local +Z to the light's forward direction.
+            // The indicator mesh points along +Z, so we need to rotate it to match GetForward().
+            Vec3 fwd = dirLight->GetForward();
+            Vec3 up = dirLight->GetUp();
+            Vec3 right = dirLight->GetRight();
+
+            // Build rotation matrix from basis vectors (row-major, rows = right/up/forward)
+            Mat4 rotMat = Mat4::Identity();
+            rotMat.m[0][0] = right.x; rotMat.m[0][1] = right.y; rotMat.m[0][2] = right.z;
+            rotMat.m[1][0] = up.x;    rotMat.m[1][1] = up.y;    rotMat.m[1][2] = up.z;
+            rotMat.m[2][0] = fwd.x;   rotMat.m[2][1] = fwd.y;   rotMat.m[2][2] = fwd.z;
+
+            Mat4 transMat = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
+            Mat4 worldMatrix = rotMat * transMat;
+
+            ConstantBufferData cbd = {};
+            memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+            memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+            memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+            cbd.ObjectColor[0] = 1.0f; // Yellow
+            cbd.ObjectColor[1] = 0.9f;
+            cbd.ObjectColor[2] = 0.2f;
+            cbd.ObjectColor[3] = 1.0f;
+            cbd.Selected = 2.0f; // Unlit/gizmo mode
+            cbd.NumLights = 0;
+            cbd.CameraPos[0] = m_CameraPosition.x;
+            cbd.CameraPos[1] = m_CameraPosition.y;
+            cbd.CameraPos[2] = m_CameraPosition.z;
+
+            void* mapped = m_ConstantBuffer->Map();
+            if (mapped)
+            {
+                memcpy(mapped, &cbd, sizeof(cbd));
+                m_ConstantBuffer->Unmap();
+            }
+            ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+
+            ctx->DrawIndexed(m_DirLightIndicatorIndexCount, 0, 0);
         }
     }
 
@@ -3424,6 +3517,13 @@ private:
     std::unique_ptr<RHIBuffer> m_GizmoIB[3];             // GPU index buffers
     uint32_t m_GizmoVertexCount[3] = {};
     uint32_t m_GizmoIndexCount[3] = {};
+
+    // Directional light direction indicator
+    GizmoMeshData m_DirLightIndicator;                   // CPU mesh data (yellow arrow)
+    std::unique_ptr<RHIBuffer> m_DirLightIndicatorVB;    // GPU vertex buffer
+    std::unique_ptr<RHIBuffer> m_DirLightIndicatorIB;    // GPU index buffer
+    uint32_t m_DirLightIndicatorVertexCount = 0;
+    uint32_t m_DirLightIndicatorIndexCount = 0;
 
     // Dragging state
     bool m_IsDragging = false;
