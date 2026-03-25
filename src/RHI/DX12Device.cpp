@@ -953,13 +953,17 @@ namespace Kiwi
             ImGui_ImplWin32_Init((HWND)windowHandle);
         }
 
-        ImGui_ImplDX12_Init(
-            m_Device.Get(),
-            2, // num frames in flight
-            DXGI_FORMAT_R8G8B8A8_UNORM,
-            m_SRVHeap.Get(),
-            m_SRVHeap->GetCPUDescriptorHandleForHeapStart(),
-            m_SRVHeap->GetGPUDescriptorHandleForHeapStart());
+        // Use new ImGui_ImplDX12_InitInfo API (legacy 6-param API is missing CommandQueue,
+        // which causes nullptr crash in ImGui_ImplDX12_CreateFontsTexture)
+        ImGui_ImplDX12_InitInfo init_info;
+        init_info.Device = m_Device.Get();
+        init_info.CommandQueue = m_CommandQueue.Get();
+        init_info.NumFramesInFlight = 2;
+        init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+        init_info.SrvDescriptorHeap = m_SRVHeap.Get();
+        init_info.LegacySingleSrvCpuDescriptor = m_SRVHeap->GetCPUDescriptorHandleForHeapStart();
+        init_info.LegacySingleSrvGpuDescriptor = m_SRVHeap->GetGPUDescriptorHandleForHeapStart();
+        ImGui_ImplDX12_Init(&init_info);
         m_ImGuiInitialized = true;
     }
 

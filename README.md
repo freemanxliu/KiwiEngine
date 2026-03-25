@@ -258,7 +258,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 DllPath=D:\Tools\RenderDoc\renderdoc.dll
 ```
 
-DLL search priority: Already loaded → Config DllPath → `C:\Program Files\RenderDoc\` → `C:\Program Files (x86)\RenderDoc\` → PATH
+DLL search priority: Already loaded → Config `[RenderDoc].DllPath` (required if not already loaded)
 
 ---
 
