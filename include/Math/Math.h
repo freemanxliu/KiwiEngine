@@ -248,4 +248,146 @@ namespace Kiwi
     inline float DegToRad(float deg) { return deg * DEG2RAD; }
     inline float RadToDeg(float rad) { return rad * RAD2DEG; }
 
+    // ============================================================
+    // Plane (ax + by + cz + d = 0)
+    // ============================================================
+    struct Plane
+    {
+        Vec3 Normal = { 0, 1, 0 };
+        float D = 0.0f;
+
+        Plane() = default;
+        Plane(float a, float b, float c, float d)
+            : Normal{ a, b, c }, D(d) {}
+
+        void Normalize()
+        {
+            float len = Normal.Length();
+            if (len > 0.0001f)
+            {
+                Normal = Normal / len;
+                D /= len;
+            }
+        }
+
+        // Signed distance from point to plane (positive = front/inside)
+        float DistanceToPoint(const Vec3& p) const
+        {
+            return Normal.Dot(p) + D;
+        }
+    };
+
+    // ============================================================
+    // AABB (Axis-Aligned Bounding Box)
+    // ============================================================
+    struct AABB
+    {
+        Vec3 Min = { 0, 0, 0 };
+        Vec3 Max = { 0, 0, 0 };
+
+        Vec3 GetCenter() const
+        {
+            return Vec3(
+                (Min.x + Max.x) * 0.5f,
+                (Min.y + Max.y) * 0.5f,
+                (Min.z + Max.z) * 0.5f);
+        }
+
+        Vec3 GetExtents() const
+        {
+            return Vec3(
+                (Max.x - Min.x) * 0.5f,
+                (Max.y - Min.y) * 0.5f,
+                (Max.z - Min.z) * 0.5f);
+        }
+    };
+
+    // ============================================================
+    // Frustum — 6 planes extracted from ViewProjection matrix
+    // ============================================================
+    struct Frustum
+    {
+        Plane Planes[6]; // Left, Right, Bottom, Top, Near, Far
+
+        // Extract frustum planes from a row-major ViewProjection matrix
+        // For row-major (v * M convention), a point p is inside when:
+        //   clip = p * VP => clip.x = dot(row0, p4), clip.w = dot(row3, p4)
+        //   Left:   clip.w + clip.x >= 0  =>  row3 + row0
+        //   Right:  clip.w - clip.x >= 0  =>  row3 - row0
+        //   Bottom: clip.w + clip.y >= 0  =>  row3 + row1
+        //   Top:    clip.w - clip.y >= 0  =>  row3 - row1
+        //   Near:   clip.z >= 0           =>  row2        (DX: z in [0,1])
+        //   Far:    clip.w - clip.z >= 0  =>  row3 - row2
+        void ExtractFromViewProjection(const Mat4& vp)
+        {
+            // Row-major: row i = vp.m[i][0..3]
+            // Left = row3 + row0
+            Planes[0] = Plane(
+                vp.m[3][0] + vp.m[0][0],
+                vp.m[3][1] + vp.m[0][1],
+                vp.m[3][2] + vp.m[0][2],
+                vp.m[3][3] + vp.m[0][3]);
+            // Right = row3 - row0
+            Planes[1] = Plane(
+                vp.m[3][0] - vp.m[0][0],
+                vp.m[3][1] - vp.m[0][1],
+                vp.m[3][2] - vp.m[0][2],
+                vp.m[3][3] - vp.m[0][3]);
+            // Bottom = row3 + row1
+            Planes[2] = Plane(
+                vp.m[3][0] + vp.m[1][0],
+                vp.m[3][1] + vp.m[1][1],
+                vp.m[3][2] + vp.m[1][2],
+                vp.m[3][3] + vp.m[1][3]);
+            // Top = row3 - row1
+            Planes[3] = Plane(
+                vp.m[3][0] - vp.m[1][0],
+                vp.m[3][1] - vp.m[1][1],
+                vp.m[3][2] - vp.m[1][2],
+                vp.m[3][3] - vp.m[1][3]);
+            // Near = row2 (DX convention: z >= 0)
+            Planes[4] = Plane(
+                vp.m[2][0],
+                vp.m[2][1],
+                vp.m[2][2],
+                vp.m[2][3]);
+            // Far = row3 - row2
+            Planes[5] = Plane(
+                vp.m[3][0] - vp.m[2][0],
+                vp.m[3][1] - vp.m[2][1],
+                vp.m[3][2] - vp.m[2][2],
+                vp.m[3][3] - vp.m[2][3]);
+
+            // Normalize all planes
+            for (int i = 0; i < 6; i++)
+                Planes[i].Normalize();
+        }
+
+        // Test AABB against frustum.
+        // Returns true if the AABB is at least partially inside the frustum.
+        bool TestAABB(const AABB& aabb) const
+        {
+            Vec3 center = aabb.GetCenter();
+            Vec3 extents = aabb.GetExtents();
+
+            for (int i = 0; i < 6; i++)
+            {
+                const Plane& p = Planes[i];
+
+                // Compute the projection interval radius of the AABB onto the plane normal
+                float r = extents.x * std::abs(p.Normal.x)
+                        + extents.y * std::abs(p.Normal.y)
+                        + extents.z * std::abs(p.Normal.z);
+
+                // Distance from center to plane
+                float d = p.DistanceToPoint(center);
+
+                // If the AABB is entirely behind the plane, it's outside the frustum
+                if (d + r < 0.0f)
+                    return false;
+            }
+            return true;
+        }
+    };
+
 } // namespace Kiwi

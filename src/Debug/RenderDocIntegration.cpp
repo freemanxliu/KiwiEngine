@@ -7,7 +7,6 @@
 #include <Windows.h>
 #include <iostream>
 #include <string>
-#include <filesystem>
 
 namespace Kiwi
 {
@@ -36,60 +35,34 @@ namespace Kiwi
         }
 
         // Try to find renderdoc.dll
-        // 1. First check if it's already loaded (e.g., launched from RenderDoc)
+        // 1. Check if it's already loaded (e.g., launched from RenderDoc UI)
         HMODULE rdocModule = GetModuleHandleA("renderdoc.dll");
 
-        if (!rdocModule)
-        {
-            // 2. Check config file for explicit DLL path
-            std::string configPath = config.GetString("RenderDoc", "DllPath", "");
-            if (!configPath.empty())
-            {
-                rdocModule = LoadLibraryA(configPath.c_str());
-                if (rdocModule)
-                {
-                    std::cout << "[RenderDoc] Loaded from config path: " << configPath << std::endl;
-                }
-                else
-                {
-                    std::cerr << "[RenderDoc] Config path not valid: " << configPath << std::endl;
-                }
-            }
-        }
-        else
+        if (rdocModule)
         {
             std::cout << "[RenderDoc] Already loaded in process (launched from RenderDoc UI)." << std::endl;
         }
-
-        if (!rdocModule)
+        else
         {
-            // 3. Try common install paths
-            const char* searchPaths[] = {
-                "C:\\Program Files\\RenderDoc\\renderdoc.dll",
-                "C:\\Program Files (x86)\\RenderDoc\\renderdoc.dll",
-                "renderdoc.dll",  // current directory or PATH
-                nullptr
-            };
-
-            for (int i = 0; searchPaths[i] != nullptr; i++)
+            // 2. Load from config path
+            std::string configPath = config.GetString("RenderDoc", "DllPath", "");
+            if (configPath.empty())
             {
-                rdocModule = LoadLibraryA(searchPaths[i]);
-                if (rdocModule)
-                {
-                    std::cout << "[RenderDoc] Loaded from: " << searchPaths[i] << std::endl;
-                    break;
-                }
+                std::cerr << "[RenderDoc] DllPath not set in Config/DefaultEngine.ini. RenderDoc integration disabled." << std::endl;
+                return false;
             }
-        }
 
-        if (!rdocModule)
-        {
-            std::cout << "[RenderDoc] renderdoc.dll not found. RenderDoc integration disabled." << std::endl;
-            std::cout << "[RenderDoc] You can specify the path in Config/DefaultEngine.ini:" << std::endl;
-            std::cout << "[RenderDoc]   [RenderDoc]" << std::endl;
-            std::cout << "[RenderDoc]   DllPath=C:\\Path\\To\\renderdoc.dll" << std::endl;
-            std::cout << "[RenderDoc] Or install RenderDoc from https://renderdoc.org" << std::endl;
-            return false;
+            rdocModule = LoadLibraryA(configPath.c_str());
+            if (rdocModule)
+            {
+                std::cout << "[RenderDoc] Loaded from config: " << configPath << std::endl;
+            }
+            else
+            {
+                std::cerr << "[RenderDoc] Failed to load from: " << configPath << std::endl;
+                std::cerr << "[RenderDoc] Please verify the DllPath in Config/DefaultEngine.ini" << std::endl;
+                return false;
+            }
         }
 
         m_RenderDocModule = rdocModule;
