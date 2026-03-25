@@ -27,6 +27,7 @@ A lightweight 3D rendering engine built from scratch with C++17 and DirectX, fea
 - **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading (Default shader)
 - **Translation Gizmo** — 3-axis translation gizmo (X=red, Y=green, Z=blue) rendered on selected objects; drag axes to move objects in world space
 - **RenderDoc Integration** — One-click frame capture button with auto-open in RenderDoc
+- **Engine Configuration** — INI-based config system (`Config/DefaultEngine.ini`) with singleton access — configure RenderDoc paths, rendering defaults, window settings, and more
 - **ImGui UI** — Full-featured editor interface with menu bar, scene panel, detail inspector, and object placer
 - **Ray Picking** — Click objects in the viewport to select them; gizmo axes have picking priority over scene objects
 
@@ -46,6 +47,20 @@ KiwiEngine includes built-in [RenderDoc](https://renderdoc.org) support for GPU 
 1. **Install RenderDoc** from [https://renderdoc.org](https://renderdoc.org) (default install path: `C:\Program Files\RenderDoc\`)
 2. Run `KiwiEngine.exe` normally — RenderDoc will be detected and attached automatically
 3. Click the **capture button** in the top-right corner — the frame will be captured and RenderDoc will open automatically
+
+**Custom RenderDoc Path**: If RenderDoc is installed to a non-standard location, specify the DLL path in `Config/DefaultEngine.ini`:
+
+```ini
+[RenderDoc]
+DllPath=D:\Tools\RenderDoc\renderdoc.dll
+```
+
+The engine looks for `renderdoc.dll` in this priority order:
+1. Already loaded in process (launched from RenderDoc UI)
+2. Path specified in `Config/DefaultEngine.ini` → `[RenderDoc] DllPath`
+3. `C:\Program Files\RenderDoc\renderdoc.dll`
+4. `C:\Program Files (x86)\RenderDoc\renderdoc.dll`
+5. Current directory or system PATH
 
 > **Note**: If RenderDoc is not installed, the engine runs normally without the capture button.
 
@@ -138,6 +153,50 @@ A 1280×720 window will appear showing a **3D scene editor** with Phong lighting
 
 No external assets, textures, or config files are needed — everything (including shaders) is embedded in the source code.
 
+## ⚙️ Engine Configuration
+
+KiwiEngine uses an INI-based configuration system via a singleton `EngineConfig` class. The default config file is `Config/DefaultEngine.ini`.
+
+### Config File Format
+
+```ini
+[RenderDoc]
+DllPath=C:\Program Files\RenderDoc\renderdoc.dll
+Enabled=true
+CapturePathTemplate=captures/kiwi_frame
+
+[Rendering]
+DefaultRHI=DX11
+EnableValidation=true
+VSync=true
+
+[Window]
+Width=1280
+Height=720
+Title=Kiwi Engine - Scene Editor
+```
+
+### Using in Code
+
+```cpp
+#include "Core/EngineConfig.h"
+
+auto& config = Kiwi::EngineConfig::Get();
+config.LoadDefaultConfig();  // Auto-finds Config/DefaultEngine.ini
+
+// Read values (with defaults if not found)
+std::string path = config.GetString("RenderDoc", "DllPath", "");
+int width        = config.GetInt("Window", "Width", 1280);
+bool vsync       = config.GetBool("Rendering", "VSync", true);
+float fov        = config.GetFloat("Camera", "FOV", 45.0f);
+
+// Set values at runtime (in-memory only)
+config.SetBool("Debug", "ShowFPS", true);
+
+// Save modified config
+config.Save("Config/DefaultEngine.ini");
+```
+
 ## 🎨 Custom Shaders
 
 KiwiEngine uses a file-based shader system. To add a new shader:
@@ -171,6 +230,8 @@ KiwiEngine uses a file-based shader system. To add a new shader:
 ```
 KiwiEngine/
 ├── CMakeLists.txt              # Build configuration
+├── Config/
+│   └── DefaultEngine.ini       # Default engine settings (RenderDoc, rendering, window)
 ├── include/
 │   ├── RHI/
 │   │   ├── RHI.h               # Abstract RHI interfaces (Device, Context, SwapChain, Buffer...)
@@ -188,7 +249,8 @@ KiwiEngine/
 │   │       └── VulkanDevice.h  # Vulkan Device/Context/SwapChain declarations
 │   ├── Core/
 │   │   ├── Window.h            # Win32 window wrapper
-│   │   └── Application.h       # Application framework (init, update, render loop)
+│   │   ├── Application.h       # Application framework (init, update, render loop)
+│   │   └── EngineConfig.h      # Singleton INI-based configuration system
 │   ├── Debug/
 │   │   └── RenderDocIntegration.h  # RenderDoc In-App API wrapper
 │   ├── Math/
@@ -203,7 +265,8 @@ KiwiEngine/
 │   ├── main.cpp                # Entry point — scene editor with ImGui UI
 │   ├── Core/
 │   │   ├── Window.cpp          # Win32 window implementation
-│   │   └── Application.cpp     # App framework, message loop, RHI switching
+│   │   ├── Application.cpp     # App framework, message loop, RHI switching
+│   │   └── EngineConfig.cpp    # INI parser, config loading/saving
 │   ├── RHI/
 │   │   ├── DX11Device.cpp      # DX11 backend implementation
 │   │   ├── DX12Device.cpp      # DX12 backend implementation
@@ -275,7 +338,7 @@ The RHI layer provides a unified interface. To add a new backend:
 | Linker errors (d3d11.lib) | Ensure Windows SDK is installed and CMake detected it correctly |
 | Black window (no cube) | Check console output for errors. Ensure your GPU supports DirectX 11 Feature Level 11.0 |
 | C4819 compiler warning | Source files contain Chinese comments; harmless — does not affect build or runtime |
-| RenderDoc not detected | Install RenderDoc to `C:\Program Files\RenderDoc\`, or launch KiwiEngine from RenderDoc UI |
+| RenderDoc not detected | Install RenderDoc to `C:\Program Files\RenderDoc\`, set `DllPath` in `Config/DefaultEngine.ini`, or launch KiwiEngine from RenderDoc UI |
 | Frame capture not working | Ensure RenderDoc is loaded before graphics device creation (the engine handles this automatically) |
 
 ## 📝 License

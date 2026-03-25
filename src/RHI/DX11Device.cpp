@@ -865,6 +865,7 @@ namespace Kiwi
 
     void DX11Device::ImGuiNewFrame()
     {
+        ImGui_ImplWin32_NewFrame();
         ImGui_ImplDX11_NewFrame();
     }
 

@@ -1,5 +1,6 @@
 #include "Core/Application.h"
 #include "Core/Window.h"
+#include "Core/EngineConfig.h"
 #include "Scene/Mesh.h"
 #include "Scene/Shaders.h"
 #include "Scene/ShaderLibrary.h"
@@ -1257,6 +1258,10 @@ int main()
         std::cout << "  RHI: Direct3D 11 / Direct3D 12" << std::endl;
         std::cout << "========================================" << std::endl;
         std::cout << std::endl;
+
+        // Load engine configuration
+        auto& config = Kiwi::EngineConfig::Get();
+        config.LoadDefaultConfig();
 
         // Initialize RenderDoc BEFORE creating any graphics device
         auto& rdoc = Kiwi::RenderDocIntegration::Get();

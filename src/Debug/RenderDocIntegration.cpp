@@ -1,4 +1,5 @@
 #include "Debug/RenderDocIntegration.h"
+#include "Core/EngineConfig.h"
 
 // Include the official RenderDoc In-App API header
 #include "renderdoc_app.h"
@@ -6,6 +7,7 @@
 #include <Windows.h>
 #include <iostream>
 #include <string>
+#include <filesystem>
 
 namespace Kiwi
 {
@@ -24,13 +26,44 @@ namespace Kiwi
             return true;
         }
 
+        // Check if RenderDoc is disabled via config
+        auto& config = EngineConfig::Get();
+        bool enabled = config.GetBool("RenderDoc", "Enabled", true);
+        if (!enabled)
+        {
+            std::cout << "[RenderDoc] Disabled via config. Skipping initialization." << std::endl;
+            return false;
+        }
+
         // Try to find renderdoc.dll
         // 1. First check if it's already loaded (e.g., launched from RenderDoc)
         HMODULE rdocModule = GetModuleHandleA("renderdoc.dll");
 
         if (!rdocModule)
         {
-            // 2. Try common install paths
+            // 2. Check config file for explicit DLL path
+            std::string configPath = config.GetString("RenderDoc", "DllPath", "");
+            if (!configPath.empty())
+            {
+                rdocModule = LoadLibraryA(configPath.c_str());
+                if (rdocModule)
+                {
+                    std::cout << "[RenderDoc] Loaded from config path: " << configPath << std::endl;
+                }
+                else
+                {
+                    std::cerr << "[RenderDoc] Config path not valid: " << configPath << std::endl;
+                }
+            }
+        }
+        else
+        {
+            std::cout << "[RenderDoc] Already loaded in process (launched from RenderDoc UI)." << std::endl;
+        }
+
+        if (!rdocModule)
+        {
+            // 3. Try common install paths
             const char* searchPaths[] = {
                 "C:\\Program Files\\RenderDoc\\renderdoc.dll",
                 "C:\\Program Files (x86)\\RenderDoc\\renderdoc.dll",
@@ -48,15 +81,14 @@ namespace Kiwi
                 }
             }
         }
-        else
-        {
-            std::cout << "[RenderDoc] Already loaded in process (launched from RenderDoc UI)." << std::endl;
-        }
 
         if (!rdocModule)
         {
             std::cout << "[RenderDoc] renderdoc.dll not found. RenderDoc integration disabled." << std::endl;
-            std::cout << "[RenderDoc] Install RenderDoc from https://renderdoc.org to enable frame capture." << std::endl;
+            std::cout << "[RenderDoc] You can specify the path in Config/DefaultEngine.ini:" << std::endl;
+            std::cout << "[RenderDoc]   [RenderDoc]" << std::endl;
+            std::cout << "[RenderDoc]   DllPath=C:\\Path\\To\\renderdoc.dll" << std::endl;
+            std::cout << "[RenderDoc] Or install RenderDoc from https://renderdoc.org" << std::endl;
             return false;
         }
 
@@ -94,14 +126,15 @@ namespace Kiwi
         // Disable RenderDoc's own overlay (we have our own ImGui button)
         rdocAPI->MaskOverlayBits(eRENDERDOC_Overlay_None, eRENDERDOC_Overlay_None);
 
-        // Set default capture path
-        rdocAPI->SetCaptureFilePathTemplate("captures/kiwi_frame");
+        // Set capture path from config (or use default)
+        std::string capturePath = config.GetString("RenderDoc", "CapturePathTemplate", "captures/kiwi_frame");
+        rdocAPI->SetCaptureFilePathTemplate(capturePath.c_str());
 
         // Remove default capture key (F12) - we use our own button
         rdocAPI->SetCaptureKeys(nullptr, 0);
 
         std::cout << "[RenderDoc] Integration initialized successfully!" << std::endl;
-        std::cout << "[RenderDoc] Captures will be saved to: captures/" << std::endl;
+        std::cout << "[RenderDoc] Captures will be saved to: " << capturePath << std::endl;
 
         return true;
     }

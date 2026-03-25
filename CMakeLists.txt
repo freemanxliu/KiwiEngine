@@ -29,6 +29,7 @@ set(SOURCES
     src/main.cpp
     src/Core/Window.cpp
     src/Core/Application.cpp
+    src/Core/EngineConfig.cpp
     src/RHI/DX11Device.cpp
     src/RHI/DX12Device.cpp
     src/Scene/Mesh.cpp
@@ -47,6 +48,7 @@ set(HEADERS
     include/RHI/DX12/DX12Device.h
     include/Core/Window.h
     include/Core/Application.h
+    include/Core/EngineConfig.h
     include/Math/Math.h
     include/Scene/Mesh.h
     include/Scene/Shaders.h
@@ -104,4 +106,12 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${CMAKE_SOURCE_DIR}/Shaders
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/Shaders
     COMMENT "Copying Shaders/ to output directory"
+)
+
+# ---- Copy Config/ folder to output directory ----
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/Config
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Config
+    COMMENT "Copying Config/ to output directory"
 )
