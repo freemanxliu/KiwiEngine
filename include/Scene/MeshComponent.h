@@ -29,6 +29,10 @@ namespace Kiwi
         Vec4        Color      = { 0.8f, 0.8f, 0.8f, 1.0f }; // Object color
         std::string ShaderName = "Default";                     // Shader to use
         int32_t     SortOrder  = 0;                             // Render sort priority (higher = rendered first)
+
+        // Material properties (PBR-lite)
+        float       Roughness  = 0.5f;                          // Surface roughness [0, 1]
+        float       Metallic   = 0.0f;                          // Metallic factor [0, 1]
     };
 
 } // namespace Kiwi

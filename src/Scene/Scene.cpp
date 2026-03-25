@@ -292,7 +292,9 @@ namespace Kiwi
                     file << ",\n";
                     file << "          \"color\": [" << mesh.Color.x << ", " << mesh.Color.y << ", " << mesh.Color.z << ", " << mesh.Color.w << "],\n";
                     file << "          \"shader\": \"" << EscapeString(mesh.ShaderName) << "\",\n";
-                    file << "          \"sortOrder\": " << mesh.SortOrder << "\n";
+                    file << "          \"sortOrder\": " << mesh.SortOrder << ",\n";
+                    file << "          \"roughness\": " << mesh.Roughness << ",\n";
+                    file << "          \"metallic\": " << mesh.Metallic << "\n";
                 }
                 else if (comp.GetType() == EComponentType::Camera)
                 {
@@ -562,6 +564,12 @@ namespace Kiwi
                         int32_t sortOrder = 0;
                         if (ReadInt(compStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;
 
+                        float roughness = 0.5f;
+                        if (ReadFloat(compStr, "roughness", roughness)) mesh->Roughness = roughness;
+
+                        float metallic = 0.0f;
+                        if (ReadFloat(compStr, "metallic", metallic)) mesh->Metallic = metallic;
+
                         // We need to determine the mesh type from the object name or a stored field
                         // For now, detect from name pattern or default to Cube
                         // TODO: store primitiveType in the component
@@ -691,6 +699,12 @@ namespace Kiwi
 
                     int32_t sortOrder = 0;
                     if (ReadInt(objStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;
+
+                    float roughness = 0.5f;
+                    if (ReadFloat(objStr, "roughness", roughness)) mesh->Roughness = roughness;
+
+                    float metallic = 0.0f;
+                    if (ReadFloat(objStr, "metallic", metallic)) mesh->Metallic = metallic;
                 }
             }
         }

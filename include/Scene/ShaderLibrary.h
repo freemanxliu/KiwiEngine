@@ -127,6 +127,11 @@ namespace Kiwi
                 // Skip "Default" from file — we already have the built-in
                 if (name == "Default") continue;
 
+                // Skip deferred rendering shaders — they are compiled separately
+                // with specialized PSO configurations (MRT, no input layout, etc.)
+                if (name == "GBufferPass" || name == "DeferredLighting" || name == "BufferVisualization")
+                    continue;
+
                 // Read file content
                 std::ifstream file(entry.path());
                 if (!file.is_open())

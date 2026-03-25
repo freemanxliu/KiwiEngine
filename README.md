@@ -2,7 +2,7 @@
 
 **[中文版 README](README_CN.md)**
 
-A lightweight 3D rendering engine and scene editor built from scratch with C++17 and DirectX. Features a **fully abstract RHI (Render Hardware Interface) layer** — application code is 100% backend-agnostic with zero `static_cast` to specific backends, zero `isDX12` branching, and zero DX11/DX12 header includes in application code.
+A lightweight 3D rendering engine and scene editor built from scratch with C++17 and DirectX. Features a **deferred rendering pipeline** with G-Buffer visualization, a **fully abstract RHI (Render Hardware Interface) layer** — application code is 100% backend-agnostic with zero `static_cast` to specific backends, zero `isDX12` branching, and zero DX11/DX12 header includes in application code.
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
@@ -27,12 +27,38 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Frame Lifecycle Abstraction** — `RHICommandContext::BeginFrame()` / `EndFrame()` encapsulate DX12's Reset/RootSignature/DescriptorHeaps/ResourceBarrier cycle (DX11: no-op).
 - **SRV Binding Abstraction** — `RHICommandContext::SetShaderResourceView()` for backend-agnostic texture binding.
 - **Resource State Management** — `EResourceState` enum and `ResourceBarrier()` for DX12 transitions (DX11: no-op).
-- **GPU Debug Annotations** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` for GPU debugger pass labeling. Each rendering pass (Geometry, Gizmo, Post-Process, ImGui) is annotated, making them clearly identifiable in RenderDoc, PIX, and other GPU profilers. DX12 uses `ID3D12GraphicsCommandList` event API; DX11 uses `ID3DUserDefinedAnnotation`.
+- **GPU Debug Annotations** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` for GPU debugger pass labeling. Each rendering pass (G-Buffer, Deferred Lighting, Gizmo, Post-Process, ImGui) is annotated, making them clearly identifiable in RenderDoc, PIX, and other GPU profilers. DX12 uses `ID3D12GraphicsCommandList` event API; DX11 uses `ID3DUserDefinedAnnotation`.
+
+### 🔦 Deferred Rendering Pipeline
+
+- **G-Buffer** — 3 MRT (Multiple Render Targets):
+  | RT | Format | Contents |
+  |---|---|---|
+  | RT0 | `R16G16B16A16_FLOAT` | World-space Position (RGB) |
+  | RT1 | `R16G16B16A16_FLOAT` | World-space Normal (RGB, packed [0,1]) + Roughness (A) |
+  | RT2 | `R8G8B8A8_UNORM` | Albedo Color (RGB) + Metallic (A) |
+- **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`.
+- **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reads G-Buffer SRVs (t0-t2), computes full Phong lighting (Lambert diffuse + Blinn-Phong specular) with multi-light support, outputs to scene render target.
+- **Forward Gizmo Pass** — Translation gizmo is rendered on top of the deferred result using forward rendering with depth for correct occlusion.
+- **Material Properties** — Each `MeshComponent` has `Roughness` [0,1] and `Metallic` [0,1] properties, stored in G-Buffer alpha channels and editable via Inspector UI.
+
+### 👁️ View Mode System
+
+- **View Mode Switching** — Menu bar → Rendering → View Mode. Current mode indicator shown in menu bar when not "Lit".
+- **Available Modes**:
+  | Mode | Type | Description |
+  |---|---|---|
+  | **Lit** | Default | Full deferred rendering with lighting |
+  | **Unlit** | Debug | Forward rendering with no lighting (pure albedo) |
+  | **BaseColor** | Buffer Visualization | G-Buffer Albedo (RT2 RGB) |
+  | **Roughness** | Buffer Visualization | G-Buffer Roughness (RT1 Alpha, grayscale) |
+  | **Metallic** | Buffer Visualization | G-Buffer Metallic (RT2 Alpha, grayscale) |
+- **Buffer Visualization** — G-Buffer pass runs, then a dedicated `BufferVisualization` shader samples the specific G-Buffer channel and displays it as a fullscreen pass.
 
 ### 🎬 Scene & Component System
 
 - **Entity-Component Architecture** — `SceneObject` holds a vector of `Component` via `unique_ptr`. Template methods for `AddComponent<T>`, `GetComponent<T>`, `RemoveComponent<T>`.
-- **MeshComponent** — Mesh data, color, shader name, sort order.
+- **MeshComponent** — Mesh data, color, shader name, sort order, material properties (Roughness, Metallic).
 - **CameraComponent** — Perspective/orthographic projection, configurable FOV, near/far planes, Main Camera toggle with mutual exclusion. The active camera drives the engine's rendering viewpoint.
 - **DirectionalLightComponent** — Direction derived from rotation, configurable color and intensity.
 - **PointLightComponent** — Position-based lighting with configurable radius and quadratic falloff.
@@ -49,7 +75,10 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **Default** | Phong lighting — Lambert diffuse + Blinn-Phong specular, supports directional & point lights (up to 8), quadratic falloff |
   | **Unlit** | Pure color output, no lighting |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
-- **Unified Constant Buffer** — World/View/Projection matrices, object color, selection state, light count, camera position, and GPU light data (up to 8 lights).
+  | **GBufferPass** | G-Buffer geometry pass — outputs Position, Normal+Roughness, Albedo+Metallic to 3 MRT |
+  | **DeferredLighting** | Fullscreen deferred lighting — reads G-Buffer, computes Phong lighting |
+  | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels |
+- **Unified Constant Buffer** — World/View/Projection matrices, object color, selection state, light count, camera position, material properties (Roughness, Metallic), and GPU light data (up to 8 lights).
 - **Custom Shaders** — Create a `.hlsl` with `VSMain`/`PSMain` entry points using the shared CB layout, drop into `Shaders/`, and it's available at runtime.
 
 ### 🌈 Post-Processing System
@@ -147,6 +176,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 A 1280×720 window opens showing a 3D scene editor. You can:
 
 - **Switch RHI**: Menu bar → Rendering → RHI → Direct3D 11 / Direct3D 12
+- **Switch View Mode**: Menu bar → Rendering → View Mode → Lit / Unlit / BaseColor / Roughness / Metallic
 - **Add objects**: Placer tab → Cube / Sphere / Cylinder / Floor / Post Process
 - **Add lights**: Placer tab → Directional Light / Point Light
 - **Add camera**: Placer tab → Camera
@@ -215,7 +245,9 @@ cbuffer Constants : register(b0)
     int    g_NumLights;
     float2 g_Padding;
     float3 g_CameraPos;
-    float  g_CameraPadding;
+    float  g_Roughness;
+    float  g_Metallic;
+    float3 g_MaterialPadding;
     // GPULightData g_Lights[8];
 };
 ```
@@ -252,7 +284,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **One-Click Capture**: 🔵 button in top-right corner
 - **Visual Feedback**: Orange during capture, hover shows count
 - **Zero Configuration**: Just run — RenderDoc is detected automatically
-- **GPU Pass Labels**: All rendering passes (Geometry, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
+- **GPU Pass Labels**: All rendering passes (G-Buffer, Deferred Lighting, Buffer Visualization, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
 
 **Custom DLL Path** (`Config/DefaultEngine.ini`):
 ```ini
@@ -298,14 +330,15 @@ KiwiEngine/
 │       ├── Shaders.h                 # Embedded HLSL & CB layouts
 │       ├── ShaderLibrary.h           # File-based shader scanning & compilation
 │       ├── PostProcessShaders.h      # Post-process shader definitions (fullscreen VS)
-│       └── PostProcessShaderLibrary.h # Post-process shader scanning & compilation
+│       ├── PostProcessShaderLibrary.h # Post-process shader scanning & compilation
+│       └── ViewMode.h                # View mode enum (Lit, Unlit, BaseColor, Roughness, Metallic)
 ├── src/
 │   ├── main.cpp                      # Entry point & scene editor (ImGui UI, rendering)
 │   ├── Core/                         # Window, Application, EngineConfig implementations
 │   ├── RHI/                          # DX11, DX12, Vulkan backend implementations
 │   ├── Scene/                        # Mesh generation, Scene serialization
 │   └── Debug/                        # RenderDoc runtime loading
-├── Shaders/                          # Scene HLSL shaders (Default, Unlit, Wireframe)
+├── Shaders/                          # Scene HLSL shaders (Default, Unlit, Wireframe, GBufferPass, DeferredLighting, BufferVisualization)
 ├── PostProcessShaders/               # Post-process HLSL shaders (Grayscale, Vignette)
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8

@@ -12,6 +12,7 @@
 #include "Scene/PostProcessComponent.h"
 #include "Scene/PostProcessShaders.h"
 #include "Scene/PostProcessShaderLibrary.h"
+#include "Scene/ViewMode.h"
 #include "Math/Math.h"
 #include "RHI/RHI.h"
 #include "Debug/RenderDocIntegration.h"
@@ -24,6 +25,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <fstream>
+#include <sstream>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -575,67 +578,237 @@ protected:
             CreateOffscreenRenderTargets(device, winW, winH);
         }
 
-        // ---- Determine scene render target ----
-        RHITextureView* sceneRTV = nullptr;
-        if (hasPostProcess)
+        // ---- Ensure G-Buffer size matches window ----
+        if (m_GBufferWidth != winW || m_GBufferHeight != winH)
         {
-            // Render scene to offscreen RT[0]
-            sceneRTV = m_OffscreenRTV[0].get();
-
-            // DX12: transition offscreen RT[0] to render target
-            ctx->ResourceBarrier(m_OffscreenRT[0].get(),
-                RESOURCE_STATE_COMMON,
-                RESOURCE_STATE_RENDER_TARGET);
-        }
-        else
-        {
-            // Render directly to backbuffer
-            sceneRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
+            CreateGBufferResources(device, winW, winH);
         }
 
-        // ---- Set render targets ----
-        ctx->SetRenderTargets(&sceneRTV, 1, GetDSV());
-
-        // ---- Set viewport and scissor ----
+        // ---- Viewport and scissor (shared) ----
         Viewport vp;
         vp.TopLeftX = 0; vp.TopLeftY = 0;
         vp.Width = (float)winW;
         vp.Height = (float)winH;
         vp.MinDepth = 0.0f; vp.MaxDepth = 1.0f;
-        ctx->SetViewports(&vp, 1);
 
         ScissorRect sr;
         sr.Left = 0; sr.Top = 0;
         sr.Right = (int32_t)winW;
         sr.Bottom = (int32_t)winH;
-        ctx->SetScissorRects(&sr, 1);
-
-        // ---- Clear ----
-        ClearColorValue clearColor = { 0.12f, 0.12f, 0.18f, 1.0f };
-        ctx->ClearRenderTargetView(sceneRTV, clearColor);
-        ClearDepthStencilValue depthClear = { 1.0f, 0 };
-        ctx->ClearDepthStencilView(GetDSV(), depthClear, 0x03);
-
-        // ---- Setup pipeline (shared state) ----
-        ctx->SetPipelineState(m_PipelineState.get());
-        ctx->SetInputLayout(m_InputLayout.get());
-        ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
         m_PassTimer.BeginFrame();
 
-        // ---- Draw all mesh components (sorted by InitView) ----
-        ctx->BeginEvent("Geometry Pass");
-        m_PassTimer.Begin("Geometry Pass");
-        DrawSceneMeshes(ctx);
-        m_PassTimer.End();
-        ctx->EndEvent();
+        // ---- Choose rendering path based on ViewMode ----
+        bool useDeferredPipeline = (m_ViewMode == EViewMode::Lit ||
+                                     m_ViewMode == EViewMode::BaseColor ||
+                                     m_ViewMode == EViewMode::Roughness ||
+                                     m_ViewMode == EViewMode::Metallic);
 
-        // ---- Draw Gizmo for selected object ----
-        ctx->BeginEvent("Gizmo Pass");
-        m_PassTimer.Begin("Gizmo Pass");
-        DrawGizmo(ctx);
-        m_PassTimer.End();
-        ctx->EndEvent();
+        // Determine the final scene render target (before post-process)
+        // If post-process active, render to offscreen RT[0]; else to backbuffer
+        RHITextureView* sceneRTV = nullptr;
+        if (hasPostProcess)
+        {
+            sceneRTV = m_OffscreenRTV[0].get();
+            ctx->ResourceBarrier(m_OffscreenRT[0].get(),
+                RESOURCE_STATE_COMMON, RESOURCE_STATE_RENDER_TARGET);
+        }
+        else
+        {
+            sceneRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
+        }
+
+        if (useDeferredPipeline && m_GBufferPSO && m_GBufferRT[0])
+        {
+            // ================================================================
+            // DEFERRED RENDERING PATH
+            // ================================================================
+
+            // ==== PASS 1: G-Buffer Geometry Pass ====
+            ctx->BeginEvent("G-Buffer Pass");
+            m_PassTimer.Begin("G-Buffer Pass");
+
+            // Transition G-Buffer RTs to render target state
+            for (int i = 0; i < GBUFFER_COUNT; i++)
+            {
+                ctx->ResourceBarrier(m_GBufferRT[i].get(),
+                    RESOURCE_STATE_COMMON, RESOURCE_STATE_RENDER_TARGET);
+            }
+
+            // Set G-Buffer MRT + depth
+            RHITextureView* gbufferRTVs[GBUFFER_COUNT] = {
+                m_GBufferRTV[0].get(),
+                m_GBufferRTV[1].get(),
+                m_GBufferRTV[2].get(),
+            };
+            ctx->SetRenderTargets(gbufferRTVs, GBUFFER_COUNT, GetDSV());
+            ctx->SetViewports(&vp, 1);
+            ctx->SetScissorRects(&sr, 1);
+
+            // Clear G-Buffer and depth
+            ClearColorValue clearBlack = { 0.0f, 0.0f, 0.0f, 0.0f };
+            for (int i = 0; i < GBUFFER_COUNT; i++)
+            {
+                ctx->ClearRenderTargetView(gbufferRTVs[i], clearBlack);
+            }
+            ClearDepthStencilValue depthClear = { 1.0f, 0 };
+            ctx->ClearDepthStencilView(GetDSV(), depthClear, 0x03);
+
+            // Set G-Buffer pipeline state
+            ctx->SetPipelineState(m_GBufferPSO.get());
+            ctx->SetVertexShader(m_GBufferVS.get());
+            ctx->SetPixelShader(m_GBufferPS.get());
+            ctx->SetInputLayout(m_InputLayout.get());
+            ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+
+            // Draw all mesh components with G-Buffer shader
+            DrawSceneMeshesDeferred(ctx);
+
+            m_PassTimer.End();
+            ctx->EndEvent();
+
+            // Transition G-Buffer RTs to shader resource
+            for (int i = 0; i < GBUFFER_COUNT; i++)
+            {
+                ctx->ResourceBarrier(m_GBufferRT[i].get(),
+                    RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            }
+
+            // ==== PASS 2: Deferred Lighting / Buffer Visualization ====
+            if (m_ViewMode == EViewMode::Lit)
+            {
+                // Full deferred lighting pass
+                ctx->BeginEvent("Deferred Lighting Pass");
+                m_PassTimer.Begin("Deferred Lighting Pass");
+
+                ctx->SetRenderTargets(&sceneRTV, 1, nullptr);
+                ctx->SetViewports(&vp, 1);
+                ctx->SetScissorRects(&sr, 1);
+
+                ClearColorValue clearColor = { 0.12f, 0.12f, 0.18f, 1.0f };
+                ctx->ClearRenderTargetView(sceneRTV, clearColor);
+
+                // Set deferred lighting pipeline
+                ctx->SetPipelineState(m_DeferredLightingPSO.get());
+                ctx->SetVertexShader(m_DeferredLightingVS.get());
+                ctx->SetPixelShader(m_DeferredLightingPS.get());
+                ctx->SetInputLayout(nullptr);
+                ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+
+                // Bind G-Buffer SRVs (t0=Position, t1=Normal, t2=Albedo)
+                ctx->SetShaderResourceView(0, m_GBufferSRV[0].get());
+                ctx->SetShaderResourceView(1, m_GBufferSRV[1].get());
+                ctx->SetShaderResourceView(2, m_GBufferSRV[2].get());
+
+                // Bind sampler (DX11 only; DX12 uses static sampler s0)
+                ctx->SetSampler(0, m_PostProcessSampler.get());
+
+                // Update CB with lighting data
+                UpdateDeferredLightingCB();
+
+                // Draw fullscreen triangle
+                ctx->Draw(3, 0);
+
+                // Unbind SRVs
+                ctx->SetShaderResourceView(0, nullptr);
+                ctx->SetShaderResourceView(1, nullptr);
+                ctx->SetShaderResourceView(2, nullptr);
+
+                m_PassTimer.End();
+                ctx->EndEvent();
+            }
+            else
+            {
+                // Buffer visualization pass (BaseColor, Roughness, Metallic)
+                ctx->BeginEvent("Buffer Visualization Pass");
+                m_PassTimer.Begin("Buffer Visualization Pass");
+
+                ctx->SetRenderTargets(&sceneRTV, 1, nullptr);
+                ctx->SetViewports(&vp, 1);
+                ctx->SetScissorRects(&sr, 1);
+
+                ClearColorValue clearColor = { 0.12f, 0.12f, 0.18f, 1.0f };
+                ctx->ClearRenderTargetView(sceneRTV, clearColor);
+
+                // Set buffer visualization pipeline
+                ctx->SetPipelineState(m_BufferVisPSO.get());
+                ctx->SetVertexShader(m_BufferVisVS.get());
+                ctx->SetPixelShader(m_BufferVisPS.get());
+                ctx->SetInputLayout(nullptr);
+                ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+
+                // Bind G-Buffer SRVs
+                ctx->SetShaderResourceView(0, m_GBufferSRV[0].get());
+                ctx->SetShaderResourceView(1, m_GBufferSRV[1].get());
+                ctx->SetShaderResourceView(2, m_GBufferSRV[2].get());
+
+                ctx->SetSampler(0, m_PostProcessSampler.get());
+
+                // Update CB with visualization mode
+                UpdateBufferVisualizationCB();
+
+                ctx->Draw(3, 0);
+
+                ctx->SetShaderResourceView(0, nullptr);
+                ctx->SetShaderResourceView(1, nullptr);
+                ctx->SetShaderResourceView(2, nullptr);
+
+                m_PassTimer.End();
+                ctx->EndEvent();
+            }
+
+            // ==== PASS 3: Forward Gizmo Pass (on top of deferred result) ====
+            ctx->BeginEvent("Gizmo Pass");
+            m_PassTimer.Begin("Gizmo Pass");
+
+            // Re-set render targets for forward gizmo drawing (with depth for correct occlusion)
+            ctx->SetRenderTargets(&sceneRTV, 1, GetDSV());
+            ctx->SetViewports(&vp, 1);
+            ctx->SetScissorRects(&sr, 1);
+
+            ctx->SetInputLayout(m_InputLayout.get());
+            ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+            DrawGizmo(ctx);
+
+            m_PassTimer.End();
+            ctx->EndEvent();
+        }
+        else
+        {
+            // ================================================================
+            // FORWARD RENDERING PATH (Unlit ViewMode)
+            // ================================================================
+
+            // ---- Set render targets ----
+            ctx->SetRenderTargets(&sceneRTV, 1, GetDSV());
+            ctx->SetViewports(&vp, 1);
+            ctx->SetScissorRects(&sr, 1);
+
+            // ---- Clear ----
+            ClearColorValue clearColor = { 0.12f, 0.12f, 0.18f, 1.0f };
+            ctx->ClearRenderTargetView(sceneRTV, clearColor);
+            ClearDepthStencilValue depthClear = { 1.0f, 0 };
+            ctx->ClearDepthStencilView(GetDSV(), depthClear, 0x03);
+
+            // ---- Setup pipeline ----
+            ctx->SetPipelineState(m_PipelineState.get());
+            ctx->SetInputLayout(m_InputLayout.get());
+            ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+
+            // ---- Draw with Unlit shader ----
+            ctx->BeginEvent("Forward Unlit Pass");
+            m_PassTimer.Begin("Forward Unlit Pass");
+            DrawSceneMeshesForward(ctx, "Unlit");
+            m_PassTimer.End();
+            ctx->EndEvent();
+
+            // ---- Draw Gizmo ----
+            ctx->BeginEvent("Gizmo Pass");
+            m_PassTimer.Begin("Gizmo Pass");
+            DrawGizmo(ctx);
+            m_PassTimer.End();
+            ctx->EndEvent();
+        }
 
         // ---- Post-Process Pass ----
         if (hasPostProcess)
@@ -678,13 +851,77 @@ protected:
     }
 
     // ============================================================
-    // Scene Mesh Drawing (extracted from OnRender)
+    // Scene Mesh Drawing
     // ============================================================
 
-    void DrawSceneMeshes(RHICommandContext* ctx)
+    // Helper: Fill and upload per-object constant buffer
+    void UploadObjectCB(RHICommandContext* ctx, MeshComponent* meshComp)
     {
-        auto& objects = m_Scene.GetObjects();
-        std::string lastShaderName; // Track last bound shader to avoid redundant switches
+        Mat4 worldMatrix = meshComp->GetWorldMatrix();
+
+        ConstantBufferData cbd = {};
+        memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+        cbd.ObjectColor[0] = meshComp->Color.x;
+        cbd.ObjectColor[1] = meshComp->Color.y;
+        cbd.ObjectColor[2] = meshComp->Color.z;
+        cbd.ObjectColor[3] = meshComp->Color.w;
+        cbd.Selected = 0.0f;
+        cbd.NumLights = m_NumActiveLights;
+        cbd.CameraPos[0] = m_CameraPosition.x;
+        cbd.CameraPos[1] = m_CameraPosition.y;
+        cbd.CameraPos[2] = m_CameraPosition.z;
+        cbd.Roughness = meshComp->Roughness;
+        cbd.Metallic = meshComp->Metallic;
+        memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
+
+        void* mapped = m_ConstantBuffer->Map();
+        if (mapped)
+        {
+            memcpy(mapped, &cbd, sizeof(cbd));
+            m_ConstantBuffer->Unmap();
+        }
+        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+    }
+
+    // Deferred path: All objects rendered with G-Buffer shader (PSO already set)
+    void DrawSceneMeshesDeferred(RHICommandContext* ctx)
+    {
+        for (const auto& renderItem : m_RenderList)
+        {
+            size_t i = renderItem.ObjectIndex;
+            auto* meshComp = renderItem.MeshComp;
+            if (!meshComp) continue;
+
+            if (i >= m_GPUMeshes.size() || !m_GPUMeshes[i].VertexBuffer)
+                continue;
+
+            auto& gpuMesh = m_GPUMeshes[i];
+
+            VertexBufferView vbView;
+            vbView.BufferLocation = 0;
+            vbView.SizeInBytes = gpuMesh.VertexCount * sizeof(Vertex);
+            vbView.StrideInBytes = sizeof(Vertex);
+
+            RHIBuffer* vbPtr = gpuMesh.VertexBuffer.get();
+            ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+            IndexBufferView ibView;
+            ibView.BufferLocation = 0;
+            ibView.SizeInBytes = gpuMesh.IndexCount * sizeof(uint32_t);
+            ibView.Format = EFormat::R32_UINT;
+            ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
+
+            UploadObjectCB(ctx, meshComp);
+            ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
+        }
+    }
+
+    // Forward path: Objects rendered with per-object shaders (or forced shader)
+    void DrawSceneMeshesForward(RHICommandContext* ctx, const char* forceShaderName = nullptr)
+    {
+        std::string lastShaderName;
         for (const auto& renderItem : m_RenderList)
         {
             size_t i = renderItem.ObjectIndex;
@@ -695,7 +932,9 @@ protected:
                 continue;
 
             // --- Per-object shader switching ---
-            const std::string& shaderName = meshComp->ShaderName;
+            const std::string& shaderName = forceShaderName
+                ? std::string(forceShaderName)
+                : meshComp->ShaderName;
             if (shaderName != lastShaderName)
             {
                 CompiledShader* shader = m_ShaderLibrary.GetShader(shaderName);
@@ -703,7 +942,6 @@ protected:
 
                 if (shader)
                 {
-                    // Unified: PSO for DX12, Set*Shader for DX11 — both are safe to call
                     if (shader->PSO)
                         ctx->SetPipelineState(shader->PSO.get());
                     ctx->SetVertexShader(shader->VertexShader.get());
@@ -728,34 +966,70 @@ protected:
             ibView.Format = EFormat::R32_UINT;
             ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
 
-            // Update constant buffer
-            Mat4 worldMatrix = meshComp->GetWorldMatrix();
-
-            ConstantBufferData cbd = {};
-            memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-            memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-            memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-            cbd.ObjectColor[0] = meshComp->Color.x;
-            cbd.ObjectColor[1] = meshComp->Color.y;
-            cbd.ObjectColor[2] = meshComp->Color.z;
-            cbd.ObjectColor[3] = meshComp->Color.w;
-            cbd.Selected = 0.0f; // No shader highlight; gizmo used instead
-            cbd.NumLights = m_NumActiveLights;
-            cbd.CameraPos[0] = m_CameraPosition.x;
-            cbd.CameraPos[1] = m_CameraPosition.y;
-            cbd.CameraPos[2] = m_CameraPosition.z;
-            memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
-
-            void* mapped = m_ConstantBuffer->Map();
-            if (mapped)
-            {
-                memcpy(mapped, &cbd, sizeof(cbd));
-                m_ConstantBuffer->Unmap();
-            }
-            ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
-
+            UploadObjectCB(ctx, meshComp);
             ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
         }
+    }
+
+    // Update CB for deferred lighting fullscreen pass
+    void UpdateDeferredLightingCB()
+    {
+        ConstantBufferData cbd = {};
+        // World/View/Projection not needed for fullscreen triangle, but lighting data is
+        Mat4 identity = Mat4::Identity();
+        memcpy(cbd.WorldMatrix, identity.m, sizeof(identity.m));
+        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+        cbd.Selected = 0.0f;
+        cbd.NumLights = m_NumActiveLights;
+        cbd.CameraPos[0] = m_CameraPosition.x;
+        cbd.CameraPos[1] = m_CameraPosition.y;
+        cbd.CameraPos[2] = m_CameraPosition.z;
+        cbd.Roughness = 0.0f;
+        cbd.Metallic = 0.0f;
+        memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
+
+        void* mapped = m_ConstantBuffer->Map();
+        if (mapped)
+        {
+            memcpy(mapped, &cbd, sizeof(cbd));
+            m_ConstantBuffer->Unmap();
+        }
+        auto ctx = GetContext();
+        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+    }
+
+    // Update CB for buffer visualization fullscreen pass
+    void UpdateBufferVisualizationCB()
+    {
+        ConstantBufferData cbd = {};
+        Mat4 identity = Mat4::Identity();
+        memcpy(cbd.WorldMatrix, identity.m, sizeof(identity.m));
+        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+
+        // Use g_Selected to pass the visualization mode
+        switch (m_ViewMode)
+        {
+        case EViewMode::BaseColor: cbd.Selected = 0.0f; break;
+        case EViewMode::Roughness: cbd.Selected = 1.0f; break;
+        case EViewMode::Metallic:  cbd.Selected = 2.0f; break;
+        default:                   cbd.Selected = 0.0f; break;
+        }
+
+        cbd.NumLights = 0;
+        cbd.CameraPos[0] = m_CameraPosition.x;
+        cbd.CameraPos[1] = m_CameraPosition.y;
+        cbd.CameraPos[2] = m_CameraPosition.z;
+
+        void* mapped = m_ConstantBuffer->Map();
+        if (mapped)
+        {
+            memcpy(mapped, &cbd, sizeof(cbd));
+            m_ConstantBuffer->Unmap();
+        }
+        auto ctx = GetContext();
+        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
     }
 
     // ============================================================
@@ -1056,6 +1330,9 @@ protected:
         // Release post-process resources
         ReleasePostProcessResources();
 
+        // Release deferred rendering resources
+        ReleaseGBufferResources();
+
         // Release Gizmo GPU resources
         for (int i = 0; i < 3; i++)
         {
@@ -1131,6 +1408,10 @@ private:
 
         // Initialize post-process resources
         InitPostProcessResources(device);
+
+        // Initialize deferred rendering resources
+        CompileDeferredShaders(device);
+        CreateGBufferResources(device, GetWindow()->GetWidth(), GetWindow()->GetHeight());
 
         // Init ImGui backend
         device->InitImGui(GetWindow()->GetHWND());
@@ -1223,6 +1504,176 @@ private:
     }
 
     // ============================================================
+    // Deferred Rendering: G-Buffer Resource Management
+    // ============================================================
+
+    void CreateGBufferResources(RHIDevice* device, uint32_t width, uint32_t height)
+    {
+        if (width == 0 || height == 0) return;
+
+        // Release existing
+        ReleaseGBufferResources();
+
+        m_GBufferWidth = width;
+        m_GBufferHeight = height;
+
+        // G-Buffer layout:
+        // RT0: World Position (R16G16B16A16_FLOAT)
+        // RT1: Normal (R16G16B16A16_FLOAT) — RGB=normal packed [0,1], A=roughness
+        // RT2: Albedo (R8G8B8A8_UNORM) — RGB=albedo, A=metallic
+        EFormat gbufferFormats[GBUFFER_COUNT] = {
+            EFormat::R16G16B16A16_FLOAT,   // Position
+            EFormat::R16G16B16A16_FLOAT,   // Normal + Roughness
+            EFormat::R8G8B8A8_UNORM,       // Albedo + Metallic
+        };
+
+        for (int i = 0; i < GBUFFER_COUNT; i++)
+        {
+            TextureDesc desc;
+            desc.Width = width;
+            desc.Height = height;
+            desc.Format = gbufferFormats[i];
+            desc.BindFlags = TEXTURE_BIND_RENDER_TARGET | TEXTURE_BIND_SHADER_RESOURCE;
+            desc.Usage = EResourceUsage::Default;
+            desc.MipLevels = 1;
+            desc.SampleCount = 1;
+
+            m_GBufferRT[i] = device->CreateTexture(desc);
+            m_GBufferRTV[i] = device->CreateTextureView(
+                m_GBufferRT[i].get(), EDescriptorHeapType::RTV);
+            m_GBufferSRV[i] = device->CreateTextureView(
+                m_GBufferRT[i].get(), EDescriptorHeapType::CBV_SRV_UAV);
+        }
+
+        std::cout << "[Kiwi] G-Buffer created: " << width << "x" << height << std::endl;
+    }
+
+    void ReleaseGBufferResources()
+    {
+        for (int i = 0; i < GBUFFER_COUNT; i++)
+        {
+            m_GBufferSRV[i].reset();
+            m_GBufferRTV[i].reset();
+            m_GBufferRT[i].reset();
+        }
+        m_GBufferVS.reset();
+        m_GBufferPS.reset();
+        m_GBufferPSO.reset();
+        m_DeferredLightingVS.reset();
+        m_DeferredLightingPS.reset();
+        m_DeferredLightingPSO.reset();
+        m_BufferVisVS.reset();
+        m_BufferVisPS.reset();
+        m_BufferVisPSO.reset();
+    }
+
+    std::string ReadShaderFile(const std::string& filePath)
+    {
+        std::ifstream file(filePath);
+        if (!file.is_open())
+        {
+            std::cerr << "[Kiwi] Failed to read shader file: " << filePath << std::endl;
+            return "";
+        }
+        std::stringstream ss;
+        ss << file.rdbuf();
+        return ss.str();
+    }
+
+    void CompileDeferredShaders(RHIDevice* device)
+    {
+        // --- Compile G-Buffer Pass shader ---
+        std::string gbufferPath = m_ShaderDir + "/GBufferPass.hlsl";
+        std::string gbufferSrc = ReadShaderFile(gbufferPath);
+        if (!gbufferSrc.empty())
+        {
+            m_GBufferVS = device->CompileShader(
+                EShaderType::Vertex, gbufferSrc.c_str(), "VSMain", "vs_5_0");
+            m_GBufferPS = device->CompileShader(
+                EShaderType::Pixel, gbufferSrc.c_str(), "PSMain", "ps_5_0");
+
+            if (m_GBufferVS && m_GBufferPS)
+            {
+                // Create MRT PSO for G-Buffer (3 render targets)
+                PipelineStateDesc gbufferPSODesc;
+                gbufferPSODesc.NumRenderTargets = 3;
+                gbufferPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT; // Position
+                gbufferPSODesc.RTVFormats[1] = EFormat::R16G16B16A16_FLOAT; // Normal + Roughness
+                gbufferPSODesc.RTVFormats[2] = EFormat::R8G8B8A8_UNORM;     // Albedo + Metallic
+                gbufferPSODesc.DSVFormat = EFormat::D24_UNORM_S8_UINT;
+                gbufferPSODesc.DepthEnabled = true;
+                gbufferPSODesc.DepthWrite = true;
+
+                m_GBufferPSO = device->CreateGraphicsPipelineState(
+                    m_GBufferVS.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+
+                std::cout << "[Kiwi] G-Buffer shader compiled successfully" << std::endl;
+            }
+            else
+            {
+                std::cerr << "[Kiwi] Failed to compile G-Buffer shaders" << std::endl;
+            }
+        }
+
+        // --- Compile Deferred Lighting shader ---
+        std::string lightingPath = m_ShaderDir + "/DeferredLighting.hlsl";
+        std::string lightingSrc = ReadShaderFile(lightingPath);
+        if (!lightingSrc.empty())
+        {
+            m_DeferredLightingVS = device->CompileShader(
+                EShaderType::Vertex, lightingSrc.c_str(), "VSMain", "vs_5_0");
+            m_DeferredLightingPS = device->CompileShader(
+                EShaderType::Pixel, lightingSrc.c_str(), "PSMain", "ps_5_0");
+
+            if (m_DeferredLightingVS && m_DeferredLightingPS)
+            {
+                // Fullscreen pass: no input layout, no depth
+                PipelineStateDesc lightingPSODesc;
+                lightingPSODesc.NumRenderTargets = 1;
+                lightingPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                lightingPSODesc.DepthEnabled = false;
+                lightingPSODesc.DepthWrite = false;
+
+                m_DeferredLightingPSO = device->CreateGraphicsPipelineState(
+                    m_DeferredLightingVS.get(), m_DeferredLightingPS.get(),
+                    nullptr, lightingPSODesc);
+
+                std::cout << "[Kiwi] Deferred Lighting shader compiled successfully" << std::endl;
+            }
+            else
+            {
+                std::cerr << "[Kiwi] Failed to compile Deferred Lighting shaders" << std::endl;
+            }
+        }
+
+        // --- Compile Buffer Visualization shader ---
+        std::string bufferVisPath = m_ShaderDir + "/BufferVisualization.hlsl";
+        std::string bufferVisSrc = ReadShaderFile(bufferVisPath);
+        if (!bufferVisSrc.empty())
+        {
+            m_BufferVisVS = device->CompileShader(
+                EShaderType::Vertex, bufferVisSrc.c_str(), "VSMain", "vs_5_0");
+            m_BufferVisPS = device->CompileShader(
+                EShaderType::Pixel, bufferVisSrc.c_str(), "PSMain", "ps_5_0");
+
+            if (m_BufferVisVS && m_BufferVisPS)
+            {
+                PipelineStateDesc visPSODesc;
+                visPSODesc.NumRenderTargets = 1;
+                visPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                visPSODesc.DepthEnabled = false;
+                visPSODesc.DepthWrite = false;
+
+                m_BufferVisPSO = device->CreateGraphicsPipelineState(
+                    m_BufferVisVS.get(), m_BufferVisPS.get(),
+                    nullptr, visPSODesc);
+
+                std::cout << "[Kiwi] Buffer Visualization shader compiled successfully" << std::endl;
+            }
+        }
+    }
+
+    // ============================================================
     // Menu Bar (fixed at top)
     // ============================================================
 
@@ -1251,8 +1702,42 @@ private:
 
                     ImGui::EndMenu();
                 }
+
+                if (ImGui::BeginMenu("View Mode"))
+                {
+                    if (ImGui::MenuItem("Lit", nullptr, m_ViewMode == EViewMode::Lit))
+                        m_ViewMode = EViewMode::Lit;
+
+                    ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Buffer Visualization");
+
+                    if (ImGui::MenuItem("BaseColor", nullptr, m_ViewMode == EViewMode::BaseColor))
+                        m_ViewMode = EViewMode::BaseColor;
+                    if (ImGui::MenuItem("Roughness", nullptr, m_ViewMode == EViewMode::Roughness))
+                        m_ViewMode = EViewMode::Roughness;
+                    if (ImGui::MenuItem("Metallic", nullptr, m_ViewMode == EViewMode::Metallic))
+                        m_ViewMode = EViewMode::Metallic;
+
+                    ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Debug");
+
+                    if (ImGui::MenuItem("Unlit", nullptr, m_ViewMode == EViewMode::Unlit))
+                        m_ViewMode = EViewMode::Unlit;
+
+                    ImGui::EndMenu();
+                }
+
                 ImGui::EndMenu();
             }
+
+            // Show current view mode indicator in menu bar
+            if (m_ViewMode != EViewMode::Lit)
+            {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                    "[%s]", GetViewModeName(m_ViewMode));
+            }
+
             ImGui::EndMainMenuBar();
         }
     }
@@ -1720,6 +2205,11 @@ private:
                     ImGui::Separator();
                     ImGui::Text("Appearance");
                     ImGui::ColorEdit4(("Color##" + std::to_string(ci)).c_str(), &mesh.Color.x);
+
+                    ImGui::Separator();
+                    ImGui::Text("Material");
+                    ImGui::SliderFloat(("Roughness##" + std::to_string(ci)).c_str(), &mesh.Roughness, 0.0f, 1.0f);
+                    ImGui::SliderFloat(("Metallic##" + std::to_string(ci)).c_str(), &mesh.Metallic, 0.0f, 1.0f);
 
                     ImGui::Separator();
                     ImGui::Text("Rendering");
@@ -2342,6 +2832,32 @@ private:
 
     // Time tracking for post-process effects
     float m_TotalTime = 0.0f;
+
+    // ---- Deferred Rendering: G-Buffer Resources ----
+    static constexpr int GBUFFER_COUNT = 3; // Position, Normal(+Roughness), Albedo(+Metallic)
+    std::unique_ptr<RHITexture>     m_GBufferRT[GBUFFER_COUNT];
+    std::unique_ptr<RHITextureView> m_GBufferRTV[GBUFFER_COUNT];
+    std::unique_ptr<RHITextureView> m_GBufferSRV[GBUFFER_COUNT];
+    uint32_t m_GBufferWidth = 0;
+    uint32_t m_GBufferHeight = 0;
+
+    // G-Buffer shaders (compiled separately from ShaderLibrary)
+    std::unique_ptr<RHIShader> m_GBufferVS;
+    std::unique_ptr<RHIShader> m_GBufferPS;
+    std::unique_ptr<RHIPipelineState> m_GBufferPSO; // MRT PSO
+
+    // Deferred Lighting shader (fullscreen pass)
+    std::unique_ptr<RHIShader> m_DeferredLightingVS;
+    std::unique_ptr<RHIShader> m_DeferredLightingPS;
+    std::unique_ptr<RHIPipelineState> m_DeferredLightingPSO;
+
+    // Buffer Visualization shader (fullscreen pass for debug ViewModes)
+    std::unique_ptr<RHIShader> m_BufferVisVS;
+    std::unique_ptr<RHIShader> m_BufferVisPS;
+    std::unique_ptr<RHIPipelineState> m_BufferVisPSO;
+
+    // ---- View Mode ----
+    EViewMode m_ViewMode = EViewMode::Lit;
 };
 
 // ============================================================

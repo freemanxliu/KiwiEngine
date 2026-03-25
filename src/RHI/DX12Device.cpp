@@ -971,18 +971,19 @@ namespace Kiwi
         if (srv && m_SRVHeap)
         {
             // Use descriptor at index (slot + 1) in SRV heap (index 0 is reserved for ImGui)
-            D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = m_SRVHeap->GetGPUDescriptorHandleForHeapStart();
             uint32_t descriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-            gpuHandle.ptr += (SIZE_T)(slot + 1) * descriptorSize;
 
-            // Copy the SRV descriptor to the shader-visible heap
+            // Copy the SRV descriptor to the shader-visible heap at the correct slot
             D3D12_CPU_DESCRIPTOR_HANDLE srcHandle;
             srcHandle.ptr = (SIZE_T)srv->GetNativeHandle();
             D3D12_CPU_DESCRIPTOR_HANDLE dstHandle = m_SRVHeap->GetCPUDescriptorHandleForHeapStart();
             dstHandle.ptr += (SIZE_T)(slot + 1) * descriptorSize;
             m_Device->CopyDescriptorsSimple(1, dstHandle, srcHandle, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-            // Set the descriptor table at root parameter 1
+            // Always set descriptor table starting from index 1 (t0)
+            // This way all SRVs (t0-t3) are in a contiguous range starting at heap index 1
+            D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = m_SRVHeap->GetGPUDescriptorHandleForHeapStart();
+            gpuHandle.ptr += (SIZE_T)1 * descriptorSize;
             m_CommandList->SetGraphicsRootDescriptorTable(1, gpuHandle);
         }
     }

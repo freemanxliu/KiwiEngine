@@ -2,7 +2,7 @@
 
 **[English README](README.md)**
 
-一个从零开始构建的轻量级 3D 渲染引擎与场景编辑器，基于 C++17 和 DirectX。采用**深度 RHI（渲染硬件接口）抽象层**——应用层代码 100% 后端无关，零 `static_cast`、零 `isDX12` 分支、零 DX11/DX12 头文件引用。
+一个从零开始构建的轻量级 3D 渲染引擎与场景编辑器，基于 C++17 和 DirectX。采用**延迟渲染管线**和 G-Buffer 可视化，以及**深度 RHI（渲染硬件接口）抽象层**——应用层代码 100% 后端无关，零 `static_cast`、零 `isDX12` 分支、零 DX11/DX12 头文件引用。
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
@@ -27,12 +27,38 @@
 - **帧生命周期抽象** — `RHICommandContext::BeginFrame()` / `EndFrame()` 封装 DX12 的 Reset/RootSig/DescriptorHeaps/ResourceBarrier 流程（DX11 为空操作）。
 - **SRV 绑定抽象** — `RHICommandContext::SetShaderResourceView()` 实现后端无关的纹理绑定。
 - **资源状态管理** — `EResourceState` 枚举和 `ResourceBarrier()` 用于 DX12 资源状态转换（DX11 为空操作）。
-- **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（Geometry、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
+- **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
+
+### 🔦 延迟渲染管线
+
+- **G-Buffer** — 3 个 MRT（多渲染目标）：
+  | RT | 格式 | 内容 |
+  |---|---|---|
+  | RT0 | `R16G16B16A16_FLOAT` | 世界空间位置 (RGB) |
+  | RT1 | `R16G16B16A16_FLOAT` | 世界空间法线 (RGB, 打包到 [0,1]) + 粗糙度 (A) |
+  | RT2 | `R8G8B8A8_UNORM` | 反照率颜色 (RGB) + 金属度 (A) |
+- **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。通过 `CreateGraphicsPipelineState()` 和 `PipelineStateDesc` 创建 MRT PSO。
+- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 读取 G-Buffer SRV (t0-t2)，计算完整 Phong 光照（Lambert 漫反射 + Blinn-Phong 高光），支持多光源，输出到场景渲染目标。
+- **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
+- **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer alpha 通道中，可通过 Inspector UI 编辑。
+
+### 👁️ 视图模式系统
+
+- **视图模式切换** — 菜单栏 → Rendering → View Mode。非 "Lit" 模式时，菜单栏显示当前模式指示器。
+- **可用模式**：
+  | 模式 | 类型 | 描述 |
+  |---|---|---|
+  | **Lit** | 默认 | 完整延迟渲染 + 光照 |
+  | **Unlit** | 调试 | 前向渲染，无光照（纯反照率） |
+  | **BaseColor** | 缓冲区可视化 | G-Buffer 反照率 (RT2 RGB) |
+  | **Roughness** | 缓冲区可视化 | G-Buffer 粗糙度 (RT1 Alpha, 灰度) |
+  | **Metallic** | 缓冲区可视化 | G-Buffer 金属度 (RT2 Alpha, 灰度) |
+- **缓冲区可视化** — G-Buffer Pass 执行后，专用的 `BufferVisualization` 着色器采样指定的 G-Buffer 通道并以全屏 Pass 显示。
 
 ### 🎬 场景与组件系统
 
 - **实体-组件架构** — `SceneObject` 通过 `unique_ptr` 持有 `Component` 列表。提供模板方法 `AddComponent<T>`、`GetComponent<T>`、`RemoveComponent<T>`。
-- **MeshComponent（网格组件）** — 网格数据、颜色、着色器名称、排序顺序。
+- **MeshComponent（网格组件）** — 网格数据、颜色、着色器名称、排序顺序、材质属性（粗糙度、金属度）。
 - **CameraComponent（相机组件）** — 透视/正交投影、可配置 FOV、近/远裁剪面、Main Camera 开关（互斥）。激活的相机驱动引擎渲染视角。
 - **DirectionalLightComponent（方向光组件）** — 方向由旋转决定，可配置颜色和强度。
 - **PointLightComponent（点光源组件）** — 基于位置的光照，可配置半径，二次衰减。
@@ -49,7 +75,10 @@
   | **Default** | Phong 光照 — Lambert 漫反射 + Blinn-Phong 高光，支持方向光和点光源（最多 8 盏），二次衰减 |
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
-- **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、GPU 灯光数据（最多 8 盏）。
+  | **GBufferPass** | G-Buffer 几何 Pass — 输出位置、法线+粗糙度、反照率+金属度到 3 个 MRT |
+  | **DeferredLighting** | 全屏延迟光照 — 读取 G-Buffer，计算 Phong 光照 |
+  | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
+- **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
 - **自定义着色器** — 创建包含 `VSMain`/`PSMain` 入口点的 `.hlsl` 文件，使用共享的 CB 布局，放入 `Shaders/` 即可在运行时使用。
 
 ### 🌈 后处理系统
@@ -147,6 +176,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 打开一个 1280×720 的 3D 场景编辑器窗口，你可以：
 
 - **切换 RHI**：菜单栏 → Rendering → RHI → Direct3D 11 / Direct3D 12
+- **切换视图模式**：菜单栏 → Rendering → View Mode → Lit / Unlit / BaseColor / Roughness / Metallic
 - **添加物体**：Placer 面板 → Cube / Sphere / Cylinder / Floor / Post Process
 - **添加灯光**：Placer 面板 → Directional Light / Point Light
 - **添加相机**：Placer 面板 → Camera
@@ -215,7 +245,9 @@ cbuffer Constants : register(b0)
     int    g_NumLights;
     float2 g_Padding;
     float3 g_CameraPos;
-    float  g_CameraPadding;
+    float  g_Roughness;
+    float  g_Metallic;
+    float3 g_MaterialPadding;
     // GPULightData g_Lights[8];
 };
 ```
@@ -252,7 +284,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **一键截帧**：右上角 🔵 按钮
 - **视觉反馈**：捕获时按钮变橙色，悬停显示捕获次数
 - **零配置**：直接运行即可，自动检测 RenderDoc
-- **GPU Pass 标签**：所有渲染阶段（Geometry、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
+- **GPU Pass 标签**：所有渲染阶段（G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
 
 **自定义 DLL 路径**（`Config/DefaultEngine.ini`）：
 ```ini
@@ -298,14 +330,15 @@ KiwiEngine/
 │       ├── Shaders.h                 # 内嵌 HLSL 与 CB 布局
 │       ├── ShaderLibrary.h           # 文件着色器扫描与编译
 │       ├── PostProcessShaders.h      # 后处理着色器定义（全屏 VS）
-│       └── PostProcessShaderLibrary.h # 后处理着色器扫描与编译
+│       ├── PostProcessShaderLibrary.h # 后处理着色器扫描与编译
+│       └── ViewMode.h                # 视图模式枚举（Lit、Unlit、BaseColor、Roughness、Metallic）
 ├── src/
 │   ├── main.cpp                      # 入口点与场景编辑器（ImGui UI、渲染）
 │   ├── Core/                         # Window、Application、EngineConfig 实现
 │   ├── RHI/                          # DX11、DX12、Vulkan 后端实现
 │   ├── Scene/                        # 网格生成、场景序列化
 │   └── Debug/                        # RenderDoc 运行时加载
-├── Shaders/                          # 场景 HLSL 着色器（Default、Unlit、Wireframe）
+├── Shaders/                          # 场景 HLSL 着色器（Default、Unlit、Wireframe、GBufferPass、DeferredLighting、BufferVisualization）
 ├── PostProcessShaders/               # 后处理 HLSL 着色器（Grayscale、Vignette）
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8

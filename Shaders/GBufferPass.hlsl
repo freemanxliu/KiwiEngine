@@ -1,6 +1,6 @@
 // ============================================================
 // G-Buffer Geometry Pass Shader
-// Writes to 3 MRT: Position, Normal, Albedo
+// Writes to 3 MRT: Position, Normal(+Roughness), Albedo(+Metallic)
 // Used in deferred rendering pipeline
 // ============================================================
 
@@ -24,7 +24,9 @@ cbuffer Constants : register(b0)
     int    g_NumLights;
     float2 g_Padding;
     float3 g_CameraPos;
-    float  g_Padding2;
+    float  g_Roughness;
+    float  g_Metallic;
+    float3 g_MaterialPadding;
     LightData g_Lights[MAX_LIGHTS];
 };
 
@@ -49,8 +51,8 @@ struct VSOutput
 struct GBufferOutput
 {
     float4 Position : SV_TARGET0;  // World-space position (RGB) + unused (A)
-    float4 Normal   : SV_TARGET1;  // World-space normal (RGB) + unused (A)
-    float4 Albedo   : SV_TARGET2;  // Albedo color (RGB) + alpha (A)
+    float4 Normal   : SV_TARGET1;  // World-space normal (RGB) + Roughness (A)
+    float4 Albedo   : SV_TARGET2;  // Albedo color (RGB) + Metallic (A)
 };
 
 // ---- Vertex Shader ----
@@ -77,8 +79,8 @@ GBufferOutput PSMain(VSOutput input)
     GBufferOutput output;
 
     output.Position = float4(input.PositionWS, 1.0);
-    output.Normal = float4(normalize(input.NormalWS) * 0.5 + 0.5, 1.0); // Pack to [0,1]
-    output.Albedo = input.Color;
+    output.Normal = float4(normalize(input.NormalWS) * 0.5 + 0.5, g_Roughness); // Pack normal to [0,1], A = Roughness
+    output.Albedo = float4(input.Color.rgb, g_Metallic);                          // Albedo RGB, A = Metallic
 
     return output;
 }

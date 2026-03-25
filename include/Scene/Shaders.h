@@ -32,7 +32,9 @@ namespace Kiwi
         int32_t NumLights;           // Number of active lights
         float Padding[2];            // Pad to 16-byte alignment
         float CameraPos[3];          // Camera position in world space
-        float Padding2;              // Pad to 16-byte alignment
+        float Roughness;             // Material roughness [0, 1]
+        float Metallic;              // Material metallic [0, 1]
+        float MaterialPadding[3];    // Pad to 16-byte alignment
         GPULightData Lights[MAX_LIGHTS]; // Light array
     };
 
@@ -60,7 +62,9 @@ namespace Kiwi
         int    g_NumLights;
         float2 g_Padding;
         float3 g_CameraPos;
-        float  g_Padding2;
+        float  g_Roughness;
+        float  g_Metallic;
+        float3 g_MaterialPadding;
         LightData g_Lights[MAX_LIGHTS];
     };
 
@@ -122,7 +126,9 @@ namespace Kiwi
         int    g_NumLights;
         float2 g_Padding;
         float3 g_CameraPos;
-        float  g_Padding2;
+        float  g_Roughness;
+        float  g_Metallic;
+        float3 g_MaterialPadding;
         LightData g_Lights[MAX_LIGHTS];
     };
 
