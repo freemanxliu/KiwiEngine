@@ -1,10 +1,12 @@
 // ============================================================
 // Deferred Lighting Pass Shader
 // Reads G-Buffer (Position, Normal, Albedo) and computes lighting
+// Includes Cascaded Shadow Mapping (CSM)
 // Uses fullscreen triangle (SV_VertexID)
 // ============================================================
 
 #define MAX_LIGHTS 8
+#define MAX_CSM_CASCADES 4
 
 struct LightData
 {
@@ -30,12 +32,31 @@ cbuffer Constants : register(b0)
     LightData g_Lights[MAX_LIGHTS];
 };
 
+cbuffer ShadowConstants : register(b1)
+{
+    row_major float4x4 g_LightViewProj[MAX_CSM_CASCADES];
+    float4 g_CascadeSplits;       // Split distances in view-space Z
+    float  g_ShadowBias;
+    float  g_NormalBias;
+    float  g_ShadowStrength;
+    int    g_NumCascades;
+    float  g_ShadowMapSize;
+    float3 g_ShadowPadding;
+};
+
 // G-Buffer textures
 Texture2D g_PositionBuffer : register(t0);
 Texture2D g_NormalBuffer   : register(t1);
 Texture2D g_AlbedoBuffer   : register(t2);
 
-SamplerState g_GBufferSampler : register(s0); // Linear clamp
+// Shadow maps (one per cascade)
+Texture2D g_ShadowMap0 : register(t3);
+Texture2D g_ShadowMap1 : register(t4);
+Texture2D g_ShadowMap2 : register(t5);
+Texture2D g_ShadowMap3 : register(t6);
+
+SamplerState g_GBufferSampler        : register(s0); // Linear clamp
+SamplerComparisonState g_ShadowSampler : register(s2); // Comparison sampler for PCF
 
 struct VSOutput
 {
@@ -53,6 +74,69 @@ VSOutput VSMain(uint vertexID : SV_VertexID)
     output.Position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
     output.TexCoord = float2(uv.x, 1.0 - uv.y);
     return output;
+}
+
+// ---- PCF Shadow Sampling ----
+float SampleShadowMap(Texture2D shadowMap, float3 shadowCoord, float bias)
+{
+    // 5-tap PCF (center + 4 neighbors)
+    float texelSize = 1.0 / g_ShadowMapSize;
+    float depth = shadowCoord.z - bias;
+    
+    float shadow = 0.0;
+    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy, depth);
+    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(texelSize, 0), depth);
+    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(-texelSize, 0), depth);
+    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(0, texelSize), depth);
+    shadow += shadowMap.SampleCmpLevelZero(g_ShadowSampler, shadowCoord.xy + float2(0, -texelSize), depth);
+    
+    return shadow / 5.0;
+}
+
+// ---- Compute shadow factor for a world-space position ----
+float ComputeShadow(float3 worldPos, float viewZ)
+{
+    if (g_NumCascades <= 0)
+        return 1.0; // No shadow
+
+    // Select cascade based on view-space Z distance
+    int cascadeIndex = 0;
+    float splits[MAX_CSM_CASCADES] = {
+        g_CascadeSplits.x, g_CascadeSplits.y, g_CascadeSplits.z, g_CascadeSplits.w
+    };
+    
+    for (int i = 0; i < g_NumCascades - 1; i++)
+    {
+        if (viewZ > splits[i])
+            cascadeIndex = i + 1;
+    }
+    
+    // Project world position into light space
+    float4 shadowPos = mul(float4(worldPos, 1.0), g_LightViewProj[cascadeIndex]);
+    float3 shadowCoord;
+    shadowCoord.xy = shadowPos.xy / shadowPos.w * 0.5 + 0.5;
+    shadowCoord.y = 1.0 - shadowCoord.y; // Flip Y for UV
+    shadowCoord.z = shadowPos.z / shadowPos.w;
+    
+    // Check if outside shadow map bounds
+    if (shadowCoord.x < 0 || shadowCoord.x > 1 || 
+        shadowCoord.y < 0 || shadowCoord.y > 1 ||
+        shadowCoord.z < 0 || shadowCoord.z > 1)
+        return 1.0;
+    
+    // Sample the correct cascade shadow map
+    float shadow = 1.0;
+    if (cascadeIndex == 0)
+        shadow = SampleShadowMap(g_ShadowMap0, shadowCoord, g_ShadowBias);
+    else if (cascadeIndex == 1)
+        shadow = SampleShadowMap(g_ShadowMap1, shadowCoord, g_ShadowBias);
+    else if (cascadeIndex == 2)
+        shadow = SampleShadowMap(g_ShadowMap2, shadowCoord, g_ShadowBias);
+    else
+        shadow = SampleShadowMap(g_ShadowMap3, shadowCoord, g_ShadowBias);
+    
+    // Apply shadow strength
+    return lerp(1.0, shadow, g_ShadowStrength);
 }
 
 // ---- Lighting Pixel Shader ----
@@ -74,6 +158,10 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float3 albedo = albedoData.rgb;
 
     float3 viewDir = normalize(g_CameraPos - worldPos);
+    
+    // Compute view-space Z for cascade selection
+    float4 viewSpacePos = mul(float4(worldPos, 1.0), g_View);
+    float viewZ = viewSpacePos.z;
 
     // Ambient
     float3 ambient = float3(0.15, 0.15, 0.15);
@@ -90,6 +178,10 @@ float4 PSMain(VSOutput input) : SV_TARGET
         if (g_Lights[i].Type == 0) // Directional
         {
             lightDir = normalize(g_Lights[i].DirectionOrPos);
+            
+            // Apply CSM shadow for directional lights
+            float shadowFactor = ComputeShadow(worldPos, viewZ);
+            attenuation *= shadowFactor;
         }
         else // Point
         {

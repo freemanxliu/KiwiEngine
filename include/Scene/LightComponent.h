@@ -65,6 +65,18 @@ namespace Kiwi
 
         // Direction is computed from Rotation via GetForward()
         // No additional properties needed — direction comes from transform
+
+        // ---- Cascaded Shadow Map (CSM) Parameters ----
+        static constexpr int MAX_CSM_CASCADES = 4;
+
+        bool CastShadow = true;                   // Enable/disable shadow casting
+        int  NumCascades = 4;                      // Number of cascade levels (1-4)
+        int  ShadowMapResolution = 2048;           // Shadow map resolution per cascade
+        float ShadowDistance = 50.0f;              // Maximum shadow distance from camera
+        float CascadeSplitLambda = 0.75f;          // PSSM split scheme lambda (0=uniform, 1=logarithmic)
+        float ShadowBias = 0.005f;                 // Depth bias to reduce shadow acne
+        float NormalBias = 0.02f;                  // Normal offset bias
+        float ShadowStrength = 1.0f;               // Shadow darkness (0=no shadow, 1=full shadow)
     };
 
     // ============================================================

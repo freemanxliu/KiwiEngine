@@ -181,6 +181,11 @@ namespace Kiwi
         // 创建采样器
         virtual std::unique_ptr<RHISampler> CreateSampler() = 0;
 
+        // 创建比较采样器（用于阴影贴图 PCF 采样）
+        // DX11: 创建 D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR 采样器
+        // DX12: 返回空（使用 root signature 中的静态比较采样器）
+        virtual std::unique_ptr<RHISampler> CreateComparisonSampler() { return nullptr; }
+
         // 查询特性
         virtual bool IsFeatureSupported(const char* feature) const = 0;
 

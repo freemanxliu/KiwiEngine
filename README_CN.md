@@ -38,7 +38,8 @@
   | RT1 | `R16G16B16A16_FLOAT` | 世界空间法线 (RGB, 打包到 [0,1]) + 粗糙度 (A) |
   | RT2 | `R8G8B8A8_UNORM` | 反照率颜色 (RGB) + 金属度 (A) |
 - **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。通过 `CreateGraphicsPipelineState()` 和 `PipelineStateDesc` 创建 MRT PSO。
-- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 读取 G-Buffer SRV (t0-t2)，计算完整 Phong 光照（Lambert 漫反射 + Blinn-Phong 高光），支持多光源，输出到场景渲染目标。
+- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 读取 G-Buffer SRV (t0-t2)，计算完整 Phong 光照（Lambert 漫反射 + Blinn-Phong 高光），支持多光源，应用级联阴影贴图，输出到场景渲染目标。
+- **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联。从光源视角将场景深度渲染到独立的 `R32_TYPELESS` 阴影贴图中。PSSM 混合对数和均匀分割方案。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
 - **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
 - **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer alpha 通道中，可通过 Inspector UI 编辑。
 
@@ -60,7 +61,7 @@
 - **实体-组件架构** — `SceneObject` 通过 `unique_ptr` 持有 `Component` 列表。提供模板方法 `AddComponent<T>`、`GetComponent<T>`、`RemoveComponent<T>`。
 - **MeshComponent（网格组件）** — 网格数据、颜色、着色器名称、排序顺序、材质属性（粗糙度、金属度）。
 - **CameraComponent（相机组件）** — 透视/正交投影、可配置 FOV、近/远裁剪面、Main Camera 开关（互斥）。激活的相机驱动引擎渲染视角。
-- **DirectionalLightComponent（方向光组件）** — 方向由旋转决定，可配置颜色和强度。
+- **DirectionalLightComponent（方向光组件）** — 方向由旋转决定，可配置颜色和强度。**级联阴影贴图（CSM）**参数：CastShadow、NumCascades (1-4)、ShadowMapResolution、ShadowDistance、CascadeSplitLambda、ShadowBias、NormalBias、ShadowStrength。
 - **PointLightComponent（点光源组件）** — 基于位置的光照，可配置半径，二次衰减。
 - **PostProcessComponent（后处理组件）** — 持有多个 `PostProcessMaterial`（着色器名称、强度、启用开关）。后处理效果按顺序应用。
 - **场景管理** — `Scene` 存储 `vector<unique_ptr<SceneObject>>`。工厂方法：`AddMeshObject`、`AddCameraObject`、`AddDirectionalLightObject`、`AddPointLightObject`、`AddPostProcessObject`、`AddEmptyObject`。
@@ -76,7 +77,8 @@
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
   | **GBufferPass** | G-Buffer 几何 Pass — 输出位置、法线+粗糙度、反照率+金属度到 3 个 MRT |
-  | **DeferredLighting** | 全屏延迟光照 — 读取 G-Buffer，计算 Phong 光照 |
+  | **DeferredLighting** | 全屏延迟光照 — 读取 G-Buffer，计算 Phong 光照，应用 CSM 阴影 |
+  | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
 - **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
 - **自定义着色器** — 创建包含 `VSMain`/`PSMain` 入口点的 `.hlsl` 文件，使用共享的 CB 布局，放入 `Shaders/` 即可在运行时使用。
@@ -97,6 +99,14 @@
 
 - **多光源支持** — 单次绘制调用中支持最多 8 盏灯光（方向光 + 点光源）。
 - **GPU 灯光数据** — 打包结构体：颜色+强度、类型（0=方向光、1=点光源）、方向/位置、半径。
+- **级联阴影贴图（CSM）** — 方向光支持实时级联阴影贴图：
+  - 最多 **4 级级联**，可配置分辨率（512–4096/级联）
+  - **PSSM 分割方案** — 通过 lambda 参数混合对数和均匀级联分割
+  - **5 次 PCF 采样**，配合比较采样器实现柔和阴影边缘
+  - 逐灯光可配置：阴影距离、深度偏移、法线偏移、阴影强度
+  - **R32_TYPELESS** 阴影贴图格式 — 同一纹理同时支持 DSV (D32_FLOAT) 和 SRV (R32_FLOAT)
+  - 阴影 Pass 仅渲染深度（无像素着色器），性能最优
+  - Detail 面板提供完整的阴影参数 UI 控件
 - **Fallback 光照** — 场景中无灯光时，使用默认方向光 (0.5, 0.7, 0.3)。
 - **AffectWorld 开关** — 每个灯光组件可独立启用/禁用。
 
@@ -284,7 +294,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **一键截帧**：右上角 🔵 按钮
 - **视觉反馈**：捕获时按钮变橙色，悬停显示捕获次数
 - **零配置**：直接运行即可，自动检测 RenderDoc
-- **GPU Pass 标签**：所有渲染阶段（G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
+- **GPU Pass 标签**：所有渲染阶段（Shadow Pass、G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
 
 **自定义 DLL 路径**（`Config/DefaultEngine.ini`）：
 ```ini
@@ -338,7 +348,7 @@ KiwiEngine/
 │   ├── RHI/                          # DX11、DX12、Vulkan 后端实现
 │   ├── Scene/                        # 网格生成、场景序列化
 │   └── Debug/                        # RenderDoc 运行时加载
-├── Shaders/                          # 场景 HLSL 着色器（Default、Unlit、Wireframe、GBufferPass、DeferredLighting、BufferVisualization）
+├── Shaders/                          # 场景 HLSL 着色器（Default、Unlit、Wireframe、GBufferPass、DeferredLighting、ShadowPass、BufferVisualization）
 ├── PostProcessShaders/               # 后处理 HLSL 着色器（Grayscale、Vignette）
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8

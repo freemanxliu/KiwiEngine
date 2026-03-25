@@ -38,7 +38,8 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | RT1 | `R16G16B16A16_FLOAT` | World-space Normal (RGB, packed [0,1]) + Roughness (A) |
   | RT2 | `R8G8B8A8_UNORM` | Albedo Color (RGB) + Metallic (A) |
 - **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`.
-- **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reads G-Buffer SRVs (t0-t2), computes full Phong lighting (Lambert diffuse + Blinn-Phong specular) with multi-light support, outputs to scene render target.
+- **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reads G-Buffer SRVs (t0-t2), computes full Phong lighting (Lambert diffuse + Blinn-Phong specular) with multi-light support, applies cascaded shadow maps, outputs to scene render target.
+- **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades. Renders scene depth from the light's perspective into individual `R32_TYPELESS` shadow maps per cascade. PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. 5-tap PCF filtering with comparison sampler for soft shadow edges.
 - **Forward Gizmo Pass** — Translation gizmo is rendered on top of the deferred result using forward rendering with depth for correct occlusion.
 - **Material Properties** — Each `MeshComponent` has `Roughness` [0,1] and `Metallic` [0,1] properties, stored in G-Buffer alpha channels and editable via Inspector UI.
 
@@ -60,7 +61,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Entity-Component Architecture** — `SceneObject` holds a vector of `Component` via `unique_ptr`. Template methods for `AddComponent<T>`, `GetComponent<T>`, `RemoveComponent<T>`.
 - **MeshComponent** — Mesh data, color, shader name, sort order, material properties (Roughness, Metallic).
 - **CameraComponent** — Perspective/orthographic projection, configurable FOV, near/far planes, Main Camera toggle with mutual exclusion. The active camera drives the engine's rendering viewpoint.
-- **DirectionalLightComponent** — Direction derived from rotation, configurable color and intensity.
+- **DirectionalLightComponent** — Direction derived from rotation, configurable color and intensity. **Cascaded Shadow Mapping (CSM)** parameters: CastShadow, NumCascades (1-4), ShadowMapResolution, ShadowDistance, CascadeSplitLambda, ShadowBias, NormalBias, ShadowStrength.
 - **PointLightComponent** — Position-based lighting with configurable radius and quadratic falloff.
 - **PostProcessComponent** — Holds multiple `PostProcessMaterial` entries (shader name, intensity, enabled toggle). Post-process effects are applied in order.
 - **Scene Management** — `Scene` stores `vector<unique_ptr<SceneObject>>`. Factory methods: `AddMeshObject`, `AddCameraObject`, `AddDirectionalLightObject`, `AddPointLightObject`, `AddPostProcessObject`, `AddEmptyObject`.
@@ -76,7 +77,8 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **Unlit** | Pure color output, no lighting |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
   | **GBufferPass** | G-Buffer geometry pass — outputs Position, Normal+Roughness, Albedo+Metallic to 3 MRT |
-  | **DeferredLighting** | Fullscreen deferred lighting — reads G-Buffer, computes Phong lighting |
+  | **DeferredLighting** | Fullscreen deferred lighting — reads G-Buffer, computes Phong lighting with CSM shadows |
+  | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader) |
   | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels |
 - **Unified Constant Buffer** — World/View/Projection matrices, object color, selection state, light count, camera position, material properties (Roughness, Metallic), and GPU light data (up to 8 lights).
 - **Custom Shaders** — Create a `.hlsl` with `VSMain`/`PSMain` entry points using the shared CB layout, drop into `Shaders/`, and it's available at runtime.
@@ -97,6 +99,14 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 
 - **Multi-Light Support** — Up to 8 simultaneous lights (directional + point) in a single draw call.
 - **GPU Light Data** — Packed struct: color+intensity, type (0=Directional, 1=Point), direction/position, radius.
+- **Cascaded Shadow Mapping (CSM)** — Directional lights support real-time cascaded shadow maps:
+  - Up to **4 cascades** with configurable resolution (512–4096 per cascade)
+  - **PSSM split scheme** — Blends logarithmic and uniform cascade splits via lambda parameter
+  - **5-tap PCF** filtering with comparison sampler for soft shadow edges
+  - Per-light configurable: shadow distance, depth bias, normal bias, shadow strength
+  - **R32_TYPELESS** shadow map format — allows DSV (D32_FLOAT) and SRV (R32_FLOAT) from the same texture
+  - Shadow pass renders depth-only (no pixel shader) for maximum performance
+  - Full UI controls in Detail inspector for all shadow parameters
 - **Fallback Lighting** — When no lights are in the scene, a default directional light (0.5, 0.7, 0.3) is used.
 - **AffectWorld Toggle** — Each light component can be individually enabled/disabled.
 
@@ -284,7 +294,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **One-Click Capture**: 🔵 button in top-right corner
 - **Visual Feedback**: Orange during capture, hover shows count
 - **Zero Configuration**: Just run — RenderDoc is detected automatically
-- **GPU Pass Labels**: All rendering passes (G-Buffer, Deferred Lighting, Buffer Visualization, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
+- **GPU Pass Labels**: All rendering passes (Shadow Pass, G-Buffer, Deferred Lighting, Buffer Visualization, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
 
 **Custom DLL Path** (`Config/DefaultEngine.ini`):
 ```ini
@@ -338,7 +348,7 @@ KiwiEngine/
 │   ├── RHI/                          # DX11, DX12, Vulkan backend implementations
 │   ├── Scene/                        # Mesh generation, Scene serialization
 │   └── Debug/                        # RenderDoc runtime loading
-├── Shaders/                          # Scene HLSL shaders (Default, Unlit, Wireframe, GBufferPass, DeferredLighting, BufferVisualization)
+├── Shaders/                          # Scene HLSL shaders (Default, Unlit, Wireframe, GBufferPass, DeferredLighting, ShadowPass, BufferVisualization)
 ├── PostProcessShaders/               # Post-process HLSL shaders (Grayscale, Vignette)
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8

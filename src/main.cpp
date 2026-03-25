@@ -624,6 +624,10 @@ protected:
             // DEFERRED RENDERING PATH
             // ================================================================
 
+            // ==== PASS 0: Shadow Pass (CSM) ====
+            UpdateShadowData();
+            RenderShadowPass(ctx);
+
             // ==== PASS 1: G-Buffer Geometry Pass ====
             ctx->BeginEvent("G-Buffer Pass");
             m_PassTimer.Begin("G-Buffer Pass");
@@ -700,11 +704,23 @@ protected:
                 ctx->SetShaderResourceView(1, m_GBufferSRV[1].get());
                 ctx->SetShaderResourceView(2, m_GBufferSRV[2].get());
 
+                // Bind shadow map SRVs (t3=Cascade0, t4=Cascade1, t5=Cascade2, t6=Cascade3)
+                for (int si = 0; si < MAX_SHADOW_CASCADES; si++)
+                {
+                    ctx->SetShaderResourceView(3 + si, m_ShadowMapSRV[si].get());
+                }
+
                 // Bind sampler (DX11 only; DX12 uses static sampler s0)
                 ctx->SetSampler(0, m_PostProcessSampler.get());
+                // Bind comparison sampler for shadow mapping (DX11 s2; DX12 uses static sampler)
+                ctx->SetSampler(2, m_ShadowSampler.get());
 
                 // Update CB with lighting data
                 UpdateDeferredLightingCB();
+
+                // Upload and bind shadow constant buffer at b1
+                UploadShadowCB();
+                ctx->SetConstantBuffer(1, m_ShadowCB.get());
 
                 // Draw fullscreen triangle
                 ctx->Draw(3, 0);
@@ -713,6 +729,10 @@ protected:
                 ctx->SetShaderResourceView(0, nullptr);
                 ctx->SetShaderResourceView(1, nullptr);
                 ctx->SetShaderResourceView(2, nullptr);
+                for (int si = 0; si < MAX_SHADOW_CASCADES; si++)
+                {
+                    ctx->SetShaderResourceView(3 + si, nullptr);
+                }
 
                 m_PassTimer.End();
                 ctx->EndEvent();
@@ -1333,6 +1353,9 @@ protected:
         // Release deferred rendering resources
         ReleaseGBufferResources();
 
+        // Release shadow map resources
+        ReleaseShadowResources();
+
         // Release Gizmo GPU resources
         for (int i = 0; i < 3; i++)
         {
@@ -1412,6 +1435,9 @@ private:
         // Initialize deferred rendering resources
         CompileDeferredShaders(device);
         CreateGBufferResources(device, GetWindow()->GetWidth(), GetWindow()->GetHeight());
+
+        // Initialize shadow map resources
+        InitShadowResources(device);
 
         // Init ImGui backend
         device->InitImGui(GetWindow()->GetHWND());
@@ -1671,6 +1697,419 @@ private:
                 std::cout << "[Kiwi] Buffer Visualization shader compiled successfully" << std::endl;
             }
         }
+    }
+
+    // ============================================================
+    // Cascaded Shadow Map (CSM) Resources
+    // ============================================================
+
+    void InitShadowResources(RHIDevice* device)
+    {
+        // Create shadow constant buffer
+        BufferDesc cbDesc;
+        cbDesc.SizeInBytes = sizeof(ShadowCBData);
+        cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
+        cbDesc.Usage = EResourceUsage::Dynamic;
+        m_ShadowCB = device->CreateBuffer(cbDesc);
+
+        // Create DX11 comparison sampler for shadow mapping
+        // (DX12 uses static sampler s2 in root signature, returns nullptr)
+        m_ShadowSampler = device->CreateComparisonSampler();
+
+        // Compile shadow pass shader
+        CompileShadowShader(device);
+
+        // Create shadow maps based on first directional light settings
+        CreateShadowMaps(device, 2048, 4);
+    }
+
+    void CompileShadowShader(RHIDevice* device)
+    {
+        std::string shadowPath = m_ShaderDir + "/ShadowPass.hlsl";
+        std::string shadowSrc = ReadShaderFile(shadowPath);
+        if (!shadowSrc.empty())
+        {
+            m_ShadowPassVS = device->CompileShader(
+                EShaderType::Vertex, shadowSrc.c_str(), "VSMain", "vs_5_0");
+
+            if (m_ShadowPassVS)
+            {
+                // Shadow pass PSO: depth-only, no color output
+                PipelineStateDesc shadowPSODesc;
+                shadowPSODesc.NumRenderTargets = 0;
+                shadowPSODesc.RTVFormats[0] = EFormat::Unknown;
+                shadowPSODesc.DSVFormat = EFormat::D32_FLOAT;
+                shadowPSODesc.DepthEnabled = true;
+                shadowPSODesc.DepthWrite = true;
+
+                m_ShadowPassPSO = device->CreateGraphicsPipelineState(
+                    m_ShadowPassVS.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
+
+                std::cout << "[Kiwi] Shadow Pass shader compiled successfully" << std::endl;
+            }
+            else
+            {
+                std::cerr << "[Kiwi] Failed to compile Shadow Pass shader" << std::endl;
+            }
+        }
+    }
+
+    void CreateShadowMaps(RHIDevice* device, uint32_t size, int numCascades)
+    {
+        // Release existing
+        ReleaseShadowMaps();
+
+        m_ShadowMapSize = size;
+        int count = std::min(numCascades, MAX_SHADOW_CASCADES);
+
+        for (int i = 0; i < count; i++)
+        {
+            TextureDesc desc;
+            desc.Width = size;
+            desc.Height = size;
+            desc.Format = EFormat::R32_TYPELESS; // Typeless for DSV(D32_FLOAT) + SRV(R32_FLOAT)
+            desc.BindFlags = TEXTURE_HINT_DEPTH_STENCIL | TEXTURE_BIND_SHADER_RESOURCE;
+            desc.Usage = EResourceUsage::Default;
+            desc.MipLevels = 1;
+            desc.SampleCount = 1;
+
+            m_ShadowMapRT[i] = device->CreateTexture(desc);
+
+            // DSV view: D32_FLOAT format
+            m_ShadowMapDSV[i] = device->CreateTextureView(
+                m_ShadowMapRT[i].get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
+
+            // SRV view: R32_FLOAT format (auto-handled by backend for R32_TYPELESS)
+            m_ShadowMapSRV[i] = device->CreateTextureView(
+                m_ShadowMapRT[i].get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
+        }
+
+        std::cout << "[Kiwi] Shadow maps created: " << count << " cascades @ " << size << "x" << size << std::endl;
+    }
+
+    void ReleaseShadowMaps()
+    {
+        for (int i = 0; i < MAX_SHADOW_CASCADES; i++)
+        {
+            m_ShadowMapSRV[i].reset();
+            m_ShadowMapDSV[i].reset();
+            m_ShadowMapRT[i].reset();
+        }
+    }
+
+    void ReleaseShadowResources()
+    {
+        ReleaseShadowMaps();
+        m_ShadowPassVS.reset();
+        m_ShadowPassPSO.reset();
+        m_ShadowCB.reset();
+        m_ShadowSampler.reset();
+    }
+
+    // ============================================================
+    // CSM: Cascade Split Calculation (PSSM — Practical Split Scheme)
+    // ============================================================
+
+    void CalculateCascadeSplits(float nearZ, float farZ, float shadowDistance, int numCascades, float lambda, float* outSplits)
+    {
+        float maxDist = std::min(farZ, shadowDistance);
+        float range = maxDist - nearZ;
+
+        for (int i = 0; i < numCascades; i++)
+        {
+            float p = (float)(i + 1) / (float)numCascades;
+
+            // Logarithmic split
+            float logSplit = nearZ * std::pow(maxDist / nearZ, p);
+            // Uniform split
+            float uniformSplit = nearZ + range * p;
+            // PSSM blend
+            outSplits[i] = lambda * logSplit + (1.0f - lambda) * uniformSplit;
+        }
+    }
+
+    // ============================================================
+    // CSM: Compute Light View-Projection Matrix for a Cascade
+    // ============================================================
+
+    Mat4 ComputeLightViewProjForCascade(
+        const Vec3& lightDir,
+        const Mat4& cameraView, const Mat4& cameraProj,
+        float cascadeNear, float cascadeFar,
+        float cameraNear, float cameraFar, float fovY, float aspect)
+    {
+        // 1. Compute the frustum corners for this cascade slice in world space
+        float tanHalfFov = tanf(fovY * 0.5f);
+
+        // Near and far plane dimensions
+        float nearH = 2.0f * tanHalfFov * cascadeNear;
+        float nearW = nearH * aspect;
+        float farH = 2.0f * tanHalfFov * cascadeFar;
+        float farW = farH * aspect;
+
+        // Camera basis vectors (from view matrix — row-major, v*M convention)
+        Vec3 camRight = { cameraView.m[0][0], cameraView.m[1][0], cameraView.m[2][0] };
+        Vec3 camUp    = { cameraView.m[0][1], cameraView.m[1][1], cameraView.m[2][1] };
+        Vec3 camFwd   = { cameraView.m[0][2], cameraView.m[1][2], cameraView.m[2][2] };
+
+        // Camera position (inverse of translation in view matrix)
+        Vec3 camPos;
+        camPos.x = -(cameraView.m[3][0] * camRight.x + cameraView.m[3][1] * camUp.x + cameraView.m[3][2] * camFwd.x);
+        camPos.y = -(cameraView.m[3][0] * camRight.y + cameraView.m[3][1] * camUp.y + cameraView.m[3][2] * camFwd.y);
+        camPos.z = -(cameraView.m[3][0] * camRight.z + cameraView.m[3][1] * camUp.z + cameraView.m[3][2] * camFwd.z);
+
+        // Near center and far center
+        Vec3 nearCenter = camPos + camFwd * cascadeNear;
+        Vec3 farCenter  = camPos + camFwd * cascadeFar;
+
+        // 8 frustum corners
+        Vec3 corners[8];
+        // Near face
+        corners[0] = nearCenter + camUp * (nearH * 0.5f) - camRight * (nearW * 0.5f); // top-left
+        corners[1] = nearCenter + camUp * (nearH * 0.5f) + camRight * (nearW * 0.5f); // top-right
+        corners[2] = nearCenter - camUp * (nearH * 0.5f) - camRight * (nearW * 0.5f); // bottom-left
+        corners[3] = nearCenter - camUp * (nearH * 0.5f) + camRight * (nearW * 0.5f); // bottom-right
+        // Far face
+        corners[4] = farCenter + camUp * (farH * 0.5f) - camRight * (farW * 0.5f);
+        corners[5] = farCenter + camUp * (farH * 0.5f) + camRight * (farW * 0.5f);
+        corners[6] = farCenter - camUp * (farH * 0.5f) - camRight * (farW * 0.5f);
+        corners[7] = farCenter - camUp * (farH * 0.5f) + camRight * (farW * 0.5f);
+
+        // 2. Compute frustum center
+        Vec3 center = { 0, 0, 0 };
+        for (int i = 0; i < 8; i++)
+        {
+            center.x += corners[i].x;
+            center.y += corners[i].y;
+            center.z += corners[i].z;
+        }
+        center = center * (1.0f / 8.0f);
+
+        // 3. Build light view matrix (looking along -lightDir at the center)
+        Vec3 lightDirN = lightDir.Normalize();
+        float radius = 0.0f;
+        for (int i = 0; i < 8; i++)
+        {
+            float dist = (corners[i] - center).Length();
+            radius = std::max(radius, dist);
+        }
+
+        // Snap to texel grid to reduce shimmer
+        radius = std::ceil(radius * 16.0f) / 16.0f;
+
+        Vec3 lightEye = center - lightDirN * radius;
+        Vec3 lightTarget = center;
+        Vec3 lightUp = { 0.0f, 1.0f, 0.0f };
+        // If light is nearly vertical, use a different up vector
+        if (std::abs(lightDirN.y) > 0.99f)
+            lightUp = { 0.0f, 0.0f, 1.0f };
+
+        Mat4 lightView = Mat4::LookAt(lightEye, lightTarget, lightUp);
+
+        // 4. Build orthographic projection that encompasses the frustum
+        Mat4 lightProj = Mat4::Orthographic(radius * 2.0f, radius * 2.0f, 0.0f, radius * 2.0f);
+
+        return lightView * lightProj;
+    }
+
+    // ============================================================
+    // CSM: Update Shadow CB and Compute Light VP Matrices
+    // ============================================================
+
+    void UpdateShadowData()
+    {
+        memset(&m_ShadowCBData, 0, sizeof(m_ShadowCBData));
+
+        // Find the first shadow-casting directional light
+        DirectionalLightComponent* shadowLight = nullptr;
+        for (auto& obj : m_Scene.GetObjects())
+        {
+            auto* light = obj->GetComponent<LightComponent>();
+            if (light && light->Enabled && light->AffectWorld &&
+                light->GetLightType() == ELightType::Directional)
+            {
+                auto* dirLight = dynamic_cast<DirectionalLightComponent*>(light);
+                if (dirLight && dirLight->CastShadow)
+                {
+                    shadowLight = dirLight;
+                    break;
+                }
+            }
+        }
+
+        if (!shadowLight)
+        {
+            m_ShadowCBData.NumCascades = 0;
+            return;
+        }
+
+        int numCascades = std::min(shadowLight->NumCascades, MAX_SHADOW_CASCADES);
+        m_ShadowCBData.NumCascades = numCascades;
+        m_ShadowCBData.ShadowBias = shadowLight->ShadowBias;
+        m_ShadowCBData.NormalBias = shadowLight->NormalBias;
+        m_ShadowCBData.ShadowStrength = shadowLight->ShadowStrength;
+        m_ShadowCBData.ShadowMapSize = (float)m_ShadowMapSize;
+
+        // Recreate shadow maps if resolution changed
+        auto device = GetDevice();
+        if (m_ShadowMapSize != (uint32_t)shadowLight->ShadowMapResolution ||
+            !m_ShadowMapRT[0])
+        {
+            CreateShadowMaps(device, (uint32_t)shadowLight->ShadowMapResolution, numCascades);
+        }
+
+        // Get camera parameters for frustum calculation
+        auto* cam = m_Scene.GetActiveCamera();
+        if (!cam) return;
+
+        float fovY = DegToRad(cam->FieldOfView);
+        float aspect = (float)GetWindow()->GetWidth() / (float)GetWindow()->GetHeight();
+        float nearZ = cam->NearPlane;
+        float farZ = cam->FarPlane;
+
+        // Calculate cascade splits
+        float splits[MAX_SHADOW_CASCADES];
+        CalculateCascadeSplits(nearZ, farZ, shadowLight->ShadowDistance, numCascades,
+            shadowLight->CascadeSplitLambda, splits);
+
+        for (int i = 0; i < numCascades; i++)
+        {
+            m_ShadowCBData.CascadeSplits[i] = splits[i];
+        }
+
+        // Compute light VP matrices for each cascade
+        Vec3 lightDir = shadowLight->GetForward(); // Direction the light shines toward
+
+        float cascadeNear = nearZ;
+        for (int i = 0; i < numCascades; i++)
+        {
+            float cascadeFar = splits[i];
+
+            m_LightViewProjMatrices[i] = ComputeLightViewProjForCascade(
+                lightDir, m_ViewMatrix, m_ProjectionMatrix,
+                cascadeNear, cascadeFar, nearZ, farZ, fovY, aspect);
+
+            memcpy(m_ShadowCBData.LightViewProj[i],
+                m_LightViewProjMatrices[i].m, sizeof(float) * 16);
+
+            cascadeNear = cascadeFar;
+        }
+    }
+
+    void UploadShadowCB()
+    {
+        if (!m_ShadowCB) return;
+        void* mapped = m_ShadowCB->Map();
+        if (mapped)
+        {
+            memcpy(mapped, &m_ShadowCBData, sizeof(m_ShadowCBData));
+            m_ShadowCB->Unmap();
+        }
+    }
+
+    // ============================================================
+    // Shadow Pass: Render scene depth from light perspective
+    // ============================================================
+
+    void RenderShadowPass(RHICommandContext* ctx)
+    {
+        if (!m_ShadowPassPSO || !m_ShadowPassVS || m_ShadowCBData.NumCascades <= 0)
+            return;
+
+        ctx->BeginEvent("Shadow Pass");
+        m_PassTimer.Begin("Shadow Pass");
+
+        int numCascades = m_ShadowCBData.NumCascades;
+
+        // Set shadow pass pipeline state
+        ctx->SetPipelineState(m_ShadowPassPSO.get());
+        ctx->SetVertexShader(m_ShadowPassVS.get());
+        ctx->SetPixelShader(nullptr);
+        ctx->SetInputLayout(m_InputLayout.get());
+        ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+
+        for (int cascade = 0; cascade < numCascades; cascade++)
+        {
+            if (!m_ShadowMapRT[cascade]) continue;
+
+            // Transition shadow map to depth write
+            ctx->ResourceBarrier(m_ShadowMapRT[cascade].get(),
+                RESOURCE_STATE_COMMON, RESOURCE_STATE_DEPTH_WRITE);
+
+            // Set render target: depth only (no color RT)
+            RHITextureView* nullRTV = nullptr;
+            ctx->SetRenderTargets(&nullRTV, 0, m_ShadowMapDSV[cascade].get());
+
+            // Set shadow map viewport
+            Viewport shadowVP;
+            shadowVP.TopLeftX = 0; shadowVP.TopLeftY = 0;
+            shadowVP.Width = (float)m_ShadowMapSize;
+            shadowVP.Height = (float)m_ShadowMapSize;
+            shadowVP.MinDepth = 0.0f; shadowVP.MaxDepth = 1.0f;
+            ctx->SetViewports(&shadowVP, 1);
+
+            ScissorRect shadowSR;
+            shadowSR.Left = 0; shadowSR.Top = 0;
+            shadowSR.Right = (int32_t)m_ShadowMapSize;
+            shadowSR.Bottom = (int32_t)m_ShadowMapSize;
+            ctx->SetScissorRects(&shadowSR, 1);
+
+            // Clear depth
+            ClearDepthStencilValue depthClear = { 1.0f, 0 };
+            ctx->ClearDepthStencilView(m_ShadowMapDSV[cascade].get(), depthClear, 0x01);
+
+            // Draw all mesh objects from light's perspective
+            for (const auto& renderItem : m_RenderList)
+            {
+                size_t i = renderItem.ObjectIndex;
+                auto* meshComp = renderItem.MeshComp;
+                if (!meshComp) continue;
+                if (i >= m_GPUMeshes.size() || !m_GPUMeshes[i].VertexBuffer) continue;
+
+                auto& gpuMesh = m_GPUMeshes[i];
+
+                // Upload CB with light VP for this cascade
+                Mat4 worldMatrix = meshComp->GetWorldMatrix();
+                ConstantBufferData cbd = {};
+                memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+                memcpy(cbd.ViewMatrix, m_LightViewProjMatrices[cascade].m, sizeof(float) * 16);
+                // For shadow pass, we bake View*Proj into the View slot
+                // and set Proj to identity (since light VP is already combined)
+                Mat4 identity = Mat4::Identity();
+                memcpy(cbd.ProjectionMatrix, identity.m, sizeof(identity.m));
+
+                void* mapped = m_ConstantBuffer->Map();
+                if (mapped)
+                {
+                    memcpy(mapped, &cbd, sizeof(cbd));
+                    m_ConstantBuffer->Unmap();
+                }
+                ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+
+                VertexBufferView vbView;
+                vbView.BufferLocation = 0;
+                vbView.SizeInBytes = gpuMesh.VertexCount * sizeof(Vertex);
+                vbView.StrideInBytes = sizeof(Vertex);
+
+                RHIBuffer* vbPtr = gpuMesh.VertexBuffer.get();
+                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+                IndexBufferView ibView;
+                ibView.BufferLocation = 0;
+                ibView.SizeInBytes = gpuMesh.IndexCount * sizeof(uint32_t);
+                ibView.Format = EFormat::R32_UINT;
+                ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
+
+                ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
+            }
+
+            // Transition shadow map to shader resource for lighting pass
+            ctx->ResourceBarrier(m_ShadowMapRT[cascade].get(),
+                RESOURCE_STATE_DEPTH_WRITE, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+
+        m_PassTimer.End();
+        ctx->EndEvent();
     }
 
     // ============================================================
@@ -2342,6 +2781,59 @@ private:
                         ImGui::Text("Directional Light");
                         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
                             "Direction is controlled by the\nRotation above (forward vector).");
+
+                        auto& dirLight = static_cast<DirectionalLightComponent&>(light);
+
+                        ImGui::Separator();
+                        ImGui::Text("Shadow (CSM)");
+
+                        ImGui::Checkbox(("Cast Shadow##" + std::to_string(ci)).c_str(), &dirLight.CastShadow);
+
+                        if (dirLight.CastShadow)
+                        {
+                            ImGui::SliderInt(("Cascades##" + std::to_string(ci)).c_str(), &dirLight.NumCascades, 1, 4);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Number of shadow map cascades.\nMore cascades = better quality at distance,\nbut more GPU cost.");
+
+                            // Shadow map resolution dropdown
+                            const int resolutions[] = { 512, 1024, 2048, 4096 };
+                            const char* resLabels[] = { "512", "1024", "2048", "4096" };
+                            int resIdx = 2; // default to 2048
+                            for (int ri = 0; ri < 4; ri++)
+                            {
+                                if (resolutions[ri] == dirLight.ShadowMapResolution)
+                                {
+                                    resIdx = ri;
+                                    break;
+                                }
+                            }
+                            if (ImGui::Combo(("Resolution##shadow" + std::to_string(ci)).c_str(), &resIdx, resLabels, 4))
+                            {
+                                dirLight.ShadowMapResolution = resolutions[resIdx];
+                            }
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Shadow map resolution per cascade.\nHigher = sharper shadows, more VRAM.");
+
+                            ImGui::DragFloat(("Shadow Distance##" + std::to_string(ci)).c_str(), &dirLight.ShadowDistance, 0.5f, 1.0f, 500.0f);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Maximum distance from camera\nwhere shadows are rendered.");
+
+                            ImGui::SliderFloat(("Split Lambda##" + std::to_string(ci)).c_str(), &dirLight.CascadeSplitLambda, 0.0f, 1.0f);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Cascade split scheme.\n0 = uniform splits\n1 = logarithmic splits\n0.75 is a good balance.");
+
+                            ImGui::DragFloat(("Shadow Bias##" + std::to_string(ci)).c_str(), &dirLight.ShadowBias, 0.0001f, 0.0f, 0.05f, "%.4f");
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Depth bias to reduce shadow acne.\nToo high = peter panning.");
+
+                            ImGui::DragFloat(("Normal Bias##" + std::to_string(ci)).c_str(), &dirLight.NormalBias, 0.001f, 0.0f, 0.1f, "%.3f");
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Normal offset bias.\nHelps with self-shadowing artifacts.");
+
+                            ImGui::SliderFloat(("Shadow Strength##" + std::to_string(ci)).c_str(), &dirLight.ShadowStrength, 0.0f, 1.0f);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Shadow darkness.\n0 = no shadow, 1 = full shadow.");
+                        }
                     }
                 }
                 else if (comp.GetType() == EComponentType::PostProcess)
@@ -2858,6 +3350,27 @@ private:
 
     // ---- View Mode ----
     EViewMode m_ViewMode = EViewMode::Lit;
+
+    // ---- Cascaded Shadow Map (CSM) Resources ----
+    static constexpr int MAX_SHADOW_CASCADES = 4;
+    std::unique_ptr<RHITexture>     m_ShadowMapRT[MAX_SHADOW_CASCADES];
+    std::unique_ptr<RHITextureView> m_ShadowMapDSV[MAX_SHADOW_CASCADES];
+    std::unique_ptr<RHITextureView> m_ShadowMapSRV[MAX_SHADOW_CASCADES];
+    uint32_t m_ShadowMapSize = 0;
+
+    // Shadow pass shader and PSO
+    std::unique_ptr<RHIShader> m_ShadowPassVS;
+    std::unique_ptr<RHIPipelineState> m_ShadowPassPSO;
+
+    // Shadow constant buffer (b1)
+    std::unique_ptr<RHIBuffer> m_ShadowCB;
+
+    // Comparison sampler for DX11 shadow sampling
+    std::unique_ptr<RHISampler> m_ShadowSampler;
+
+    // Cached CSM data (computed each frame)
+    ShadowCBData m_ShadowCBData = {};
+    Mat4 m_LightViewProjMatrices[MAX_SHADOW_CASCADES];
 };
 
 // ============================================================

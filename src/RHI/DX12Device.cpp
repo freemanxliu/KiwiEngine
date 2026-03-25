@@ -166,9 +166,9 @@ namespace Kiwi
             throw std::runtime_error("Failed to create DX12 fence");
         m_FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
-        // Create SRV heap for ImGui + post-process + G-Buffer (32 descriptors)
+        // Create SRV heap for ImGui + post-process + G-Buffer + shadow maps (64 descriptors)
         D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-        srvHeapDesc.NumDescriptors = 32;
+        srvHeapDesc.NumDescriptors = 64;
         srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         hr = m_Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_SRVHeap));
@@ -188,7 +188,7 @@ namespace Kiwi
 
         // Create DSV heap
         D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
-        dsvHeapDesc.NumDescriptors = 4;
+        dsvHeapDesc.NumDescriptors = 8;
         dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
         dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
         hr = m_Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DSVHeap));
@@ -213,31 +213,38 @@ namespace Kiwi
 
     void DX12Device::CreateRootSignature()
     {
-        // Root parameter 0: CBV at b0 (constant buffer)
-        // Root parameter 1: Descriptor table with 4 SRVs at t0-t3 (G-Buffer + textures)
+        // Root parameter 0: CBV at b0 (main constant buffer)
+        // Root parameter 1: Descriptor table with 8 SRVs at t0-t7 (G-Buffer + shadow maps + textures)
+        // Root parameter 2: CBV at b1 (shadow constant buffer)
         D3D12_DESCRIPTOR_RANGE srvRange = {};
         srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        srvRange.NumDescriptors = 4;
+        srvRange.NumDescriptors = 8;
         srvRange.BaseShaderRegister = 0;
         srvRange.RegisterSpace = 0;
         srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-        D3D12_ROOT_PARAMETER rootParams[2] = {};
-        // Slot 0: CBV
+        D3D12_ROOT_PARAMETER rootParams[3] = {};
+        // Slot 0: CBV b0
         rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParams[0].Descriptor.ShaderRegister = 0;
         rootParams[0].Descriptor.RegisterSpace = 0;
         rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-        // Slot 1: SRV descriptor table (4 descriptors: t0-t3)
+        // Slot 1: SRV descriptor table (8 descriptors: t0-t7)
         rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
         rootParams[1].DescriptorTable.pDescriptorRanges = &srvRange;
         rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        // Slot 2: CBV b1 (shadow data)
+        rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        rootParams[2].Descriptor.ShaderRegister = 1;
+        rootParams[2].Descriptor.RegisterSpace = 0;
+        rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-        // Two static samplers:
+        // Three static samplers:
         // s0 = linear clamp (post-process, G-Buffer sampling)
         // s1 = linear wrap (material textures)
-        D3D12_STATIC_SAMPLER_DESC staticSamplers[2] = {};
+        // s2 = comparison sampler (shadow mapping — PCF)
+        D3D12_STATIC_SAMPLER_DESC staticSamplers[3] = {};
 
         // s0: Linear Clamp
         staticSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -269,10 +276,25 @@ namespace Kiwi
         staticSamplers[1].RegisterSpace = 0;
         staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+        // s2: Comparison sampler (for shadow mapping — PCF)
+        staticSamplers[2].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
+        staticSamplers[2].AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+        staticSamplers[2].AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+        staticSamplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+        staticSamplers[2].MipLODBias = 0.0f;
+        staticSamplers[2].MaxAnisotropy = 1;
+        staticSamplers[2].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        staticSamplers[2].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+        staticSamplers[2].MinLOD = 0.0f;
+        staticSamplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+        staticSamplers[2].ShaderRegister = 2;
+        staticSamplers[2].RegisterSpace = 0;
+        staticSamplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
         D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
-        rootSigDesc.NumParameters = 2;
+        rootSigDesc.NumParameters = 3;
         rootSigDesc.pParameters = rootParams;
-        rootSigDesc.NumStaticSamplers = 2;
+        rootSigDesc.NumStaticSamplers = 3;
         rootSigDesc.pStaticSamplers = staticSamplers;
         rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -436,6 +458,15 @@ namespace Kiwi
             depthClear.DepthStencil.Stencil = 0;
             clearValue = &depthClear;
         }
+        else if (desc.Format == EFormat::R32_TYPELESS)
+        {
+            // Shadow map: typeless format for DSV (D32_FLOAT) + SRV (R32_FLOAT) dual use
+            resDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+            depthClear.Format = DXGI_FORMAT_D32_FLOAT;
+            depthClear.DepthStencil.Depth = 1.0f;
+            depthClear.DepthStencil.Stencil = 0;
+            clearValue = &depthClear;
+        }
         else if (desc.BindFlags & TEXTURE_BIND_RENDER_TARGET)
         {
             // 渲染目标的优化清除值
@@ -449,7 +480,8 @@ namespace Kiwi
 
         // 确定初始资源状态
         D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
-        if (desc.Format == EFormat::D24_UNORM_S8_UINT || desc.Format == EFormat::D32_FLOAT)
+        if (desc.Format == EFormat::D24_UNORM_S8_UINT || desc.Format == EFormat::D32_FLOAT ||
+            desc.Format == EFormat::R32_TYPELESS)
             initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
         ComPtr<ID3D12Resource> resource;
@@ -507,8 +539,12 @@ namespace Kiwi
             D3D12_CPU_DESCRIPTOR_HANDLE srvHandle = cpuSrvHeap->GetCPUDescriptorHandleForHeapStart();
 
             D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-            srvDesc.Format = DX12ToDXGIFormat(
-                (format != EFormat::Unknown) ? format : texture->GetDesc().Format);
+            EFormat srvFormat = (format != EFormat::Unknown) ? format : texture->GetDesc().Format;
+            // For typeless depth textures, use R32_FLOAT as SRV format
+            if (srvFormat == EFormat::R32_TYPELESS)
+                srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+            else
+                srvDesc.Format = DX12ToDXGIFormat(srvFormat);
             srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
             srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
@@ -530,7 +566,12 @@ namespace Kiwi
             m_DSVAllocated++;
 
             D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
-            dsvDesc.Format = DX12ToDXGIFormat(texture->GetDesc().Format);
+            EFormat dsvFormat = texture->GetDesc().Format;
+            // For typeless depth textures, use D32_FLOAT as DSV format
+            if (dsvFormat == EFormat::R32_TYPELESS)
+                dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+            else
+                dsvDesc.Format = DX12ToDXGIFormat(dsvFormat);
             dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
             dsvDesc.Texture2D.MipSlice = 0;
 
@@ -963,7 +1004,13 @@ namespace Kiwi
     void DX12CommandContext::SetConstantBuffer(uint32_t slot, RHIBuffer* buffer)
     {
         auto dxBuffer = static_cast<DX12Buffer*>(buffer);
-        m_CommandList->SetGraphicsRootConstantBufferView(slot, dxBuffer->GetGPUVirtualAddress());
+        // Map HLSL constant buffer register to DX12 root parameter index:
+        // b0 -> root param 0 (main CB)
+        // b1 -> root param 2 (shadow CB)
+        uint32_t rootParamIndex = slot;
+        if (slot == 1)
+            rootParamIndex = 2;  // b1 maps to root param 2 (root param 1 is SRV table)
+        m_CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, dxBuffer->GetGPUVirtualAddress());
     }
 
     void DX12CommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)

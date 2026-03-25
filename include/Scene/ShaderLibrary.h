@@ -129,7 +129,7 @@ namespace Kiwi
 
                 // Skip deferred rendering shaders — they are compiled separately
                 // with specialized PSO configurations (MRT, no input layout, etc.)
-                if (name == "GBufferPass" || name == "DeferredLighting" || name == "BufferVisualization")
+                if (name == "GBufferPass" || name == "DeferredLighting" || name == "BufferVisualization" || name == "ShadowPass")
                     continue;
 
                 // Read file content

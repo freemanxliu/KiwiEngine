@@ -323,6 +323,19 @@ namespace Kiwi
                         file << ",\n";
                         file << "          \"radius\": " << point.Radius << "\n";
                     }
+                    else if (light.GetLightType() == ELightType::Directional)
+                    {
+                        const auto& dirLight = static_cast<const DirectionalLightComponent&>(light);
+                        file << ",\n";
+                        file << "          \"castShadow\": " << (dirLight.CastShadow ? "true" : "false") << ",\n";
+                        file << "          \"numCascades\": " << dirLight.NumCascades << ",\n";
+                        file << "          \"shadowMapResolution\": " << dirLight.ShadowMapResolution << ",\n";
+                        file << "          \"shadowDistance\": " << dirLight.ShadowDistance << ",\n";
+                        file << "          \"cascadeSplitLambda\": " << dirLight.CascadeSplitLambda << ",\n";
+                        file << "          \"shadowBias\": " << dirLight.ShadowBias << ",\n";
+                        file << "          \"normalBias\": " << dirLight.NormalBias << ",\n";
+                        file << "          \"shadowStrength\": " << dirLight.ShadowStrength << "\n";
+                    }
                     else
                     {
                         file << "\n";
@@ -606,6 +619,16 @@ namespace Kiwi
                         if (ReadVec3(compStr, "lightColor", lightColor)) light->LightColor = lightColor;
                         ReadFloat(compStr, "intensity", light->Intensity);
                         ReadBool(compStr, "affectWorld", light->AffectWorld);
+
+                        // Shadow (CSM) parameters
+                        ReadBool(compStr, "castShadow", light->CastShadow);
+                        { int32_t v; if (ReadInt(compStr, "numCascades", v)) light->NumCascades = v; }
+                        { int32_t v; if (ReadInt(compStr, "shadowMapResolution", v)) light->ShadowMapResolution = v; }
+                        ReadFloat(compStr, "shadowDistance", light->ShadowDistance);
+                        ReadFloat(compStr, "cascadeSplitLambda", light->CascadeSplitLambda);
+                        ReadFloat(compStr, "shadowBias", light->ShadowBias);
+                        ReadFloat(compStr, "normalBias", light->NormalBias);
+                        ReadFloat(compStr, "shadowStrength", light->ShadowStrength);
                     }
                     else if (compType == "PointLightComponent")
                     {

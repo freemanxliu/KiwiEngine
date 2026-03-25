@@ -38,6 +38,21 @@ namespace Kiwi
         GPULightData Lights[MAX_LIGHTS]; // Light array
     };
 
+    // Shadow constant buffer (register b1) — CSM data for shadow mapping
+    static constexpr int MAX_CSM_CASCADES = 4;
+
+    struct ShadowCBData
+    {
+        float LightViewProj[MAX_CSM_CASCADES][16];  // 4x Light VP matrices (row-major)
+        float CascadeSplits[4];                       // Split distances in view space (z)
+        float ShadowBias;
+        float NormalBias;
+        float ShadowStrength;
+        int32_t NumCascades;
+        float ShadowMapSize;                          // Shadow map resolution
+        float ShadowPadding[3];                       // Pad to 16-byte alignment
+    };
+
     // ---- 顶点着色器 ----
     // This minimal VS is used only to create the shared InputLayout.
     // Actual rendering uses file-based shaders from ShaderLibrary.

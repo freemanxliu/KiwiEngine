@@ -327,6 +327,11 @@ namespace Kiwi
         {
             td.BindFlags = D3D11_BIND_DEPTH_STENCIL;
         }
+        else if (desc.Format == EFormat::R32_TYPELESS)
+        {
+            // Shadow map: typeless format allows both DSV (D32_FLOAT) and SRV (R32_FLOAT)
+            td.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+        }
         else
         {
             // 将引擎纹理绑定标志转换为 DX11 绑定标志
@@ -393,15 +398,42 @@ namespace Kiwi
         case EDescriptorHeapType::DSV:
         {
             ComPtr<ID3D11DepthStencilView> dsv;
-            if (FAILED(m_Device->CreateDepthStencilView(resource, nullptr, &dsv)))
-                throw std::runtime_error("Failed to create DSV");
+            // For typeless formats (e.g., R32_TYPELESS), we need to specify the DSV format explicitly
+            if (format != EFormat::Unknown || texture->GetDesc().Format == EFormat::R32_TYPELESS)
+            {
+                D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+                dsvDesc.Format = (format != EFormat::Unknown) ? ToDXGIFormat(format) : DXGI_FORMAT_D32_FLOAT;
+                dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+                dsvDesc.Texture2D.MipSlice = 0;
+                if (FAILED(m_Device->CreateDepthStencilView(resource, &dsvDesc, &dsv)))
+                    throw std::runtime_error("Failed to create DSV");
+            }
+            else
+            {
+                if (FAILED(m_Device->CreateDepthStencilView(resource, nullptr, &dsv)))
+                    throw std::runtime_error("Failed to create DSV");
+            }
             return std::make_unique<DX11TextureView>(dsv.Get());
         }
         case EDescriptorHeapType::CBV_SRV_UAV:
         {
             ComPtr<ID3D11ShaderResourceView> srv;
-            if (FAILED(m_Device->CreateShaderResourceView(resource, nullptr, &srv)))
-                throw std::runtime_error("Failed to create SRV");
+            // For typeless formats (e.g., R32_TYPELESS), specify SRV format explicitly
+            if (format != EFormat::Unknown || texture->GetDesc().Format == EFormat::R32_TYPELESS)
+            {
+                D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+                srvDesc.Format = (format != EFormat::Unknown) ? ToDXGIFormat(format) : DXGI_FORMAT_R32_FLOAT;
+                srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+                srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
+                srvDesc.Texture2D.MostDetailedMip = 0;
+                if (FAILED(m_Device->CreateShaderResourceView(resource, &srvDesc, &srv)))
+                    throw std::runtime_error("Failed to create SRV");
+            }
+            else
+            {
+                if (FAILED(m_Device->CreateShaderResourceView(resource, nullptr, &srv)))
+                    throw std::runtime_error("Failed to create SRV");
+            }
             return std::make_unique<DX11TextureView>(srv.Get());
         }
         default:
@@ -617,6 +649,33 @@ namespace Kiwi
         if (FAILED(hr))
         {
             throw std::runtime_error("Failed to create sampler state");
+        }
+
+        return std::make_unique<DX11Sampler>(sampler.Get());
+    }
+
+    std::unique_ptr<RHISampler> DX11Device::CreateComparisonSampler()
+    {
+        D3D11_SAMPLER_DESC sampDesc = {};
+        sampDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;
+        sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+        sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+        sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+        sampDesc.MipLODBias = 0.0f;
+        sampDesc.MaxAnisotropy = 1;
+        sampDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+        sampDesc.BorderColor[0] = 1.0f;
+        sampDesc.BorderColor[1] = 1.0f;
+        sampDesc.BorderColor[2] = 1.0f;
+        sampDesc.BorderColor[3] = 1.0f;
+        sampDesc.MinLOD = 0.0f;
+        sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+        ComPtr<ID3D11SamplerState> sampler;
+        HRESULT hr = m_Device->CreateSamplerState(&sampDesc, &sampler);
+        if (FAILED(hr))
+        {
+            return nullptr;
         }
 
         return std::make_unique<DX11Sampler>(sampler.Get());

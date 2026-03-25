@@ -118,6 +118,7 @@ namespace Kiwi
 
         // Sampler
         std::unique_ptr<RHISampler> CreateSampler() override;
+        std::unique_ptr<RHISampler> CreateComparisonSampler() override;
 
         bool IsFeatureSupported(const char* feature) const override { return true; }
 

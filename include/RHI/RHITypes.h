@@ -29,6 +29,7 @@ namespace Kiwi
         R16_UINT,
         D24_UNORM_S8_UINT,
         D32_FLOAT,
+        R32_TYPELESS,          // Typeless format for depth+SRV dual use (shadow maps)
     };
 
     // 缓冲绑定标志
