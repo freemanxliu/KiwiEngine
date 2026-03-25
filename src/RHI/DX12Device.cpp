@@ -407,6 +407,14 @@ namespace Kiwi
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 buffer");
 
+        // Set GPU debug name for RenderDoc / PIX
+        if (desc.DebugName && desc.DebugName[0])
+        {
+            wchar_t wname[256];
+            MultiByteToWideChar(CP_UTF8, 0, desc.DebugName, -1, wname, 256);
+            resource->SetName(wname);
+        }
+
         // Copy initial data
         if (initialData)
         {
@@ -494,6 +502,14 @@ namespace Kiwi
             IID_PPV_ARGS(&resource));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 texture");
+
+        // Set GPU debug name for RenderDoc / PIX
+        if (desc.DebugName && desc.DebugName[0])
+        {
+            wchar_t wname[256];
+            MultiByteToWideChar(CP_UTF8, 0, desc.DebugName, -1, wname, 256);
+            resource->SetName(wname);
+        }
 
         return std::make_unique<DX12Texture>(resource.Get(), desc);
     }

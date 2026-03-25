@@ -28,20 +28,24 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **SRV Binding Abstraction** — `RHICommandContext::SetShaderResourceView()` for backend-agnostic texture binding.
 - **Resource State Management** — `EResourceState` enum and `ResourceBarrier()` for DX12 transitions (DX11: no-op).
 - **GPU Debug Annotations** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` for GPU debugger pass labeling. Each rendering pass (G-Buffer, Deferred Lighting, Gizmo, Post-Process, ImGui) is annotated, making them clearly identifiable in RenderDoc, PIX, and other GPU profilers. DX12 uses `ID3D12GraphicsCommandList` event API; DX11 uses `ID3DUserDefinedAnnotation`.
+- **GPU Resource Debug Names** — All GPU resources (textures, buffers) carry descriptive debug names visible in RenderDoc and PIX. `TextureDesc::DebugName` and `BufferDesc::DebugName` are automatically applied via `SetPrivateData` (DX11) and `SetName` (DX12). Named resources include: G-Buffer RTs, shadow maps, depth buffer, constant buffers, mesh vertex/index buffers (with object names), gizmo buffers, and offscreen render targets.
 
-### 🔦 Deferred Rendering Pipeline
+### 🔦 Deferred Rendering Pipeline (UE5-Inspired)
 
-- **G-Buffer** — 3 MRT (Multiple Render Targets):
-  | RT | Format | Contents |
-  |---|---|---|
-  | RT0 | `R16G16B16A16_FLOAT` | World-space Position (RGB) |
-  | RT1 | `R16G16B16A16_FLOAT` | World-space Normal (RGB, packed [0,1]) + Roughness (A) |
-  | RT2 | `R8G8B8A8_UNORM` | Albedo Color (RGB) + Metallic (A) |
+- **G-Buffer** — 3 MRT (all `R8G8B8A8_UNORM`, UE5-inspired layout):
+  | RT | Contents |
+  |---|---|
+  | **GBufferA** (t0) | Normal (Octahedron RG) + Metallic (B) + ShadingModelID (A) |
+  | **GBufferB** (t1) | BaseColor (RGB) + Roughness (A) |
+  | **GBufferC** (t2) | Emissive (RGB) + Specular (A) |
+  | **Depth** (t7) | Hardware depth (`R32_TYPELESS`) → world position via InvViewProj |
+- **Octahedron Normal Encoding** — Unit normals stored in 2 channels using octahedron mapping, providing better precision than linear [0,1] packing in R8G8 format.
+- **Depth-Based Position Reconstruction** — World-space position is reconstructed from hardware depth buffer + inverse ViewProjection matrix, eliminating the need for a dedicated position render target (~40% bandwidth savings vs R16F position RT).
 - **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`.
-- **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reads G-Buffer SRVs (t0-t2), computes full Phong lighting (Lambert diffuse + Blinn-Phong specular) with multi-light support, applies cascaded shadow maps, outputs to scene render target.
+- **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reconstructs world position from depth, decodes octahedron normals, reads material properties from G-Buffer, and computes **Cook-Torrance PBR** lighting (GGX NDF + Schlick Fresnel + Smith Geometry) with multi-light support. Applies cascaded shadow maps and Reinhard tone mapping.
 - **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades. Renders scene depth from the light's perspective into individual `R32_TYPELESS` shadow maps per cascade. PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. 5-tap PCF filtering with comparison sampler for soft shadow edges.
 - **Forward Gizmo Pass** — Translation gizmo is rendered on top of the deferred result using forward rendering with depth for correct occlusion.
-- **Material Properties** — Each `MeshComponent` has `Roughness` [0,1] and `Metallic` [0,1] properties, stored in G-Buffer alpha channels and editable via Inspector UI.
+- **Material Properties** — Each `MeshComponent` has `Roughness` [0,1] and `Metallic` [0,1] properties, stored in G-Buffer and editable via Inspector UI.
 
 ### 👁️ View Mode System
 
@@ -49,11 +53,11 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Available Modes**:
   | Mode | Type | Description |
   |---|---|---|
-  | **Lit** | Default | Full deferred rendering with lighting |
+  | **Lit** | Default | Full deferred rendering with PBR lighting |
   | **Unlit** | Debug | Forward rendering with no lighting (pure albedo) |
-  | **BaseColor** | Buffer Visualization | G-Buffer Albedo (RT2 RGB) |
-  | **Roughness** | Buffer Visualization | G-Buffer Roughness (RT1 Alpha, grayscale) |
-  | **Metallic** | Buffer Visualization | G-Buffer Metallic (RT2 Alpha, grayscale) |
+  | **BaseColor** | Buffer Visualization | G-Buffer BaseColor (GBufferB RGB) |
+  | **Roughness** | Buffer Visualization | G-Buffer Roughness (GBufferB Alpha, grayscale) |
+  | **Metallic** | Buffer Visualization | G-Buffer Metallic (GBufferA Blue, grayscale) |
 - **Buffer Visualization** — G-Buffer pass runs, then a dedicated `BufferVisualization` shader samples the specific G-Buffer channel and displays it as a fullscreen pass.
 
 ### 🎬 Scene & Component System
@@ -77,8 +81,8 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **DefaultLit** | Standard PBR-style material — responds to Roughness and Metallic properties, default shader for new objects |
   | **Unlit** | Pure color output, no lighting |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
-  | **GBufferPass** | G-Buffer geometry pass — outputs Position, Normal+Roughness, Albedo+Metallic to 3 MRT |
-  | **DeferredLighting** | Fullscreen deferred lighting — reads G-Buffer, computes Phong lighting with CSM shadows |
+  | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, outputs Normal+Metallic, BaseColor+Roughness, Emissive+Specular to 3 MRT |
+  | **DeferredLighting** | Fullscreen PBR deferred lighting — depth position reconstruction, Cook-Torrance BRDF (GGX + Schlick + Smith), CSM shadows, Reinhard tone mapping |
   | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader) |
   | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels |
 - **Unified Constant Buffer** — World/View/Projection matrices, object color, selection state, light count, camera position, material properties (Roughness, Metallic), and GPU light data (up to 8 lights).
@@ -117,7 +121,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Translation Gizmo** — 3-axis gizmo (X=red, Y=green, Z=blue) on selected objects. Drag to translate; active axis turns yellow.
 - **Ray Picking** — Click viewport to select objects. Gizmo axes have picking priority.
 - **Mesh Generation** — Procedural primitives: Cube, Sphere, Cylinder, Floor.
-- **Built-in Math Library** — Vec2/3/4, Mat4, perspective/orthographic projection, LookAt (left-hand coordinate system).
+- **Built-in Math Library** — Vec2/3/4, Mat4 (with `Inverse()` via Cramer's rule for InvViewProj), perspective/orthographic projection, LookAt (left-hand coordinate system).
 - **RenderDoc Integration** — One-click frame capture (🔵 button), auto-attach at startup, auto-open in RenderDoc.
 - **Engine Configuration** — INI-based singleton config (`Config/DefaultEngine.ini`) with auto-discovery.
 
@@ -296,6 +300,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **Visual Feedback**: Orange during capture, hover shows count
 - **Zero Configuration**: Just run — RenderDoc is detected automatically
 - **GPU Pass Labels**: All rendering passes (Shadow Pass, G-Buffer, Deferred Lighting, Buffer Visualization, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
+- **GPU Resource Names**: All textures and buffers have descriptive names (e.g., `GBufferA_NormalMetallic`, `ShadowMap_Cascade0`, `MeshVB_Cube`) — visible in RenderDoc's Resource Inspector and Texture Viewer
 
 **Custom DLL Path** (`Config/DefaultEngine.ini`):
 ```ini

@@ -28,20 +28,24 @@
 - **SRV 绑定抽象** — `RHICommandContext::SetShaderResourceView()` 实现后端无关的纹理绑定。
 - **资源状态管理** — `EResourceState` 枚举和 `ResourceBarrier()` 用于 DX12 资源状态转换（DX11 为空操作）。
 - **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
+- **GPU 资源调试命名** — 所有 GPU 资源（纹理、缓冲区）都携带描述性调试名称，在 RenderDoc 和 PIX 中可见。`TextureDesc::DebugName` 和 `BufferDesc::DebugName` 通过 `SetPrivateData`（DX11）和 `SetName`（DX12）自动应用。已命名的资源包括：G-Buffer RT、阴影贴图、深度缓冲、常量缓冲、网格顶点/索引缓冲（含物体名称）、Gizmo 缓冲和离屏渲染目标。
 
-### 🔦 延迟渲染管线
+### 🔦 延迟渲染管线（UE5 风格）
 
-- **G-Buffer** — 3 个 MRT（多渲染目标）：
-  | RT | 格式 | 内容 |
-  |---|---|---|
-  | RT0 | `R16G16B16A16_FLOAT` | 世界空间位置 (RGB) |
-  | RT1 | `R16G16B16A16_FLOAT` | 世界空间法线 (RGB, 打包到 [0,1]) + 粗糙度 (A) |
-  | RT2 | `R8G8B8A8_UNORM` | 反照率颜色 (RGB) + 金属度 (A) |
+- **G-Buffer** — 3 个 MRT（全部 `R8G8B8A8_UNORM`，参考 UE5 布局）：
+  | RT | 内容 |
+  |---|---|
+  | **GBufferA** (t0) | 法线 Octahedron (RG) + 金属度 (B) + ShadingModelID (A) |
+  | **GBufferB** (t1) | BaseColor (RGB) + 粗糙度 (A) |
+  | **GBufferC** (t2) | 自发光 (RGB) + Specular (A) |
+  | **深度** (t7) | 硬件深度 (`R32_TYPELESS`) → 通过 InvViewProj 重建世界坐标 |
+- **Octahedron 法线编码** — 单位法线使用 Octahedron 映射存储在 2 个通道中，比线性 [0,1] 打包在 R8G8 格式下精度更高。
+- **基于深度的位置重建** — 世界空间位置从硬件深度缓冲 + 逆 ViewProjection 矩阵重建，无需专用位置渲染目标（比 R16F 位置 RT 节省约 40% 带宽）。
 - **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。通过 `CreateGraphicsPipelineState()` 和 `PipelineStateDesc` 创建 MRT PSO。
-- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 读取 G-Buffer SRV (t0-t2)，计算完整 Phong 光照（Lambert 漫反射 + Blinn-Phong 高光），支持多光源，应用级联阴影贴图，输出到场景渲染目标。
+- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 从深度重建世界坐标，解码 Octahedron 法线，读取 G-Buffer 材质属性，计算 **Cook-Torrance PBR** 光照（GGX NDF + Schlick Fresnel + Smith Geometry），支持多光源，应用级联阴影贴图和 Reinhard 色调映射。
 - **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联。从光源视角将场景深度渲染到独立的 `R32_TYPELESS` 阴影贴图中。PSSM 混合对数和均匀分割方案。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
 - **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
-- **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer alpha 通道中，可通过 Inspector UI 编辑。
+- **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer 中，可通过 Inspector UI 编辑。
 
 ### 👁️ 视图模式系统
 
@@ -49,11 +53,11 @@
 - **可用模式**：
   | 模式 | 类型 | 描述 |
   |---|---|---|
-  | **Lit** | 默认 | 完整延迟渲染 + 光照 |
+  | **Lit** | 默认 | 完整延迟渲染 + PBR 光照 |
   | **Unlit** | 调试 | 前向渲染，无光照（纯反照率） |
-  | **BaseColor** | 缓冲区可视化 | G-Buffer 反照率 (RT2 RGB) |
-  | **Roughness** | 缓冲区可视化 | G-Buffer 粗糙度 (RT1 Alpha, 灰度) |
-  | **Metallic** | 缓冲区可视化 | G-Buffer 金属度 (RT2 Alpha, 灰度) |
+  | **BaseColor** | 缓冲区可视化 | G-Buffer BaseColor (GBufferB RGB) |
+  | **Roughness** | 缓冲区可视化 | G-Buffer 粗糙度 (GBufferB Alpha, 灰度) |
+  | **Metallic** | 缓冲区可视化 | G-Buffer 金属度 (GBufferA Blue, 灰度) |
 - **缓冲区可视化** — G-Buffer Pass 执行后，专用的 `BufferVisualization` 着色器采样指定的 G-Buffer 通道并以全屏 Pass 显示。
 
 ### 🎬 场景与组件系统
@@ -77,8 +81,8 @@
   | **DefaultLit** | 标准 PBR 风格材质 — 响应粗糙度和金属度属性，新物体默认着色器 |
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
-  | **GBufferPass** | G-Buffer 几何 Pass — 输出位置、法线+粗糙度、反照率+金属度到 3 个 MRT |
-  | **DeferredLighting** | 全屏延迟光照 — 读取 G-Buffer，计算 Phong 光照，应用 CSM 阴影 |
+  | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，输出法线+金属度、BaseColor+粗糙度、自发光+Specular 到 3 个 MRT |
+  | **DeferredLighting** | 全屏 PBR 延迟光照 — 深度位置重建、Cook-Torrance BRDF (GGX + Schlick + Smith)、CSM 阴影、Reinhard 色调映射 |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
 - **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
@@ -117,7 +121,7 @@
 - **平移 Gizmo** — 三轴 Gizmo（X=红、Y=绿、Z=蓝），拖拽平移物体，活动轴变为黄色。
 - **射线拾取** — 点击视口选择物体，Gizmo 轴优先于场景物体。
 - **程序化网格** — 内置图元：立方体、球体、圆柱体、地面。
-- **内置数学库** — Vec2/3/4、Mat4、透视/正交投影、LookAt（左手坐标系）。
+- **内置数学库** — Vec2/3/4、Mat4（含 `Inverse()` Cramer 法则实现，用于 InvViewProj）、透视/正交投影、LookAt（左手坐标系）。
 - **RenderDoc 集成** — 一键截帧（🔵 按钮），启动时自动 attach，自动打开 RenderDoc。
 - **引擎配置** — 基于 INI 的单例配置系统（`Config/DefaultEngine.ini`），支持自动发现。
 
@@ -296,6 +300,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **视觉反馈**：捕获时按钮变橙色，悬停显示捕获次数
 - **零配置**：直接运行即可，自动检测 RenderDoc
 - **GPU Pass 标签**：所有渲染阶段（Shadow Pass、G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
+- **GPU 资源名称**：所有纹理和缓冲区都有描述性名称（如 `GBufferA_NormalMetallic`、`ShadowMap_Cascade0`、`MeshVB_Cube`），在 RenderDoc 的 Resource Inspector 和 Texture Viewer 中可见
 
 **自定义 DLL 路径**（`Config/DefaultEngine.ini`）：
 ```ini

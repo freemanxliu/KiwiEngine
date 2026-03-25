@@ -1,7 +1,10 @@
 // ============================================================
-// G-Buffer Geometry Pass Shader
-// Writes to 3 MRT: Position, Normal(+Roughness), Albedo(+Metallic)
-// Used in deferred rendering pipeline
+// G-Buffer Geometry Pass Shader (UE5-inspired layout)
+// Writes to 3 MRT (all R8G8B8A8_UNORM):
+//   GBufferA: Normal Octahedron(RG) + Metallic(B) + ShadingModelID(A)
+//   GBufferB: BaseColor(RGB) + Roughness(A)
+//   GBufferC: Emissive(RGB) + Specular(A)
+// World position reconstructed from hardware depth buffer in lighting pass
 // ============================================================
 
 #define MAX_LIGHTS 8
@@ -41,19 +44,39 @@ struct VSInput
 struct VSOutput
 {
     float4 PositionCS : SV_POSITION;
-    float3 PositionWS : TEXCOORD0;
-    float3 NormalWS   : TEXCOORD1;
+    float3 NormalWS   : TEXCOORD0;
     float4 Color      : COLOR;
-    float2 TexCoord   : TEXCOORD2;
+    float2 TexCoord   : TEXCOORD1;
 };
 
-// G-Buffer MRT output
+// G-Buffer MRT output (UE5-inspired)
 struct GBufferOutput
 {
-    float4 Position : SV_TARGET0;  // World-space position (RGB) + unused (A)
-    float4 Normal   : SV_TARGET1;  // World-space normal (RGB) + Roughness (A)
-    float4 Albedo   : SV_TARGET2;  // Albedo color (RGB) + Metallic (A)
+    float4 GBufferA : SV_TARGET0;  // Normal Octahedron(RG) + Metallic(B) + ShadingModelID(A)
+    float4 GBufferB : SV_TARGET1;  // BaseColor(RGB) + Roughness(A)
+    float4 GBufferC : SV_TARGET2;  // Emissive(RGB) + Specular(A)
 };
+
+// ---- Octahedron Normal Encoding ----
+// Encodes unit normal to 2D octahedron representation in [0,1] range
+// Reference: "Survey of Efficient Representations for Independent Unit Vectors" (Cigolle et al. 2014)
+float2 OctahedronEncode(float3 n)
+{
+    // Project onto octahedron
+    float3 absN = abs(n);
+    float sum = absN.x + absN.y + absN.z;
+    float2 oct = n.xy / sum;
+
+    // Reflect bottom hemisphere
+    if (n.z < 0.0)
+    {
+        float2 signNotZero = float2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
+        oct = (1.0 - abs(oct.yx)) * signNotZero;
+    }
+
+    // Map from [-1,1] to [0,1]
+    return oct * 0.5 + 0.5;
+}
 
 // ---- Vertex Shader ----
 VSOutput VSMain(VSInput input)
@@ -65,7 +88,6 @@ VSOutput VSMain(VSInput input)
     float4 projPos = mul(viewPos, g_Projection);
 
     output.PositionCS = projPos;
-    output.PositionWS = worldPos.xyz;
     output.NormalWS = normalize(mul(input.Normal, (float3x3)g_World));
     output.Color = input.Color * g_ObjectColor;
     output.TexCoord = input.TexCoord;
@@ -78,9 +100,17 @@ GBufferOutput PSMain(VSOutput input)
 {
     GBufferOutput output;
 
-    output.Position = float4(input.PositionWS, 1.0);
-    output.Normal = float4(normalize(input.NormalWS) * 0.5 + 0.5, g_Roughness); // Pack normal to [0,1], A = Roughness
-    output.Albedo = float4(input.Color.rgb, g_Metallic);                          // Albedo RGB, A = Metallic
+    float3 normal = normalize(input.NormalWS);
+    float2 octNormal = OctahedronEncode(normal);
+
+    // Default specular = 0.5 (dielectric Fresnel reflectance ~4%)
+    float specular = 0.5;
+    // ShadingModelID: 1.0 = DefaultLit (encoded as [0,1] for UNORM)
+    float shadingModelID = 1.0 / 255.0; // ID=1
+
+    output.GBufferA = float4(octNormal.x, octNormal.y, g_Metallic, shadingModelID);
+    output.GBufferB = float4(input.Color.rgb, g_Roughness);
+    output.GBufferC = float4(0.0, 0.0, 0.0, specular); // No emissive for now
 
     return output;
 }

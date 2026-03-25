@@ -303,6 +303,13 @@ namespace Kiwi
             throw std::runtime_error("Failed to create D3D11 buffer");
         }
 
+        // Set GPU debug name for RenderDoc / PIX
+        if (desc.DebugName && desc.DebugName[0])
+        {
+            buffer->SetPrivateData(WKPDID_D3DDebugObjectName,
+                (UINT)strlen(desc.DebugName), desc.DebugName);
+        }
+
         return std::make_unique<DX11Buffer>(buffer.Get(), m_Context.Get(), desc);
     }
 
@@ -370,6 +377,13 @@ namespace Kiwi
         if (FAILED(hr))
         {
             throw std::runtime_error("Failed to create D3D11 texture");
+        }
+
+        // Set GPU debug name for RenderDoc / PIX
+        if (desc.DebugName && desc.DebugName[0])
+        {
+            texture->SetPrivateData(WKPDID_D3DDebugObjectName,
+                (UINT)strlen(desc.DebugName), desc.DebugName);
         }
 
         return std::make_unique<DX11Texture>(texture.Get(), desc);

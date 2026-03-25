@@ -22,6 +22,8 @@ namespace Kiwi
         RHICommandContext* GetContext() const { return m_Context.get(); }
         RHISwapChain*      GetSwapChain() const { return m_SwapChain.get(); }
         RHITextureView*    GetDSV() const { return m_DSV.get(); }
+        RHITextureView*    GetDepthSRV() const { return m_DepthSRV.get(); }
+        RHITexture*        GetDepthTexture() const { return m_DepthStencil.get(); }
         Window*            GetWindow() const { return m_Window.get(); }
 
         // 获取当前 RHI 类型
@@ -57,6 +59,7 @@ namespace Kiwi
         // 深度缓冲
         std::unique_ptr<RHITexture>         m_DepthStencil;
         std::unique_ptr<RHITextureView>     m_DSV;
+        std::unique_ptr<RHITextureView>     m_DepthSRV;
 
         bool m_Initialized = false;
         RHI_API_TYPE m_CurrentRHIType = RHI_API_TYPE::DX11;

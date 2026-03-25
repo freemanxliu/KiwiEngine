@@ -677,6 +677,9 @@ protected:
                 ctx->ResourceBarrier(m_GBufferRT[i].get(),
                     RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             }
+            // Transition depth buffer to shader resource for deferred lighting
+            ctx->ResourceBarrier(GetDepthTexture(),
+                RESOURCE_STATE_DEPTH_WRITE, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
             // ==== PASS 2: Deferred Lighting / Buffer Visualization ====
             if (m_ViewMode == EViewMode::Lit)
@@ -699,7 +702,7 @@ protected:
                 ctx->SetInputLayout(nullptr);
                 ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
-                // Bind G-Buffer SRVs (t0=Position, t1=Normal, t2=Albedo)
+                // Bind G-Buffer SRVs (t0=GBufferA, t1=GBufferB, t2=GBufferC)
                 ctx->SetShaderResourceView(0, m_GBufferSRV[0].get());
                 ctx->SetShaderResourceView(1, m_GBufferSRV[1].get());
                 ctx->SetShaderResourceView(2, m_GBufferSRV[2].get());
@@ -709,6 +712,9 @@ protected:
                 {
                     ctx->SetShaderResourceView(3 + si, m_ShadowMapSRV[si].get());
                 }
+
+                // Bind depth buffer SRV for position reconstruction (t7)
+                ctx->SetShaderResourceView(7, GetDepthSRV());
 
                 // Bind sampler (DX11 only; DX12 uses static sampler s0)
                 ctx->SetSampler(0, m_PostProcessSampler.get());
@@ -733,6 +739,7 @@ protected:
                 {
                     ctx->SetShaderResourceView(3 + si, nullptr);
                 }
+                ctx->SetShaderResourceView(7, nullptr);
 
                 m_PassTimer.End();
                 ctx->EndEvent();
@@ -776,6 +783,10 @@ protected:
                 m_PassTimer.End();
                 ctx->EndEvent();
             }
+
+            // Transition depth buffer back to depth write for gizmo pass
+            ctx->ResourceBarrier(GetDepthTexture(),
+                RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_DEPTH_WRITE);
 
             // ==== PASS 3: Forward Gizmo Pass (on top of deferred result) ====
             ctx->BeginEvent("Gizmo Pass");
@@ -996,9 +1007,10 @@ protected:
     void UpdateDeferredLightingCB()
     {
         ConstantBufferData cbd = {};
-        // World/View/Projection not needed for fullscreen triangle, but lighting data is
-        Mat4 identity = Mat4::Identity();
-        memcpy(cbd.WorldMatrix, identity.m, sizeof(identity.m));
+        // Pass InvViewProj via g_World slot for depth-based position reconstruction
+        Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
+        Mat4 invViewProj = viewProj.Inverse();
+        memcpy(cbd.WorldMatrix, invViewProj.m, sizeof(invViewProj.m));
         memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
         memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
         cbd.Selected = 0.0f;
@@ -1024,8 +1036,10 @@ protected:
     void UpdateBufferVisualizationCB()
     {
         ConstantBufferData cbd = {};
-        Mat4 identity = Mat4::Identity();
-        memcpy(cbd.WorldMatrix, identity.m, sizeof(identity.m));
+        // Pass InvViewProj via g_World slot (consistent with deferred lighting)
+        Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
+        Mat4 invViewProj = viewProj.Inverse();
+        memcpy(cbd.WorldMatrix, invViewProj.m, sizeof(invViewProj.m));
         memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
         memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
 
@@ -1423,6 +1437,7 @@ private:
         cbDesc.SizeInBytes = sizeof(ConstantBufferData);
         cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
         cbDesc.Usage = EResourceUsage::Dynamic;
+        cbDesc.DebugName = "MainConstantBuffer";
         m_ConstantBuffer = device->CreateBuffer(cbDesc);
 
         // Pipeline state (DX11: empty wrapper, DX12: managed per-shader)
@@ -1457,6 +1472,7 @@ private:
         ppCbDesc.SizeInBytes = sizeof(PostProcessCBData);
         ppCbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
         ppCbDesc.Usage = EResourceUsage::Dynamic;
+        ppCbDesc.DebugName = "PostProcessCB";
         m_PostProcessCB = device->CreateBuffer(ppCbDesc);
 
         // DX11 sampler for post-process (linear clamp)
@@ -1504,6 +1520,7 @@ private:
             rtDesc.Usage = EResourceUsage::Default;
             rtDesc.MipLevels = 1;
             rtDesc.SampleCount = 1;
+            rtDesc.DebugName = (i == 0) ? "OffscreenRT_0" : "OffscreenRT_1";
 
             m_OffscreenRT[i] = device->CreateTexture(rtDesc);
             m_OffscreenRTV[i] = device->CreateTextureView(
@@ -1545,14 +1562,21 @@ private:
         m_GBufferWidth = width;
         m_GBufferHeight = height;
 
-        // G-Buffer layout:
-        // RT0: World Position (R16G16B16A16_FLOAT)
-        // RT1: Normal (R16G16B16A16_FLOAT) — RGB=normal packed [0,1], A=roughness
-        // RT2: Albedo (R8G8B8A8_UNORM) — RGB=albedo, A=metallic
+        // G-Buffer layout (UE5-inspired — position reconstructed from depth):
+        // GBufferA: Normal Octahedron (RG) + Metallic (B) + ShadingModelID (A) — R8G8B8A8_UNORM
+        // GBufferB: BaseColor (RGB) + Roughness (A) — R8G8B8A8_UNORM
+        // GBufferC: Emissive (RGB) + Specular (A) — R8G8B8A8_UNORM
+        // World position is reconstructed from hardware depth + inverse ViewProj matrix.
         EFormat gbufferFormats[GBUFFER_COUNT] = {
-            EFormat::R16G16B16A16_FLOAT,   // Position
-            EFormat::R16G16B16A16_FLOAT,   // Normal + Roughness
-            EFormat::R8G8B8A8_UNORM,       // Albedo + Metallic
+            EFormat::R8G8B8A8_UNORM,       // GBufferA: Normal + Metallic + ShadingModelID
+            EFormat::R8G8B8A8_UNORM,       // GBufferB: BaseColor + Roughness
+            EFormat::R8G8B8A8_UNORM,       // GBufferC: Emissive + Specular
+        };
+
+        const char* gbufferNames[GBUFFER_COUNT] = {
+            "GBufferA_NormalMetallic",
+            "GBufferB_BaseColorRoughness",
+            "GBufferC_EmissiveSpecular",
         };
 
         for (int i = 0; i < GBUFFER_COUNT; i++)
@@ -1565,6 +1589,7 @@ private:
             desc.Usage = EResourceUsage::Default;
             desc.MipLevels = 1;
             desc.SampleCount = 1;
+            desc.DebugName = gbufferNames[i];
 
             m_GBufferRT[i] = device->CreateTexture(desc);
             m_GBufferRTV[i] = device->CreateTextureView(
@@ -1627,13 +1652,13 @@ private:
 
             if (m_GBufferVS && m_GBufferPS)
             {
-                // Create MRT PSO for G-Buffer (3 render targets)
+                // Create MRT PSO for G-Buffer (3 render targets, UE5-inspired layout)
                 PipelineStateDesc gbufferPSODesc;
                 gbufferPSODesc.NumRenderTargets = 3;
-                gbufferPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT; // Position
-                gbufferPSODesc.RTVFormats[1] = EFormat::R16G16B16A16_FLOAT; // Normal + Roughness
-                gbufferPSODesc.RTVFormats[2] = EFormat::R8G8B8A8_UNORM;     // Albedo + Metallic
-                gbufferPSODesc.DSVFormat = EFormat::D24_UNORM_S8_UINT;
+                gbufferPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM; // GBufferA: Normal + Metallic
+                gbufferPSODesc.RTVFormats[1] = EFormat::R8G8B8A8_UNORM; // GBufferB: BaseColor + Roughness
+                gbufferPSODesc.RTVFormats[2] = EFormat::R8G8B8A8_UNORM; // GBufferC: Emissive + Specular
+                gbufferPSODesc.DSVFormat = EFormat::D32_FLOAT;
                 gbufferPSODesc.DepthEnabled = true;
                 gbufferPSODesc.DepthWrite = true;
 
@@ -1717,6 +1742,7 @@ private:
         cbDesc.SizeInBytes = sizeof(ShadowCBData);
         cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
         cbDesc.Usage = EResourceUsage::Dynamic;
+        cbDesc.DebugName = "ShadowCB";
         m_ShadowCB = device->CreateBuffer(cbDesc);
 
         // Create DX11 comparison sampler for shadow mapping
@@ -1771,6 +1797,9 @@ private:
 
         for (int i = 0; i < count; i++)
         {
+            char shadowName[64];
+            snprintf(shadowName, sizeof(shadowName), "ShadowMap_Cascade%d", i);
+
             TextureDesc desc;
             desc.Width = size;
             desc.Height = size;
@@ -1779,6 +1808,7 @@ private:
             desc.Usage = EResourceUsage::Default;
             desc.MipLevels = 1;
             desc.SampleCount = 1;
+            desc.DebugName = shadowName;
 
             m_ShadowMapRT[i] = device->CreateTexture(desc);
 
@@ -3129,16 +3159,21 @@ private:
 
             if (m_GizmoVertexCount[i] == 0) continue;
 
+            static const char* gizmoAxisNames[] = { "GizmoVB_X", "GizmoVB_Y", "GizmoVB_Z" };
+            static const char* gizmoAxisIBNames[] = { "GizmoIB_X", "GizmoIB_Y", "GizmoIB_Z" };
+
             BufferDesc vbDesc;
             vbDesc.SizeInBytes = m_GizmoVertexCount[i] * sizeof(Vertex);
             vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
             vbDesc.Usage = EResourceUsage::Immutable;
+            vbDesc.DebugName = (i < 3) ? gizmoAxisNames[i] : "GizmoVB";
             m_GizmoVB[i] = device->CreateBuffer(vbDesc, data.Vertices.data());
 
             BufferDesc ibDesc;
             ibDesc.SizeInBytes = m_GizmoIndexCount[i] * sizeof(uint32_t);
             ibDesc.BindFlags = BUFFER_USAGE_INDEX;
             ibDesc.Usage = EResourceUsage::Immutable;
+            ibDesc.DebugName = (i < 3) ? gizmoAxisIBNames[i] : "GizmoIB";
             m_GizmoIB[i] = device->CreateBuffer(ibDesc, data.Indices.data());
         }
     }
@@ -3326,16 +3361,22 @@ private:
 
             if (gpu.VertexCount == 0 || gpu.IndexCount == 0) continue;
 
+            // Debug names include object name for RenderDoc identification
+            std::string vbName = "MeshVB_" + obj.Name;
+            std::string ibName = "MeshIB_" + obj.Name;
+
             BufferDesc vbDesc;
             vbDesc.SizeInBytes = gpu.VertexCount * sizeof(Vertex);
             vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
             vbDesc.Usage = EResourceUsage::Immutable;
+            vbDesc.DebugName = vbName.c_str();
             gpu.VertexBuffer = device->CreateBuffer(vbDesc, meshComp->MeshData.GetVertices().data());
 
             BufferDesc ibDesc;
             ibDesc.SizeInBytes = gpu.IndexCount * sizeof(uint32_t);
             ibDesc.BindFlags = BUFFER_USAGE_INDEX;
             ibDesc.Usage = EResourceUsage::Immutable;
+            ibDesc.DebugName = ibName.c_str();
             gpu.IndexBuffer = device->CreateBuffer(ibDesc, meshComp->MeshData.GetIndices().data());
         }
     }

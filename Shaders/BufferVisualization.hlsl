@@ -1,12 +1,17 @@
 // ============================================================
-// Buffer Visualization Shader
+// Buffer Visualization Shader (UE5-inspired GBuffer layout)
 // Displays a single channel from the G-Buffer for debug viewing
 // Uses fullscreen triangle (SV_VertexID)
 //
+// GBuffer layout:
+//   t0 GBufferA: Normal Octahedron(RG) + Metallic(B) + ShadingModelID(A)
+//   t1 GBufferB: BaseColor(RGB) + Roughness(A)
+//   t2 GBufferC: Emissive(RGB) + Specular(A)
+//
 // VisualizeMode (passed via g_Selected):
-//   0 = BaseColor (Albedo RT2.rgb)
-//   1 = Roughness (Normal RT1.a — grayscale)
-//   2 = Metallic  (Albedo RT2.a — grayscale)
+//   0 = BaseColor  (GBufferB.rgb)
+//   1 = Roughness  (GBufferB.a — grayscale)
+//   2 = Metallic   (GBufferA.b — grayscale)
 // ============================================================
 
 #define MAX_LIGHTS 8
@@ -21,7 +26,7 @@ struct LightData
 
 cbuffer Constants : register(b0)
 {
-    row_major float4x4 g_World;
+    row_major float4x4 g_World;       // InvViewProj (repurposed)
     row_major float4x4 g_View;
     row_major float4x4 g_Projection;
     float4 g_ObjectColor;
@@ -35,10 +40,10 @@ cbuffer Constants : register(b0)
     LightData g_Lights[MAX_LIGHTS];
 };
 
-// G-Buffer textures
-Texture2D g_PositionBuffer : register(t0);
-Texture2D g_NormalBuffer   : register(t1);
-Texture2D g_AlbedoBuffer   : register(t2);
+// G-Buffer textures (UE5-inspired layout)
+Texture2D g_GBufferA : register(t0); // Normal(RG) + Metallic(B) + ShadingModelID(A)
+Texture2D g_GBufferB : register(t1); // BaseColor(RGB) + Roughness(A)
+Texture2D g_GBufferC : register(t2); // Emissive(RGB) + Specular(A)
 
 SamplerState g_GBufferSampler : register(s0); // Linear clamp
 
@@ -58,38 +63,49 @@ VSOutput VSMain(uint vertexID : SV_VertexID)
     return output;
 }
 
+// ---- Octahedron Normal Decoding (for potential WorldNormal visualization) ----
+float3 OctahedronDecode(float2 oct)
+{
+    oct = oct * 2.0 - 1.0;
+    float3 n = float3(oct.x, oct.y, 1.0 - abs(oct.x) - abs(oct.y));
+    if (n.z < 0.0)
+    {
+        float2 signNotZero = float2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+        n.xy = (1.0 - abs(n.yx)) * signNotZero;
+    }
+    return normalize(n);
+}
+
 // ---- Pixel Shader ----
 float4 PSMain(VSOutput input) : SV_TARGET
 {
-    float4 normalData = g_NormalBuffer.Sample(g_GBufferSampler, input.TexCoord);
-    float4 albedoData = g_AlbedoBuffer.Sample(g_GBufferSampler, input.TexCoord);
+    float4 gbufferA = g_GBufferA.Sample(g_GBufferSampler, input.TexCoord);
+    float4 gbufferB = g_GBufferB.Sample(g_GBufferSampler, input.TexCoord);
 
-    // Skip pixels with no geometry
-    if (albedoData.a < 0.001 && normalData.a < 0.001)
+    // Skip pixels with no geometry (check if normal is zero — encoded as (0.5, 0.5) in octahedron)
+    // A zero-length encoded normal with zero metallic and zero roughness means no geometry
+    if (gbufferA.r == 0.0 && gbufferA.g == 0.0 && gbufferB.r == 0.0 && gbufferB.g == 0.0 && gbufferB.b == 0.0)
     {
-        // Check position buffer for geometry presence
-        float4 posData = g_PositionBuffer.Sample(g_GBufferSampler, input.TexCoord);
-        if (posData.a < 0.01)
-            return float4(0.12, 0.12, 0.18, 1.0); // Background
+        return float4(0.12, 0.12, 0.18, 1.0); // Background
     }
 
     int mode = (int)(g_Selected + 0.5); // Round to nearest int
 
     if (mode == 0)
     {
-        // BaseColor: show albedo RGB
-        return float4(albedoData.rgb, 1.0);
+        // BaseColor: GBufferB.rgb
+        return float4(gbufferB.rgb, 1.0);
     }
     else if (mode == 1)
     {
-        // Roughness: show as grayscale from Normal buffer alpha
-        float roughness = normalData.a;
+        // Roughness: GBufferB.a as grayscale
+        float roughness = gbufferB.a;
         return float4(roughness, roughness, roughness, 1.0);
     }
     else // mode == 2
     {
-        // Metallic: show as grayscale from Albedo buffer alpha
-        float metallic = albedoData.a;
+        // Metallic: GBufferA.b as grayscale
+        float metallic = gbufferA.b;
         return float4(metallic, metallic, metallic, 1.0);
     }
 }

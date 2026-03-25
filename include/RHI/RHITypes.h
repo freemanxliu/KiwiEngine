@@ -156,6 +156,7 @@ namespace Kiwi
         uint32_t      BindFlags      = 0;
         EResourceUsage Usage          = EResourceUsage::Default;
         uint32_t      SampleCount    = 1;
+        const char*   DebugName      = nullptr;  // GPU debug name (RenderDoc / PIX)
     };
 
     // 缓冲描述
@@ -165,6 +166,7 @@ namespace Kiwi
         uint32_t      BindFlags      = 0;
         EResourceUsage Usage          = EResourceUsage::Default;
         uint32_t      StructByteStride = 0;
+        const char*   DebugName      = nullptr;  // GPU debug name (RenderDoc / PIX)
     };
 
     // 着色器宏定义
@@ -192,7 +194,7 @@ namespace Kiwi
     {
         uint32_t NumRenderTargets = 1;
         EFormat RTVFormats[8] = { EFormat::R8G8B8A8_UNORM };
-        EFormat DSVFormat = EFormat::D24_UNORM_S8_UINT;
+        EFormat DSVFormat = EFormat::D32_FLOAT;
         bool DepthEnabled = true;
         bool DepthWrite = true;
     };

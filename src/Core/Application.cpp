@@ -87,20 +87,20 @@ namespace Kiwi
 
         m_DepthStencil.reset();
         m_DSV.reset();
+        m_DepthSRV.reset();
 
         TextureDesc depthDesc;
         depthDesc.Width = width;
         depthDesc.Height = height;
-        depthDesc.Format = EFormat::D24_UNORM_S8_UINT;
+        depthDesc.Format = EFormat::R32_TYPELESS; // Typeless for DSV(D32_FLOAT) + SRV(R32_FLOAT) dual use
         depthDesc.Usage = EResourceUsage::Default;
         depthDesc.SampleCount = 1;
-
-        // 后端会根据 Format 自动设置正确的 BindFlags
-        // DX11 需要 D3D11_BIND_DEPTH_STENCIL，DX12 通过 Resource Flags 处理
-        depthDesc.BindFlags = TEXTURE_HINT_DEPTH_STENCIL;
+        depthDesc.BindFlags = TEXTURE_HINT_DEPTH_STENCIL | TEXTURE_BIND_SHADER_RESOURCE;
+        depthDesc.DebugName = "MainDepthBuffer";
 
         m_DepthStencil = m_Device->CreateTexture(depthDesc);
-        m_DSV = m_Device->CreateTextureView(m_DepthStencil.get(), EDescriptorHeapType::DSV);
+        m_DSV = m_Device->CreateTextureView(m_DepthStencil.get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
+        m_DepthSRV = m_Device->CreateTextureView(m_DepthStencil.get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
     }
 
     void Application::OnResize(uint32_t width, uint32_t height)
@@ -110,6 +110,7 @@ namespace Kiwi
         // 释放旧的深度缓冲
         m_DepthStencil.reset();
         m_DSV.reset();
+        m_DepthSRV.reset();
 
         // Resize SwapChain
         if (m_SwapChain)
@@ -157,6 +158,7 @@ namespace Kiwi
         // 2. 释放深度缓冲
         m_DepthStencil.reset();
         m_DSV.reset();
+        m_DepthSRV.reset();
 
         // 3. 释放 SwapChain
         m_SwapChain.reset();
