@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace Kiwi
 {
 
@@ -7,19 +9,47 @@ namespace Kiwi
     // 内嵌 HLSL 着色器源码（运行时编译）
     // ============================================================
 
+    // Maximum number of lights supported
+    static constexpr int MAX_LIGHTS = 8;
+
+    // GPU light data (must match HLSL LightData struct)
+    struct GPULightData
+    {
+        float ColorIntensity[3];  // LightColor * Intensity
+        int32_t Type;             // 0 = Directional, 1 = Point
+        float DirectionOrPos[3];  // Direction (Directional) or Position (Point)
+        float Radius;             // Point light radius (0 for directional)
+    };
+
     // 常量缓冲区结构（必须与 HLSL 匹配）
     struct ConstantBufferData
     {
-        float WorldMatrix[16];      // 4x4 matrix
-        float ViewMatrix[16];       // 4x4 matrix
-        float ProjectionMatrix[16]; // 4x4 matrix
-        float ObjectColor[4];       // Object color (RGBA)
-        float Selected;             // 1.0 if selected, 0.0 otherwise (kept for CB layout compat)
-        float Padding[3];           // Pad to 16-byte alignment
+        float WorldMatrix[16];       // 4x4 matrix
+        float ViewMatrix[16];        // 4x4 matrix
+        float ProjectionMatrix[16];  // 4x4 matrix
+        float ObjectColor[4];        // Object color (RGBA)
+        float Selected;              // 1.0 if selected, 0.0 otherwise
+        int32_t NumLights;           // Number of active lights
+        float Padding[2];            // Pad to 16-byte alignment
+        float CameraPos[3];          // Camera position in world space
+        float Padding2;              // Pad to 16-byte alignment
+        GPULightData Lights[MAX_LIGHTS]; // Light array
     };
 
     // ---- 顶点着色器 ----
+    // This minimal VS is used only to create the shared InputLayout.
+    // Actual rendering uses file-based shaders from ShaderLibrary.
     inline const char* g_VertexShaderHLSL = R"hlsl(
+    #define MAX_LIGHTS 8
+
+    struct LightData
+    {
+        float3 ColorIntensity;
+        int    Type;
+        float3 DirectionOrPos;
+        float  Radius;
+    };
+
     cbuffer Constants : register(b0)
     {
         row_major float4x4 g_World;
@@ -27,7 +57,11 @@ namespace Kiwi
         row_major float4x4 g_Projection;
         float4 g_ObjectColor;
         float  g_Selected;
-        float3 g_Padding;
+        int    g_NumLights;
+        float2 g_Padding;
+        float3 g_CameraPos;
+        float  g_Padding2;
+        LightData g_Lights[MAX_LIGHTS];
     };
 
     struct VSInput
@@ -64,7 +98,18 @@ namespace Kiwi
     )hlsl";
 
     // ---- 像素着色器 ----
+    // This minimal PS matches the CB layout but is not used for rendering.
     inline const char* g_PixelShaderHLSL = R"hlsl(
+    #define MAX_LIGHTS 8
+
+    struct LightData
+    {
+        float3 ColorIntensity;
+        int    Type;
+        float3 DirectionOrPos;
+        float  Radius;
+    };
+
     cbuffer Constants : register(b0)
     {
         row_major float4x4 g_World;
@@ -72,7 +117,11 @@ namespace Kiwi
         row_major float4x4 g_Projection;
         float4 g_ObjectColor;
         float  g_Selected;
-        float3 g_Padding;
+        int    g_NumLights;
+        float2 g_Padding;
+        float3 g_CameraPos;
+        float  g_Padding2;
+        LightData g_Lights[MAX_LIGHTS];
     };
 
     struct PSInput
@@ -85,26 +134,12 @@ namespace Kiwi
 
     float4 main(PSInput input) : SV_TARGET
     {
-        // 简单的方向光
         float3 lightDir = normalize(float3(0.5, 0.7, 0.3));
         float3 normal = normalize(input.NormalWS);
-
-        // Lambertian diffuse
         float NdotL = max(dot(normal, lightDir), 0.0);
-
-        // 环境光
         float ambient = 0.15;
-
-        // 最终颜色
         float3 finalColor = input.Color.rgb * (ambient + NdotL * 0.85);
 
-        // 轻微的高光
-        float3 viewDir = normalize(float3(0, 1, -2) - input.PositionWS);
-        float3 halfVec = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
-        finalColor += float3(0.3, 0.3, 0.3) * spec * 0.5;
-
-        // Gizmo / unlit mode: if g_Selected > 1.5 we treat it as unlit (pure vertex color)
         if (g_Selected > 1.5)
         {
             return float4(input.Color.rgb * g_ObjectColor.rgb, input.Color.a);

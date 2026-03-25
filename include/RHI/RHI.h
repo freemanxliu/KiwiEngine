@@ -240,6 +240,9 @@ namespace Kiwi
         // ---- 常量缓冲 ----
         virtual void SetConstantBuffer(uint32_t slot, RHIBuffer* buffer) = 0;
 
+        // ---- 着色器资源视图（SRV）----
+        virtual void SetShaderResourceView(uint32_t slot, RHITextureView* srv) = 0;
+
         // ---- 采样器 ----
         virtual void SetSampler(uint32_t slot, RHISampler* sampler) = 0;
 

@@ -180,6 +180,9 @@ namespace Kiwi
         // Constant Buffer
         void SetConstantBuffer(uint32_t slot, RHIBuffer* buffer) override;
 
+        // Shader Resource View (SRV)
+        void SetShaderResourceView(uint32_t slot, RHITextureView* srv) override;
+
         // Sampler
         void SetSampler(uint32_t slot, RHISampler* sampler) override;
 

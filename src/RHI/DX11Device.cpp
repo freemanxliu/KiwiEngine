@@ -328,7 +328,20 @@ namespace Kiwi
         }
         else
         {
-            td.BindFlags = desc.BindFlags;
+            // 将引擎纹理绑定标志转换为 DX11 绑定标志
+            UINT dx11BindFlags = 0;
+            if (desc.BindFlags & TEXTURE_BIND_RENDER_TARGET)
+                dx11BindFlags |= D3D11_BIND_RENDER_TARGET;
+            if (desc.BindFlags & TEXTURE_BIND_SHADER_RESOURCE)
+                dx11BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+            if (desc.BindFlags & TEXTURE_BIND_UNORDERED_ACCESS)
+                dx11BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+
+            // 如果没有使用新标志系统，回退到直接传递（向后兼容）
+            if (dx11BindFlags == 0)
+                dx11BindFlags = desc.BindFlags;
+
+            td.BindFlags = dx11BindFlags;
         }
 
         td.CPUAccessFlags = 0;
@@ -777,11 +790,34 @@ namespace Kiwi
         m_Context->GSSetConstantBuffers(slot, 1, &d3dBuffer);
     }
 
+    void DX11CommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)
+    {
+        if (srv)
+        {
+            auto dxView = static_cast<DX11TextureView*>(srv);
+            ID3D11ShaderResourceView* srvPtr = dxView->AsSRV();
+            m_Context->PSSetShaderResources(slot, 1, &srvPtr);
+        }
+        else
+        {
+            ID3D11ShaderResourceView* nullSRV = nullptr;
+            m_Context->PSSetShaderResources(slot, 1, &nullSRV);
+        }
+    }
+
     void DX11CommandContext::SetSampler(uint32_t slot, RHISampler* sampler)
     {
-        auto dxSampler = static_cast<DX11Sampler*>(sampler);
-        ID3D11SamplerState* state = dxSampler->GetD3DSampler();
-        m_Context->PSSetSamplers(slot, 1, &state);
+        if (sampler)
+        {
+            auto dxSampler = static_cast<DX11Sampler*>(sampler);
+            ID3D11SamplerState* state = dxSampler->GetD3DSampler();
+            m_Context->PSSetSamplers(slot, 1, &state);
+        }
+        else
+        {
+            ID3D11SamplerState* nullState = nullptr;
+            m_Context->PSSetSamplers(slot, 1, &nullState);
+        }
     }
 
     void DX11CommandContext::SetViewports(const Viewport* viewports, uint32_t count)

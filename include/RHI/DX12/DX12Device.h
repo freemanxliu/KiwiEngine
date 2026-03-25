@@ -126,8 +126,12 @@ namespace Kiwi
         void* GetNativeHandle() const override { return (void*)m_Handle.ptr; }
         D3D12_CPU_DESCRIPTOR_HANDLE GetCPUHandle() const { return m_Handle; }
 
+        // For SRV views: hold the CPU-only descriptor heap so it's not destroyed
+        void SetSRVHeap(ComPtr<ID3D12DescriptorHeap> heap) { m_SRVHeap = std::move(heap); }
+
     private:
         D3D12_CPU_DESCRIPTOR_HANDLE m_Handle;
+        ComPtr<ID3D12DescriptorHeap> m_SRVHeap; // Optional: owns the CPU descriptor heap for SRV
     };
 
     class DX12Shader : public RHIShader
@@ -287,8 +291,15 @@ namespace Kiwi
         HANDLE                      m_FenceEvent = nullptr;
         bool                        m_EnableDebug;
 
-        // SRV heap for ImGui (1 descriptor)
+        // SRV heap for ImGui + post-process (16 descriptors, index 0 = ImGui)
         ComPtr<ID3D12DescriptorHeap> m_SRVHeap;
+        uint32_t m_SRVDescriptorSize = 0;
+        uint32_t m_SRVAllocated = 1; // index 0 reserved for ImGui
+
+        // RTV heap for offscreen render targets (separate from SwapChain's RTV heap)
+        ComPtr<ID3D12DescriptorHeap> m_OffscreenRTVHeap;
+        uint32_t m_OffscreenRTVDescriptorSize = 0;
+        uint32_t m_OffscreenRTVAllocated = 0;
 
         // DSV heap
         ComPtr<ID3D12DescriptorHeap> m_DSVHeap;
@@ -344,6 +355,9 @@ namespace Kiwi
 
         // Constant Buffer
         void SetConstantBuffer(uint32_t slot, RHIBuffer* buffer) override;
+
+        // Shader Resource View
+        void SetShaderResourceView(uint32_t slot, RHITextureView* srv) override;
 
         // Sampler
         void SetSampler(uint32_t slot, RHISampler* sampler) override;

@@ -53,8 +53,15 @@ set(HEADERS
     include/Scene/Mesh.h
     include/Scene/Shaders.h
     include/Scene/ShaderLibrary.h
+    include/Scene/Component.h
+    include/Scene/MeshComponent.h
+    include/Scene/CameraComponent.h
+    include/Scene/LightComponent.h
     include/Scene/SceneObject.h
     include/Scene/Scene.h
+    include/Scene/PostProcessComponent.h
+    include/Scene/PostProcessShaders.h
+    include/Scene/PostProcessShaderLibrary.h
     include/Debug/RenderDocIntegration.h
 )
 
@@ -106,6 +113,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${CMAKE_SOURCE_DIR}/Shaders
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/Shaders
     COMMENT "Copying Shaders/ to output directory"
+)
+
+# ---- Copy PostProcessShaders/ folder to output directory ----
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/PostProcessShaders
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/PostProcessShaders
+    COMMENT "Copying PostProcessShaders/ to output directory"
 )
 
 # ---- Copy Config/ folder to output directory ----

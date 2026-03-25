@@ -1,7 +1,23 @@
 // ============================================================
 // Default Phong Shader
 // Lambert Diffuse + Blinn-Phong Specular
+// Supports multiple lights (Directional + Point)
 // ============================================================
+
+// Maximum number of lights supported
+#define MAX_LIGHTS 8
+
+// Light types
+#define LIGHT_TYPE_DIRECTIONAL 0
+#define LIGHT_TYPE_POINT       1
+
+struct LightData
+{
+    float3 ColorIntensity;  // LightColor * Intensity
+    int    Type;            // 0 = Directional, 1 = Point
+    float3 DirectionOrPos;  // Direction (Directional) or Position (Point)
+    float  Radius;          // Point light radius (0 for directional)
+};
 
 cbuffer Constants : register(b0)
 {
@@ -10,7 +26,11 @@ cbuffer Constants : register(b0)
     row_major float4x4 g_Projection;
     float4 g_ObjectColor;
     float  g_Selected;
-    float3 g_Padding;
+    int    g_NumLights;
+    float2 g_Padding;
+    float3 g_CameraPos;
+    float  g_Padding2;
+    LightData g_Lights[MAX_LIGHTS];
 };
 
 struct VSInput
@@ -48,30 +68,71 @@ VSOutput VSMain(VSInput input)
 // ---- Pixel Shader ----
 float4 PSMain(VSOutput input) : SV_TARGET
 {
-    // Directional light
-    float3 lightDir = normalize(float3(0.5, 0.7, 0.3));
-    float3 normal = normalize(input.NormalWS);
-
-    // Lambertian diffuse
-    float NdotL = max(dot(normal, lightDir), 0.0);
-
-    // Ambient
-    float ambient = 0.15;
-
-    // Final color
-    float3 finalColor = input.Color.rgb * (ambient + NdotL * 0.85);
-
-    // Blinn-Phong specular
-    float3 viewDir = normalize(float3(0, 1, -2) - input.PositionWS);
-    float3 halfVec = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
-    finalColor += float3(0.3, 0.3, 0.3) * spec * 0.5;
-
     // Gizmo / unlit mode: if g_Selected > 1.5 we treat it as unlit (pure vertex color)
     if (g_Selected > 1.5)
     {
         return float4(input.Color.rgb * g_ObjectColor.rgb, input.Color.a);
     }
+
+    float3 normal = normalize(input.NormalWS);
+    float3 viewDir = normalize(g_CameraPos - input.PositionWS);
+
+    // Ambient
+    float3 ambient = float3(0.15, 0.15, 0.15);
+    float3 totalDiffuse = float3(0, 0, 0);
+    float3 totalSpecular = float3(0, 0, 0);
+
+    // Accumulate light contributions
+    int numLights = min(g_NumLights, MAX_LIGHTS);
+    for (int i = 0; i < numLights; i++)
+    {
+        float3 lightColor = g_Lights[i].ColorIntensity;
+        float3 lightDir;
+        float attenuation = 1.0;
+
+        if (g_Lights[i].Type == LIGHT_TYPE_DIRECTIONAL)
+        {
+            // Directional light — direction is constant
+            lightDir = normalize(g_Lights[i].DirectionOrPos);
+        }
+        else // LIGHT_TYPE_POINT
+        {
+            // Point light — compute direction from surface to light
+            float3 toLight = g_Lights[i].DirectionOrPos - input.PositionWS;
+            float dist = length(toLight);
+            lightDir = toLight / max(dist, 0.0001);
+
+            // Smooth attenuation based on radius
+            float radius = max(g_Lights[i].Radius, 0.001);
+            float normalizedDist = dist / radius;
+            // Smooth falloff: 1 - smoothstep-like curve
+            attenuation = saturate(1.0 - normalizedDist * normalizedDist);
+            attenuation *= attenuation; // Quadratic falloff for more natural look
+        }
+
+        // Lambertian diffuse
+        float NdotL = max(dot(normal, lightDir), 0.0);
+        totalDiffuse += lightColor * NdotL * attenuation;
+
+        // Blinn-Phong specular
+        float3 halfVec = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
+        totalSpecular += lightColor * spec * 0.3 * attenuation;
+    }
+
+    // If no lights in scene, use a default directional light (fallback)
+    if (numLights == 0)
+    {
+        float3 defaultLightDir = normalize(float3(0.5, 0.7, 0.3));
+        float NdotL = max(dot(normal, defaultLightDir), 0.0);
+        totalDiffuse = float3(1, 1, 1) * NdotL * 0.85;
+
+        float3 halfVec = normalize(defaultLightDir + viewDir);
+        float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
+        totalSpecular = float3(0.3, 0.3, 0.3) * spec * 0.5;
+    }
+
+    float3 finalColor = input.Color.rgb * (ambient + totalDiffuse) + totalSpecular;
 
     return float4(finalColor, input.Color.a);
 }

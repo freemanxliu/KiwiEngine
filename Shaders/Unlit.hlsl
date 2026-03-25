@@ -3,6 +3,16 @@
 // Pure color output — no lighting calculations
 // ============================================================
 
+#define MAX_LIGHTS 8
+
+struct LightData
+{
+    float3 ColorIntensity;
+    int    Type;
+    float3 DirectionOrPos;
+    float  Radius;
+};
+
 cbuffer Constants : register(b0)
 {
     row_major float4x4 g_World;
@@ -10,7 +20,11 @@ cbuffer Constants : register(b0)
     row_major float4x4 g_Projection;
     float4 g_ObjectColor;
     float  g_Selected;
-    float3 g_Padding;
+    int    g_NumLights;
+    float2 g_Padding;
+    float3 g_CameraPos;
+    float  g_Padding2;
+    LightData g_Lights[MAX_LIGHTS];
 };
 
 struct VSInput

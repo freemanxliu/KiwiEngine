@@ -1,75 +1,86 @@
 # 🥝 KiwiEngine
 
-A lightweight 3D rendering engine built from scratch with C++17 and DirectX, featuring a **fully abstract RHI (Render Hardware Interface) layer** — application code is 100% backend-agnostic with zero `static_cast` to specific backends. Supports runtime DX11/DX12 switching, a built-in scene editor, and integrated RenderDoc frame capture.
+**[中文版 README](README_CN.md)**
+
+A lightweight 3D rendering engine and scene editor built from scratch with C++17 and DirectX. Features a **fully abstract RHI (Render Hardware Interface) layer** — application code is 100% backend-agnostic with zero `static_cast` to specific backends, zero `isDX12` branching, and zero DX11/DX12 header includes in application code.
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
 ![Vulkan](https://img.shields.io/badge/Vulkan-WIP-yellow)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![Build](https://img.shields.io/badge/Build-CMake-orange)
+![ImGui](https://img.shields.io/badge/ImGui-v1.91.8-purple)
 ![RenderDoc](https://img.shields.io/badge/RenderDoc-Integrated-red)
+
+---
 
 ## ✨ Features
 
-- **True RHI Abstraction** — Application and scene code contain zero references to DX11/DX12 headers, no `isDX12` branching, no `static_cast` to specific backends. All backend-specific logic (shader compilation, PSO creation, ImGui integration, command list lifecycle) lives behind virtual interfaces.
-- **DX11 Backend** — Full DirectX 11 implementation (device, context, swap chain, shaders, buffers, pipeline state, ImGui backend)
-- **DX12 Backend** — Full DirectX 12 implementation (root signature, PSO, descriptor heaps, fence sync, resource barriers, ImGui backend, frame lifecycle management)
-- **Vulkan Backend** *(WIP)* — Vulkan implementation in progress (device, swap chain, render pass, pipeline, SPIR-V shaders)
-- **Runtime RHI Switching** — Hot-switch between DX11 and DX12 at runtime via the menu bar (no restart needed)
-- **Unified Shader Compilation** — `RHIDevice::CompileShader()` and `RHIDevice::CreateGraphicsPipelineState()` — each backend handles its own compilation and PSO creation internally
-- **Frame Lifecycle Abstraction** — `RHICommandContext::BeginFrame()` / `EndFrame()` encapsulate DX12's Reset/RootSignature/DescriptorHeaps/ResourceBarrier cycle (DX11: no-op)
-- **ImGui Backend Abstraction** — `RHIDevice::InitImGui()` / `ImGuiNewFrame()` / `ImGuiRenderDrawData()` — each backend manages its own ImGui integration
-- **Built-in Math Library** — Vec2/3/4, Mat4, perspective/orthographic projection, LookAt camera (left-hand coordinate system)
-- **Scene Editor** — Interactive scene management with object selection, transform editing, and JSON serialization
-- **Mesh Generation** — Procedural cube, sphere, cylinder, and floor primitives
-- **Shader Library** — File-based shader system: drop `.hlsl` files into the `Shaders/` folder and assign them per-object at runtime via the UI
-- **Runtime Shader Compilation** — HLSL shaders compiled at startup via `RHIDevice::CompileShader()`; includes Default (Phong), Unlit, and Normal Visualization shaders
-- **Phong Lighting** — Lambert diffuse + Blinn-Phong specular shading (Default shader)
-- **Translation Gizmo** — 3-axis translation gizmo (X=red, Y=green, Z=blue) rendered on selected objects; drag axes to move objects in world space
-- **RenderDoc Integration** — One-click frame capture button with auto-open in RenderDoc
-- **Engine Configuration** — INI-based config system (`Config/DefaultEngine.ini`) with singleton access — configure RenderDoc paths, rendering defaults, window settings, and more
-- **ImGui UI** — Full-featured editor interface with menu bar, scene panel, detail inspector, and object placer
-- **Ray Picking** — Click objects in the viewport to select them; gizmo axes have picking priority over scene objects
+### 🖥️ Rendering Hardware Interface (RHI)
 
-## 🔍 RenderDoc Integration
+- **Deep RHI Abstraction** — Application and scene code contain zero references to DX11/DX12 headers. All backend-specific logic (shader compilation, PSO creation, ImGui integration, command list lifecycle, resource barriers) lives behind virtual interfaces.
+- **DX11 Backend** — Full DirectX 11 implementation: device, context, swap chain, shaders, buffers, pipeline state, ImGui backend.
+- **DX12 Backend** — Full DirectX 12 implementation: root signature (CBV + SRV descriptor table + static sampler), PSO, descriptor heaps (RTV/DSV/SRV/offscreen RTV), fence sync, resource barriers, upload heap buffers, ImGui backend.
+- **Vulkan Backend** *(WIP)* — Vulkan implementation in progress: device, swap chain, render pass, pipeline, SPIR-V shaders.
+- **Runtime RHI Switching** — Hot-switch between DX11 and DX12 at runtime via the menu bar (deferred to frame boundary, no restart needed).
+- **Unified Shader Compilation** — `RHIDevice::CompileShader()` and `RHIDevice::CreateGraphicsPipelineState()` — each backend handles its own compilation and PSO creation internally.
+- **Frame Lifecycle Abstraction** — `RHICommandContext::BeginFrame()` / `EndFrame()` encapsulate DX12's Reset/RootSignature/DescriptorHeaps/ResourceBarrier cycle (DX11: no-op).
+- **SRV Binding Abstraction** — `RHICommandContext::SetShaderResourceView()` for backend-agnostic texture binding.
+- **Resource State Management** — `EResourceState` enum and `ResourceBarrier()` for DX12 transitions (DX11: no-op).
 
-KiwiEngine includes built-in [RenderDoc](https://renderdoc.org) support for GPU frame capture and debugging.
+### 🎬 Scene & Component System
 
-### How It Works
+- **Entity-Component Architecture** — `SceneObject` holds a vector of `Component` via `unique_ptr`. Template methods for `AddComponent<T>`, `GetComponent<T>`, `RemoveComponent<T>`.
+- **MeshComponent** — Mesh data, color, shader name, sort order.
+- **CameraComponent** — Perspective/orthographic projection, configurable FOV, near/far planes, Main Camera toggle with mutual exclusion. The active camera drives the engine's rendering viewpoint.
+- **DirectionalLightComponent** — Direction derived from rotation, configurable color and intensity.
+- **PointLightComponent** — Position-based lighting with configurable radius and quadratic falloff.
+- **PostProcessComponent** — Holds multiple `PostProcessMaterial` entries (shader name, intensity, enabled toggle). Post-process effects are applied in order.
+- **Scene Management** — `Scene` stores `vector<unique_ptr<SceneObject>>`. Factory methods: `AddMeshObject`, `AddCameraObject`, `AddDirectionalLightObject`, `AddPointLightObject`, `AddPostProcessObject`, `AddEmptyObject`.
+- **JSON Serialization** — Full scene save/load with component arrays. Backward compatible with older flat formats.
 
-- **Auto-Attach**: RenderDoc is automatically loaded at startup (before any graphics device is created)
-- **One-Click Capture & Open**: A compact button (🔵) in the top-right corner captures a frame and automatically opens it in RenderDoc
-- **Zero Configuration**: No need to launch from RenderDoc UI — just run the engine normally
-- **Visual Feedback**: Button turns orange during capture; hover tooltip shows capture count
+### 🎨 Shader System
 
-### Setup
+- **File-Based Shader Library** — Drop `.hlsl` files into `Shaders/` folder. `ShaderLibrary` scans and compiles all shaders at startup. Per-object shader assignment via UI dropdown.
+- **Built-in Shaders**:
+  | Shader | Description |
+  |---|---|
+  | **Default** | Phong lighting — Lambert diffuse + Blinn-Phong specular, supports directional & point lights (up to 8), quadratic falloff |
+  | **Unlit** | Pure color output, no lighting |
+  | **Wireframe** | Normal visualization — maps world-space normals to RGB |
+- **Unified Constant Buffer** — World/View/Projection matrices, object color, selection state, light count, camera position, and GPU light data (up to 8 lights).
+- **Custom Shaders** — Create a `.hlsl` with `VSMain`/`PSMain` entry points using the shared CB layout, drop into `Shaders/`, and it's available at runtime.
 
-1. **Install RenderDoc** from [https://renderdoc.org](https://renderdoc.org) (default install path: `C:\Program Files\RenderDoc\`)
-2. Run `KiwiEngine.exe` normally — RenderDoc will be detected and attached automatically
-3. Click the **capture button** in the top-right corner — the frame will be captured and RenderDoc will open automatically
+### 🌈 Post-Processing System
 
-**Custom RenderDoc Path**: If RenderDoc is installed to a non-standard location, specify the DLL path in `Config/DefaultEngine.ini`:
+- **PostProcessShaderLibrary** — Scans `PostProcessShaders/` folder, compiles pixel shaders + shared fullscreen vertex shader, creates PSOs without input layout.
+- **Fullscreen Triangle** — Efficient fullscreen pass using `SV_VertexID` (0,1,2) to generate a screen-covering triangle — no vertex buffer needed.
+- **Ping-Pong Rendering** — Scene → RT[0] → post-process chain → backbuffer. Intermediate passes alternate between RT[0] and RT[1].
+- **Built-in Effects**:
+  | Effect | Description |
+  |---|---|
+  | **Grayscale** | Luminance-based desaturation with intensity control |
+  | **Vignette** | Darkened edges with configurable intensity |
+- **Per-Object Post-Process** — Each `PostProcessComponent` manages a material list with ordering, enable/disable, and intensity per effect.
 
-```ini
-[RenderDoc]
-DllPath=D:\Tools\RenderDoc\renderdoc.dll
-```
+### 💡 Lighting
 
-The engine looks for `renderdoc.dll` in this priority order:
-1. Already loaded in process (launched from RenderDoc UI)
-2. Path specified in `Config/DefaultEngine.ini` → `[RenderDoc] DllPath`
-3. `C:\Program Files\RenderDoc\renderdoc.dll`
-4. `C:\Program Files (x86)\RenderDoc\renderdoc.dll`
-5. Current directory or system PATH
+- **Multi-Light Support** — Up to 8 simultaneous lights (directional + point) in a single draw call.
+- **GPU Light Data** — Packed struct: color+intensity, type (0=Directional, 1=Point), direction/position, radius.
+- **Fallback Lighting** — When no lights are in the scene, a default directional light (0.5, 0.7, 0.3) is used.
+- **AffectWorld Toggle** — Each light component can be individually enabled/disabled.
 
-> **Note**: If RenderDoc is not installed, the engine runs normally without the capture button.
+### 🛠️ Editor & Tools
 
-### Alternative: Launch from RenderDoc
+- **ImGui UI** — Full-featured editor: menu bar, scene panel with object list, detail inspector, and object placer tab.
+- **Translation Gizmo** — 3-axis gizmo (X=red, Y=green, Z=blue) on selected objects. Drag to translate; active axis turns yellow.
+- **Ray Picking** — Click viewport to select objects. Gizmo axes have picking priority.
+- **Mesh Generation** — Procedural primitives: Cube, Sphere, Cylinder, Floor.
+- **Built-in Math Library** — Vec2/3/4, Mat4, perspective/orthographic projection, LookAt (left-hand coordinate system).
+- **RenderDoc Integration** — One-click frame capture (🔵 button), auto-attach at startup, auto-open in RenderDoc.
+- **Engine Configuration** — INI-based singleton config (`Config/DefaultEngine.ini`) with auto-discovery.
 
-You can also launch KiwiEngine from within RenderDoc:
-1. Open RenderDoc → **Launch Application** → Browse to `KiwiEngine.exe`
-2. Click **Launch** — RenderDoc will inject automatically
-3. Use either RenderDoc's F12 key or the in-app button to capture
+---
 
 ## 📋 Prerequisites
 
@@ -80,15 +91,9 @@ You can also launch KiwiEngine from within RenderDoc:
 | **MSVC Toolchain** | v143+ | Installed with VS2022 "Desktop development with C++" workload |
 | **CMake** | 3.20+ | Bundled with VS2022, or install separately |
 | **Windows SDK** | 10.0.19041+ | Includes d3d11, d3d12, d3dcompiler, dxgi headers and libs |
-| **RenderDoc** | 1.6+ (optional) | For frame capture and GPU debugging |
+| **RenderDoc** | 1.6+ *(optional)* | For frame capture and GPU debugging |
 
-### Installing Visual Studio Workloads
-
-If you don't have the required components, open **Visual Studio Installer** and ensure these workloads/components are installed:
-
-1. ✅ **Desktop development with C++**
-2. ✅ **Windows 10/11 SDK** (any version ≥ 10.0.19041)
-3. ✅ **C++ CMake tools for Windows** (optional — only if you want to use CMake from VS)
+---
 
 ## 🔨 Build Instructions
 
@@ -107,7 +112,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 # Build Release
 cmake --build . --config Release
 
-# Build Debug (with debug symbols, slower)
+# Build Debug (with debug symbols)
 cmake --build . --config Debug
 ```
 
@@ -117,47 +122,46 @@ The executable will be at: `build/bin/KiwiEngine.exe`
 
 1. Open Visual Studio 2022
 2. **File → Open → CMake...** → select `KiwiEngine/CMakeLists.txt`
-3. Wait for CMake to configure (watch the Output window)
+3. Wait for CMake to configure
 4. Select **Release** or **Debug** from the configuration dropdown
-5. **Build → Build All** (or press `Ctrl+Shift+B`)
-6. **Debug → Start Without Debugging** (or press `Ctrl+F5`)
+5. **Build → Build All** (`Ctrl+Shift+B`)
+6. **Debug → Start Without Debugging** (`Ctrl+F5`)
 
-### Option 3: Generate and Open .sln
+### Option 3: Open .sln
 
 ```powershell
 cd KiwiEngine/build
 cmake .. -G "Visual Studio 17 2022" -A x64
+# Open build/KiwiEngine.sln in Visual Studio
 ```
 
-Then open `build/KiwiEngine.sln` in Visual Studio and build from there.
+---
 
 ## 🚀 Running
-
-Simply run the built executable:
 
 ```powershell
 ./build/bin/KiwiEngine.exe
 ```
 
-A 1280×720 window will appear showing a **3D scene editor** with Phong lighting. You can:
+A 1280×720 window opens showing a 3D scene editor. You can:
 
 - **Switch RHI**: Menu bar → Rendering → RHI → Direct3D 11 / Direct3D 12
-- **Add objects**: Scene Panel → Placer tab → Click Cube/Sphere/Cylinder/Floor
-- **Select objects**: Click in the viewport or select from the object list — a 3-axis translation gizmo appears on the selected object
-- **Move objects**: Drag the gizmo axes (red=X, green=Y, blue=Z) to translate objects; the active axis turns yellow while dragging
-- **Edit transforms**: Scene Panel → Detail tab → Drag Position/Rotation/Scale
-- **Edit colors**: Scene Panel → Detail tab → Color picker
-- **Change shader**: Scene Panel → Detail tab → Shader dropdown (Default, Unlit, NormalVis, or any custom `.hlsl`)
-- **Capture frames**: Click the capture button (top-right) — auto-opens in RenderDoc
-- **Save/Load scenes**: Scene Panel → Save/Load buttons (JSON format)
+- **Add objects**: Placer tab → Cube / Sphere / Cylinder / Floor / Post Process
+- **Add lights**: Placer tab → Directional Light / Point Light
+- **Add camera**: Placer tab → Camera
+- **Select objects**: Click in viewport or select from object list
+- **Move objects**: Drag gizmo axes (red=X, green=Y, blue=Z)
+- **Edit properties**: Detail tab → Position / Rotation / Scale / Color / Shader / FOV / Light settings
+- **Main Camera**: Detail tab → toggle Main Camera checkbox (mutual exclusion)
+- **Post-Processing**: Detail tab → Add materials, reorder, adjust intensity, enable/disable
+- **Capture frames**: Click 🔵 button (top-right) — auto-opens in RenderDoc
+- **Save/Load**: Scene Panel → Save / Load buttons (JSON format)
 
-No external assets, textures, or config files are needed — everything (including shaders) is embedded in the source code.
+---
 
 ## ⚙️ Engine Configuration
 
-KiwiEngine uses an INI-based configuration system via a singleton `EngineConfig` class. The default config file is `Config/DefaultEngine.ini`.
-
-### Config File Format
+KiwiEngine uses an INI-based configuration system via a singleton `EngineConfig` class.
 
 ```ini
 [RenderDoc]
@@ -176,170 +180,198 @@ Height=720
 Title=Kiwi Engine - Scene Editor
 ```
 
-### Using in Code
+Config file auto-discovery: `exe/Config/` → `../../Config/` → `exe/`
+
+### Usage in Code
 
 ```cpp
 #include "Core/EngineConfig.h"
 
 auto& config = Kiwi::EngineConfig::Get();
-config.LoadDefaultConfig();  // Auto-finds Config/DefaultEngine.ini
+config.LoadDefaultConfig();
 
-// Read values (with defaults if not found)
 std::string path = config.GetString("RenderDoc", "DllPath", "");
 int width        = config.GetInt("Window", "Width", 1280);
 bool vsync       = config.GetBool("Rendering", "VSync", true);
-float fov        = config.GetFloat("Camera", "FOV", 45.0f);
-
-// Set values at runtime (in-memory only)
-config.SetBool("Debug", "ShowFPS", true);
-
-// Save modified config
-config.Save("Config/DefaultEngine.ini");
 ```
+
+---
 
 ## 🎨 Custom Shaders
 
-KiwiEngine uses a file-based shader system. To add a new shader:
+### Scene Shaders
 
-1. Create a `.hlsl` file in the `Shaders/` folder (e.g. `MyShader.hlsl`)
-2. The file must contain both a vertex shader and pixel shader with entry points `VSMain` and `PSMain`
-3. Use the same constant buffer layout as the built-in shaders:
-   ```hlsl
-   cbuffer Constants : register(b0)
-   {
-       row_major float4x4 g_World;
-       row_major float4x4 g_View;
-       row_major float4x4 g_Projection;
-       float4 g_ObjectColor;
-       float  g_Selected;
-       float3 g_Padding;
-   };
-   ```
-4. Rebuild the project — the shader will be automatically copied to the output directory
-5. Run the engine — select an object, go to Detail tab, and choose your shader from the dropdown
+Create a `.hlsl` file in `Shaders/` with entry points `VSMain` and `PSMain`:
 
-**Built-in shaders:**
-| Shader | Description |
-|---|---|
-| **Default** | Phong lighting (Lambert diffuse + Blinn-Phong specular) — built-in, always available |
-| **Unlit** | Pure color output, no lighting calculations |
-| **Wireframe** | Normal visualization — maps world-space normals to RGB colors |
+```hlsl
+cbuffer Constants : register(b0)
+{
+    row_major float4x4 g_World;
+    row_major float4x4 g_View;
+    row_major float4x4 g_Projection;
+    float4 g_ObjectColor;
+    float  g_Selected;
+    int    g_NumLights;
+    float2 g_Padding;
+    float3 g_CameraPos;
+    float  g_CameraPadding;
+    // GPULightData g_Lights[8];
+};
+```
+
+### Post-Process Shaders
+
+Create a `.hlsl` file in `PostProcessShaders/` with entry point `PSMain`:
+
+```hlsl
+cbuffer PostProcessCB : register(b0)
+{
+    float ScreenWidth;
+    float ScreenHeight;
+    float Intensity;
+    float Time;
+};
+
+Texture2D g_InputTexture : register(t0);
+SamplerState g_Sampler : register(s0);
+
+float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
+{
+    float4 color = g_InputTexture.Sample(g_Sampler, uv);
+    // Your effect here
+    return color;
+}
+```
+
+---
+
+## 🔍 RenderDoc Integration
+
+- **Auto-Attach**: Loaded at startup before any graphics device creation
+- **One-Click Capture**: 🔵 button in top-right corner
+- **Visual Feedback**: Orange during capture, hover shows count
+- **Zero Configuration**: Just run — RenderDoc is detected automatically
+
+**Custom DLL Path** (`Config/DefaultEngine.ini`):
+```ini
+[RenderDoc]
+DllPath=D:\Tools\RenderDoc\renderdoc.dll
+```
+
+DLL search priority: Already loaded → Config DllPath → `C:\Program Files\RenderDoc\` → `C:\Program Files (x86)\RenderDoc\` → PATH
+
+---
 
 ## 📁 Project Structure
 
 ```
 KiwiEngine/
-├── CMakeLists.txt              # Build configuration
+├── CMakeLists.txt                    # Build configuration (C++17, CMake 3.20+)
 ├── Config/
-│   └── DefaultEngine.ini       # Default engine settings (RenderDoc, rendering, window)
+│   └── DefaultEngine.ini             # Engine settings (RenderDoc, rendering, window)
 ├── include/
 │   ├── RHI/
-│   │   ├── RHI.h               # Abstract RHI interfaces (Device, Context, SwapChain, Buffer...)
-│   │   ├── RHITypes.h          # Type definitions (Format, BufferDesc, Viewport...)
-│   │   ├── DX11/
-│   │   │   ├── DX11Headers.h   # Centralized DX11/DXGI includes
-│   │   │   ├── DX11Utils.h     # Format conversion utilities
-│   │   │   ├── DX11Resources.h # DX11 resource implementations
-│   │   │   └── DX11Device.h    # DX11 Device/Context/SwapChain declarations
-│   │   ├── DX12/
-│   │   │   ├── DX12Headers.h   # Centralized DX12 includes
-│   │   │   └── DX12Device.h    # DX12 Device/Context/SwapChain declarations
-│   │   └── Vulkan/
-│   │       ├── VulkanHeaders.h # Vulkan API includes
-│   │       └── VulkanDevice.h  # Vulkan Device/Context/SwapChain declarations
+│   │   ├── RHI.h                     # Abstract interfaces (Device, Context, SwapChain, Buffer)
+│   │   ├── RHITypes.h                # Types (Format, BindFlags, ResourceState, BufferDesc)
+│   │   ├── DX11/                     # DX11 headers & implementation declarations
+│   │   ├── DX12/                     # DX12 headers & implementation declarations
+│   │   └── Vulkan/                   # Vulkan headers & implementation declarations
 │   ├── Core/
-│   │   ├── Window.h            # Win32 window wrapper
-│   │   ├── Application.h       # Application framework (init, update, render loop)
-│   │   └── EngineConfig.h      # Singleton INI-based configuration system
+│   │   ├── Window.h                  # Win32 window wrapper
+│   │   ├── Application.h             # App framework (init, loop, RHI switching)
+│   │   └── EngineConfig.h            # Singleton INI config system
 │   ├── Debug/
-│   │   └── RenderDocIntegration.h  # RenderDoc In-App API wrapper
+│   │   └── RenderDocIntegration.h    # RenderDoc In-App API wrapper
 │   ├── Math/
-│   │   └── Math.h              # Math library (Vec2/3/4, Mat4, Perspective, LookAt)
+│   │   └── Math.h                    # Vec2/3/4, Mat4, projections, LookAt
 │   └── Scene/
-│       ├── Mesh.h              # Mesh data (vertices, indices)
-│       ├── SceneObject.h       # Scene object with transform, material, and shader reference
-│       ├── Scene.h             # Scene management and serialization
-│       ├── ShaderLibrary.h     # Shader library — scan, compile, and manage multiple shaders
-│       └── Shaders.h           # Embedded HLSL shaders (built-in default, compiled at runtime)
+│       ├── Component.h               # Base Component class (Transform, EComponentType)
+│       ├── MeshComponent.h           # Mesh + Color + Shader reference
+│       ├── CameraComponent.h         # Camera (Perspective/Ortho, FOV, MainCamera)
+│       ├── LightComponent.h          # Directional & Point light components
+│       ├── PostProcessComponent.h    # Post-process materials container
+│       ├── SceneObject.h             # Entity with component list
+│       ├── Scene.h                   # Scene management & serialization
+│       ├── Mesh.h                    # Mesh data structure
+│       ├── Shaders.h                 # Embedded HLSL & CB layouts
+│       ├── ShaderLibrary.h           # File-based shader scanning & compilation
+│       ├── PostProcessShaders.h      # Post-process shader definitions (fullscreen VS)
+│       └── PostProcessShaderLibrary.h # Post-process shader scanning & compilation
 ├── src/
-│   ├── main.cpp                # Entry point — scene editor with ImGui UI
-│   ├── Core/
-│   │   ├── Window.cpp          # Win32 window implementation
-│   │   ├── Application.cpp     # App framework, message loop, RHI switching
-│   │   └── EngineConfig.cpp    # INI parser, config loading/saving
-│   ├── RHI/
-│   │   ├── DX11Device.cpp      # DX11 backend implementation
-│   │   ├── DX12Device.cpp      # DX12 backend implementation
-│   │   └── VulkanDevice.cpp    # Vulkan backend implementation (WIP)
-│   ├── Debug/
-│   │   └── RenderDocIntegration.cpp  # RenderDoc runtime loading and capture API
-│   └── Scene/
-│       ├── Mesh.cpp            # Procedural mesh generation (Cube, Sphere, Cylinder, Floor)
-│       └── Scene.cpp           # Scene serialization (JSON)
-├── Shaders/                    # HLSL shader files (drop new .hlsl here to add shaders)
-│   ├── Default.hlsl            # Phong lighting (Lambert + Blinn-Phong)
-│   ├── Unlit.hlsl              # Pure color, no lighting
-│   └── Wireframe.hlsl          # Normal visualization (maps normals to RGB)
+│   ├── main.cpp                      # Entry point & scene editor (ImGui UI, rendering)
+│   ├── Core/                         # Window, Application, EngineConfig implementations
+│   ├── RHI/                          # DX11, DX12, Vulkan backend implementations
+│   ├── Scene/                        # Mesh generation, Scene serialization
+│   └── Debug/                        # RenderDoc runtime loading
+├── Shaders/                          # Scene HLSL shaders (Default, Unlit, Wireframe)
+├── PostProcessShaders/               # Post-process HLSL shaders (Grayscale, Vignette)
 ├── third_party/
-│   ├── imgui/                  # Dear ImGui v1.91.8 (DX11 + DX12 + Win32 backends)
-│   ├── renderdoc/
-│   │   └── renderdoc_app.h     # RenderDoc In-App API header (MIT License)
-│   └── vulkan-headers/         # Vulkan SDK headers (Khronos)
+│   ├── imgui/                        # Dear ImGui v1.91.8
+│   ├── renderdoc/                    # RenderDoc In-App API header
+│   └── vulkan-headers/               # Vulkan SDK headers
 └── tools/
-    └── compile_shaders.mjs     # GLSL → SPIR-V shader compiler (for Vulkan backend)
+    └── compile_shaders.mjs           # GLSL → SPIR-V compiler (Vulkan)
 ```
+
+---
 
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────┐
-│         Application / Scene          │  ← 100% backend-agnostic
-│  (zero DX11/DX12 includes or casts)  │     (uses only RHI interfaces)
-├──────────────────────────────────────┤
-│       Debug / RenderDoc Integration  │  ← One-click frame capture
-├──────────────────────────────────────┤
-│          RHI Abstract Layer          │  ← RHIDevice, RHICommandContext,
-│                                      │     RHISwapChain, RHIBuffer...
-├────────────┬────────────┬────────────┤
-│   DX11     │   DX12     │  Vulkan    │  ← Backend implementations
-│ (active)   │ (active)   │   (WIP)    │     (all specifics hidden here)
-└────────────┴────────────┴────────────┘
+┌──────────────────────────────────────────┐
+│          Application / Scene Editor      │  ← 100% backend-agnostic
+│   (zero DX11/DX12 includes or casts)     │
+├──────────────────────────────────────────┤
+│   Component System                       │  ← Mesh, Camera, Light, PostProcess
+│   (SceneObject → vector<Component>)      │
+├──────────────────────────────────────────┤
+│   Shader Libraries                       │  ← Scene shaders + Post-process shaders
+│   (file-based, compiled at runtime)      │
+├──────────────────────────────────────────┤
+│   Debug / RenderDoc Integration          │  ← One-click frame capture
+├──────────────────────────────────────────┤
+│          RHI Abstract Layer              │  ← RHIDevice, RHICommandContext,
+│                                          │     RHISwapChain, RHIBuffer...
+├──────────────┬──────────────┬────────────┤
+│    DX11      │    DX12      │  Vulkan    │  ← Backend implementations
+│  (active)    │  (active)    │   (WIP)    │
+└──────────────┴──────────────┴────────────┘
 ```
 
 ### Key RHI Virtual Methods
 
 | Interface | Method | Purpose |
 |---|---|---|
-| `RHIDevice` | `CompileShader()` | Compile HLSL → shader blob (backend handles D3DCompile details) |
-| `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: full PSO creation; DX11: lightweight wrapper |
-| `RHIDevice` | `InitImGui()` / `ShutdownImGui()` | Backend-specific ImGui initialization/cleanup |
-| `RHIDevice` | `ImGuiNewFrame()` / `ImGuiRenderDrawData()` | Per-frame ImGui rendering (each backend uses its own ImGui impl) |
-| `RHICommandContext` | `BeginFrame()` | DX12: Reset + RootSig + DescriptorHeaps + Barrier; DX11: no-op |
-| `RHICommandContext` | `EndFrame()` | DX12: BackBuffer → Present barrier; DX11: no-op |
+| `RHIDevice` | `CompileShader()` | Compile HLSL → shader blob (backend handles internals) |
+| `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: full PSO; DX11: lightweight wrapper |
+| `RHIDevice` | `CreateTexture()` / `CreateTextureView()` | Create textures with bind flags (SRV, RTV, DSV) |
+| `RHIDevice` | `InitImGui()` / `ImGuiNewFrame()` / `ImGuiRenderDrawData()` | Backend-specific ImGui lifecycle |
+| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: full frame setup/teardown; DX11: no-op |
+| `RHICommandContext` | `SetShaderResourceView()` | Bind SRV to pixel shader slot |
+| `RHICommandContext` | `ResourceBarrier()` | DX12: state transitions; DX11: no-op |
 
 ### Adding a New Backend
 
-The RHI layer provides a unified interface. To add a new backend:
-
 1. Create `include/RHI/<API>/` and `src/RHI/<API>Device.cpp`
-2. Implement all abstract interfaces from `RHI.h`:
-   - `RHIDevice`: `CreateBuffer`, `CreateTexture`, `CompileShader`, `CreateGraphicsPipelineState`, `InitImGui`, `ShutdownImGui`, `ImGuiNewFrame`, `ImGuiRenderDrawData`
-   - `RHICommandContext`: `SetRenderTargets`, `Draw`, `DrawIndexed`, `BeginFrame`, `EndFrame`, etc.
+2. Implement all abstract interfaces from `RHI.h`
 3. Add a new case in the `CreateRHI()` factory function
-4. The `RHI_API_TYPE` enum already has `DX11`, `DX12`, and `VULKAN` defined
-5. **No changes needed** in `main.cpp`, `Application.cpp`, `ShaderLibrary.h`, or any scene code — they only talk to the abstract interfaces
+4. **No changes needed** in `main.cpp`, `Application.cpp`, or any scene code
+
+---
 
 ## 🔧 Troubleshooting
 
 | Problem | Solution |
 |---|---|
-| `cmake` not found | Add CMake to PATH, or use the one bundled with VS2022 at `C:\Program Files\Microsoft Visual Studio\2022\<Edition>\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin` |
-| Missing Windows SDK | Install via Visual Studio Installer → Individual components → Windows 10/11 SDK |
-| Linker errors (d3d11.lib) | Ensure Windows SDK is installed and CMake detected it correctly |
-| Black window (no cube) | Check console output for errors. Ensure your GPU supports DirectX 11 Feature Level 11.0 |
-| C4819 compiler warning | Source files contain Chinese comments; harmless — does not affect build or runtime |
-| RenderDoc not detected | Install RenderDoc to `C:\Program Files\RenderDoc\`, set `DllPath` in `Config/DefaultEngine.ini`, or launch KiwiEngine from RenderDoc UI |
-| Frame capture not working | Ensure RenderDoc is loaded before graphics device creation (the engine handles this automatically) |
+| `cmake` not found | Add CMake to PATH, or use VS2022's bundled CMake |
+| Missing Windows SDK | Install via VS Installer → Individual components → Windows 10/11 SDK |
+| Linker errors (d3d11.lib) | Ensure Windows SDK is installed and detected |
+| Black window | Check console for errors; ensure GPU supports DX11 Feature Level 11.0 |
+| C4819 compiler warning | Source files with Chinese comments — harmless |
+| RenderDoc not detected | Set `DllPath` in `Config/DefaultEngine.ini` or launch from RenderDoc UI |
+| Post-process not rendering | Ensure a PostProcess object is in the scene with at least one enabled material |
+
+---
 
 ## 📝 License
 

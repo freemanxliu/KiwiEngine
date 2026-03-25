@@ -166,14 +166,25 @@ namespace Kiwi
             throw std::runtime_error("Failed to create DX12 fence");
         m_FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
-        // Create SRV heap for ImGui (1 descriptor)
+        // Create SRV heap for ImGui + post-process (16 descriptors)
         D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-        srvHeapDesc.NumDescriptors = 1;
+        srvHeapDesc.NumDescriptors = 16;
         srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         hr = m_Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_SRVHeap));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 SRV descriptor heap");
+        m_SRVDescriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+        // Create offscreen RTV heap (for post-process render targets)
+        D3D12_DESCRIPTOR_HEAP_DESC offscreenRTVDesc = {};
+        offscreenRTVDesc.NumDescriptors = 8;
+        offscreenRTVDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        offscreenRTVDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        hr = m_Device->CreateDescriptorHeap(&offscreenRTVDesc, IID_PPV_ARGS(&m_OffscreenRTVHeap));
+        if (FAILED(hr))
+            throw std::runtime_error("Failed to create DX12 offscreen RTV descriptor heap");
+        m_OffscreenRTVDescriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         // Create DSV heap
         D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
@@ -202,18 +213,48 @@ namespace Kiwi
 
     void DX12Device::CreateRootSignature()
     {
-        // Simple root signature: 1 root CBV at b0
-        D3D12_ROOT_PARAMETER rootParams[1] = {};
+        // Root parameter 0: CBV at b0 (constant buffer)
+        // Root parameter 1: Descriptor table with 1 SRV at t0 (for post-process input texture)
+        D3D12_DESCRIPTOR_RANGE srvRange = {};
+        srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        srvRange.NumDescriptors = 1;
+        srvRange.BaseShaderRegister = 0;
+        srvRange.RegisterSpace = 0;
+        srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+        D3D12_ROOT_PARAMETER rootParams[2] = {};
+        // Slot 0: CBV
         rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParams[0].Descriptor.ShaderRegister = 0;
         rootParams[0].Descriptor.RegisterSpace = 0;
         rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        // Slot 1: SRV descriptor table
+        rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[1].DescriptorTable.pDescriptorRanges = &srvRange;
+        rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+        // Static sampler for post-process (linear clamp at s0)
+        D3D12_STATIC_SAMPLER_DESC staticSampler = {};
+        staticSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        staticSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        staticSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        staticSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        staticSampler.MipLODBias = 0.0f;
+        staticSampler.MaxAnisotropy = 1;
+        staticSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        staticSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+        staticSampler.MinLOD = 0.0f;
+        staticSampler.MaxLOD = D3D12_FLOAT32_MAX;
+        staticSampler.ShaderRegister = 0;
+        staticSampler.RegisterSpace = 0;
+        staticSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
         D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
-        rootSigDesc.NumParameters = 1;
+        rootSigDesc.NumParameters = 2;
         rootSigDesc.pParameters = rootParams;
-        rootSigDesc.NumStaticSamplers = 0;
-        rootSigDesc.pStaticSamplers = nullptr;
+        rootSigDesc.NumStaticSamplers = 1;
+        rootSigDesc.pStaticSamplers = &staticSampler;
         rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
         ComPtr<ID3DBlob> signature;
@@ -359,8 +400,13 @@ namespace Kiwi
         resDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
         resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
+        // 渲染目标纹理需要 ALLOW_RENDER_TARGET 标志
+        if (desc.BindFlags & TEXTURE_BIND_RENDER_TARGET)
+            resDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
         D3D12_CLEAR_VALUE* clearValue = nullptr;
         D3D12_CLEAR_VALUE depthClear = {};
+        D3D12_CLEAR_VALUE rtClear = {};
 
         // Depth stencil
         if (desc.Format == EFormat::D24_UNORM_S8_UINT || desc.Format == EFormat::D32_FLOAT)
@@ -371,15 +417,28 @@ namespace Kiwi
             depthClear.DepthStencil.Stencil = 0;
             clearValue = &depthClear;
         }
+        else if (desc.BindFlags & TEXTURE_BIND_RENDER_TARGET)
+        {
+            // 渲染目标的优化清除值
+            rtClear.Format = dxgiFormat;
+            rtClear.Color[0] = 0.0f;
+            rtClear.Color[1] = 0.0f;
+            rtClear.Color[2] = 0.0f;
+            rtClear.Color[3] = 1.0f;
+            clearValue = &rtClear;
+        }
+
+        // 确定初始资源状态
+        D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COMMON;
+        if (desc.Format == EFormat::D24_UNORM_S8_UINT || desc.Format == EFormat::D32_FLOAT)
+            initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
         ComPtr<ID3D12Resource> resource;
         HRESULT hr = m_Device->CreateCommittedResource(
             &heapProps,
             D3D12_HEAP_FLAG_NONE,
             &resDesc,
-            (desc.Format == EFormat::D24_UNORM_S8_UINT || desc.Format == EFormat::D32_FLOAT)
-                ? D3D12_RESOURCE_STATE_DEPTH_WRITE
-                : D3D12_RESOURCE_STATE_COMMON,
+            initialState,
             clearValue,
             IID_PPV_ARGS(&resource));
         if (FAILED(hr))
@@ -397,6 +456,54 @@ namespace Kiwi
 
         switch (heapType)
         {
+        case EDescriptorHeapType::RTV:
+        {
+            D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_OffscreenRTVHeap->GetCPUDescriptorHandleForHeapStart();
+            rtvHandle.ptr += (SIZE_T)m_OffscreenRTVAllocated * m_OffscreenRTVDescriptorSize;
+            m_OffscreenRTVAllocated++;
+
+            D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+            rtvDesc.Format = DX12ToDXGIFormat(
+                (format != EFormat::Unknown) ? format : texture->GetDesc().Format);
+            rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+            rtvDesc.Texture2D.MipSlice = (mipSlice >= 0) ? (UINT)mipSlice : 0;
+
+            m_Device->CreateRenderTargetView(resource, &rtvDesc, rtvHandle);
+            return std::make_unique<DX12TextureView>(rtvHandle);
+        }
+        case EDescriptorHeapType::CBV_SRV_UAV:
+        {
+            // Allocate from SRV heap (non-shader-visible CPU handle for source copy)
+            // We create a separate non-shader-visible heap for the source descriptor
+            D3D12_DESCRIPTOR_HEAP_DESC cpuSrvHeapDesc = {};
+            cpuSrvHeapDesc.NumDescriptors = 1;
+            cpuSrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            cpuSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE; // CPU-only
+
+            ComPtr<ID3D12DescriptorHeap> cpuSrvHeap;
+            HRESULT hr = m_Device->CreateDescriptorHeap(&cpuSrvHeapDesc, IID_PPV_ARGS(&cpuSrvHeap));
+            if (FAILED(hr))
+                throw std::runtime_error("Failed to create DX12 SRV CPU descriptor heap");
+
+            D3D12_CPU_DESCRIPTOR_HANDLE srvHandle = cpuSrvHeap->GetCPUDescriptorHandleForHeapStart();
+
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+            srvDesc.Format = DX12ToDXGIFormat(
+                (format != EFormat::Unknown) ? format : texture->GetDesc().Format);
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
+            srvDesc.Texture2D.MostDetailedMip = 0;
+
+            m_Device->CreateShaderResourceView(resource, &srvDesc, srvHandle);
+
+            // Store the CPU heap so it doesn't get destroyed
+            // We return a DX12TextureView that holds the CPU descriptor handle
+            // The SetShaderResourceView will copy from this handle to the shader-visible heap
+            auto view = std::make_unique<DX12TextureView>(srvHandle);
+            view->SetSRVHeap(std::move(cpuSrvHeap));
+            return view;
+        }
         case EDescriptorHeapType::DSV:
         {
             D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_DSVHeap->GetCPUDescriptorHandleForHeapStart();
@@ -503,20 +610,29 @@ namespace Kiwi
         psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
         psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
 
-        const auto& elements = dx12InputLayout->GetElements();
-        psoDesc.InputLayout.pInputElementDescs = elements.data();
-        psoDesc.InputLayout.NumElements = (UINT)elements.size();
+        // inputLayout 可以为 nullptr（例如后处理全屏三角形使用 SV_VertexID，无需顶点输入）
+        if (dx12InputLayout)
+        {
+            const auto& elements = dx12InputLayout->GetElements();
+            psoDesc.InputLayout.pInputElementDescs = elements.data();
+            psoDesc.InputLayout.NumElements = (UINT)elements.size();
+        }
+        else
+        {
+            psoDesc.InputLayout.pInputElementDescs = nullptr;
+            psoDesc.InputLayout.NumElements = 0;
+        }
 
         psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+        psoDesc.RasterizerState.CullMode = dx12InputLayout ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
         psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
         psoDesc.RasterizerState.DepthClipEnable = TRUE;
 
         psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
         psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
-        psoDesc.DepthStencilState.DepthEnable = TRUE;
-        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        psoDesc.DepthStencilState.DepthEnable = (dx12InputLayout != nullptr); // 后处理不需要深度测试
+        psoDesc.DepthStencilState.DepthWriteMask = (dx12InputLayout != nullptr) ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
         psoDesc.DepthStencilState.StencilEnable = FALSE;
 
@@ -524,7 +640,7 @@ namespace Kiwi
         psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         psoDesc.NumRenderTargets = 1;
         psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-        psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        psoDesc.DSVFormat = dx12InputLayout ? DXGI_FORMAT_D24_UNORM_S8_UINT : DXGI_FORMAT_UNKNOWN;
         psoDesc.SampleDesc.Count = 1;
 
         ComPtr<ID3D12PipelineState> pso;
@@ -739,6 +855,27 @@ namespace Kiwi
     {
         auto dxBuffer = static_cast<DX12Buffer*>(buffer);
         m_CommandList->SetGraphicsRootConstantBufferView(slot, dxBuffer->GetGPUVirtualAddress());
+    }
+
+    void DX12CommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)
+    {
+        if (srv && m_SRVHeap)
+        {
+            // Use descriptor at index (slot + 1) in SRV heap (index 0 is reserved for ImGui)
+            D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = m_SRVHeap->GetGPUDescriptorHandleForHeapStart();
+            uint32_t descriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            gpuHandle.ptr += (SIZE_T)(slot + 1) * descriptorSize;
+
+            // Copy the SRV descriptor to the shader-visible heap
+            D3D12_CPU_DESCRIPTOR_HANDLE srcHandle;
+            srcHandle.ptr = (SIZE_T)srv->GetNativeHandle();
+            D3D12_CPU_DESCRIPTOR_HANDLE dstHandle = m_SRVHeap->GetCPUDescriptorHandleForHeapStart();
+            dstHandle.ptr += (SIZE_T)(slot + 1) * descriptorSize;
+            m_Device->CopyDescriptorsSimple(1, dstHandle, srcHandle, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+            // Set the descriptor table at root parameter 1
+            m_CommandList->SetGraphicsRootDescriptorTable(1, gpuHandle);
+        }
     }
 
     void DX12CommandContext::SetSampler(uint32_t slot, RHISampler* sampler) { /* TODO */ }

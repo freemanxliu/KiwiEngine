@@ -1,9 +1,16 @@
 #pragma once
 
 #include "Math/Math.h"
-#include "Scene/Mesh.h"
+#include "Scene/Component.h"
+#include "Scene/MeshComponent.h"
+#include "Scene/CameraComponent.h"
+#include "Scene/LightComponent.h"
+#include "Scene/PostProcessComponent.h"
 #include <string>
 #include <cstdint>
+#include <vector>
+#include <memory>
+#include <algorithm>
 
 namespace Kiwi
 {
@@ -38,40 +45,115 @@ namespace Kiwi
         return EPrimitiveType::Cube;
     }
 
-    // Transform 组件
-    struct Transform
+    // ============================================================
+    // SceneObject — entity in the scene, holds components
+    // ============================================================
+    struct SceneObject
     {
-        Vec3 Position = { 0.0f, 0.0f, 0.0f };
-        Vec3 Rotation = { 0.0f, 0.0f, 0.0f }; // Euler angles in degrees
-        Vec3 Scale    = { 1.0f, 1.0f, 1.0f };
+        uint32_t    ID = 0;
+        std::string Name;
+
+        // ---- Component storage ----
+        std::vector<std::unique_ptr<Component>> Components;
+
+        // Runtime state (not serialized)
+        bool Selected = false;
+
+        // ---- Component management ----
+
+        // Add a component (takes ownership). Returns raw pointer for immediate use.
+        template <typename T, typename... Args>
+        T* AddComponent(Args&&... args)
+        {
+            auto comp = std::make_unique<T>(std::forward<Args>(args)...);
+            comp->Owner = this;
+            T* ptr = comp.get();
+            Components.push_back(std::move(comp));
+            return ptr;
+        }
+
+        // Get first component of given type. Returns nullptr if not found.
+        template <typename T>
+        T* GetComponent() const
+        {
+            for (auto& comp : Components)
+            {
+                T* casted = dynamic_cast<T*>(comp.get());
+                if (casted) return casted;
+            }
+            return nullptr;
+        }
+
+        // Get all components of given type
+        template <typename T>
+        std::vector<T*> GetComponents() const
+        {
+            std::vector<T*> result;
+            for (auto& comp : Components)
+            {
+                T* casted = dynamic_cast<T*>(comp.get());
+                if (casted) result.push_back(casted);
+            }
+            return result;
+        }
+
+        // Remove first component of given type
+        template <typename T>
+        bool RemoveComponent()
+        {
+            for (auto it = Components.begin(); it != Components.end(); ++it)
+            {
+                if (dynamic_cast<T*>(it->get()))
+                {
+                    Components.erase(it);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Check if object has a component of given type
+        template <typename T>
+        bool HasComponent() const
+        {
+            return GetComponent<T>() != nullptr;
+        }
+
+        // ---- Convenience accessors ----
+        // These provide backward-compatible access to commonly used components
+
+        // Get the "primary" transform: first component's transform (usually MeshComponent or CameraComponent)
+        // Every SceneObject should have at least one component.
+        Component* GetPrimaryComponent() const
+        {
+            return Components.empty() ? nullptr : Components[0].get();
+        }
+
+        // Convenience: get position/rotation/scale from primary component
+        Vec3& GetPosition()
+        {
+            static Vec3 dummy;
+            auto* comp = GetPrimaryComponent();
+            return comp ? comp->Position : dummy;
+        }
+        Vec3& GetRotation()
+        {
+            static Vec3 dummy;
+            auto* comp = GetPrimaryComponent();
+            return comp ? comp->Rotation : dummy;
+        }
+        Vec3& GetScale()
+        {
+            static Vec3 dummy = { 1, 1, 1 };
+            auto* comp = GetPrimaryComponent();
+            return comp ? comp->Scale : dummy;
+        }
 
         Mat4 GetWorldMatrix() const
         {
-            Mat4 scale = Mat4::Scaling(Scale.x, Scale.y, Scale.z);
-            Mat4 rotX = Mat4::RotationX(DegToRad(Rotation.x));
-            Mat4 rotY = Mat4::RotationY(DegToRad(Rotation.y));
-            Mat4 rotZ = Mat4::RotationZ(DegToRad(Rotation.z));
-            Mat4 translation = Mat4::Translation(Position.x, Position.y, Position.z);
-
-            // Scale -> RotZ -> RotX -> RotY -> Translate (row-major, left-multiply)
-            return scale * rotZ * rotX * rotY * translation;
+            auto* comp = GetPrimaryComponent();
+            return comp ? comp->GetWorldMatrix() : Mat4::Identity();
         }
-    };
-
-    // 场景物体
-    struct SceneObject
-    {
-        uint32_t       ID = 0;
-        std::string    Name;
-        EPrimitiveType PrimitiveType = EPrimitiveType::Cube;
-        Transform      TransformData;
-        Vec4           Color = { 0.8f, 0.8f, 0.8f, 1.0f }; // 物体颜色
-        std::string    ShaderName = "Default";               // 使用的 Shader 名称
-        int32_t        SortOrder = 0;                        // 渲染排序优先级（越高越先渲染）
-
-        // 运行时数据（不序列化）
-        Mesh           MeshData;
-        bool           Selected = false;
     };
 
 } // namespace Kiwi

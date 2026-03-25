@@ -38,6 +38,24 @@ namespace Kiwi
         BUFFER_USAGE_UNORDERED = 1 << 3,
     };
 
+    // 纹理绑定标志（用于 TextureDesc::BindFlags）
+    enum ETextureBindFlags
+    {
+        TEXTURE_BIND_SHADER_RESOURCE  = 1 << 0,  // 可作为 SRV 绑定
+        TEXTURE_BIND_RENDER_TARGET    = 1 << 1,  // 可作为 RTV 绑定
+        TEXTURE_BIND_UNORDERED_ACCESS = 1 << 2,  // 可作为 UAV 绑定
+    };
+
+    // 资源状态（用于 ResourceBarrier，映射到 D3D12_RESOURCE_STATES）
+    enum EResourceState : int
+    {
+        RESOURCE_STATE_COMMON              = 0,
+        RESOURCE_STATE_RENDER_TARGET       = 0x4,
+        RESOURCE_STATE_DEPTH_WRITE         = 0x10,
+        RESOURCE_STATE_PIXEL_SHADER_RESOURCE = 0x80,
+        RESOURCE_STATE_PRESENT             = 0,
+    };
+
     // 资源使用方式
     enum class EResourceUsage
     {
