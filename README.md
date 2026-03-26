@@ -23,7 +23,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **DX11 Backend** — Full DirectX 11 implementation: device, context, swap chain, shaders, buffers, pipeline state, ImGui backend.
 - **DX12 Backend** — Full DirectX 12 implementation: root signature (CBV + SRV descriptor table + static sampler), PSO, descriptor heaps (RTV/DSV/SRV/offscreen RTV), fence sync, resource barriers, upload heap buffers, ImGui backend.
 - **OpenGL Backend** — Full OpenGL 4.5 core profile implementation: WGL context creation, glad2 loader, FBO-based render targets, GLSL shader compilation and program linking, forward rendering path, ImGui OpenGL3 backend.
-- **Vulkan Backend** — Vulkan 1.2 implementation: VkInstance with validation layers, physical/logical device, swap chain (Win32 surface), render pass, framebuffers, command buffers with fence sync, descriptor pool/sets, VkPipeline creation, SPIR-V shader modules, ImGui Vulkan backend. Forward rendering path.
+- **Vulkan Backend** — Vulkan 1.2 implementation: VkInstance with validation layers, physical/logical device, swap chain (Win32 surface), render pass, framebuffers, command buffers with fence sync, descriptor pool/sets, VkPipeline creation, SPIR-V shader modules, ImGui Vulkan backend. Forward rendering path. Supports R16G16B16A16_FLOAT, R16G16_FLOAT, R32_TYPELESS depth formats.
 - **Runtime RHI Switching** — Hot-switch between DX11, DX12, OpenGL, and Vulkan at runtime via the menu bar (deferred to frame boundary, no restart needed).
 - **Dual Shader Compiler** — DX11 uses FXC (SM 5.0 → DXBC); DX12 uses DXC (SM 6.0 → DXIL) with FXC fallback; OpenGL uses driver-native GLSL compilation.
 - **Unified Shader Compilation** — `RHIDevice::CompileShader()` and `RHIDevice::CreateGraphicsPipelineState()` — each backend handles its own compilation and PSO creation internally.
@@ -146,7 +146,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Ray Picking** — Click viewport to select objects. Gizmo axes have picking priority.
 - **Mesh Generation** — Procedural primitives: Cube, Sphere, Cylinder, Floor.
 - **Built-in Math Library** — Vec2/3/4, Mat4 (with `Inverse()` via Cramer's rule for InvViewProj), perspective/orthographic projection, LookAt (left-hand coordinate system).
-- **RenderDoc Integration** — One-click frame capture (🔵 button), auto-attach at startup, auto-open in RenderDoc.
+- **RenderDoc Integration** — One-click frame capture (🔵 button), auto-attach at startup, auto-open in RenderDoc. RenderDoc is automatically skipped when default RHI is Vulkan (incompatible with NVIDIA OpenGL/Vulkan driver hooks).
 - **Engine Configuration** — INI-based singleton config (`Config/DefaultEngine.ini`) with auto-discovery.
 
 ---
@@ -339,7 +339,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 
 ## 🔍 RenderDoc Integration
 
-- **Auto-Attach**: Loaded at startup before any graphics device creation
+- **Auto-Attach**: Loaded at startup before any graphics device creation (skipped when default RHI is Vulkan)
 - **One-Click Capture**: 🔵 button in top-right corner
 - **Visual Feedback**: Orange during capture, hover shows count
 - **Zero Configuration**: Just run — RenderDoc is detected automatically
@@ -469,7 +469,7 @@ KiwiEngine/
 | `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: full PSO; DX11: lightweight wrapper; GL: linked program; VK: VkPipeline |
 | `RHIDevice` | `CreateTexture()` / `CreateTextureView()` | Create textures with bind flags (SRV, RTV, DSV) |
 | `RHIDevice` | `InitImGui()` / `ImGuiNewFrame()` / `ImGuiRenderDrawData()` | Backend-specific ImGui lifecycle |
-| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: full frame setup/teardown; VK: acquire/present with semaphores; DX11/GL: no-op |
+| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: full frame setup/teardown; VK: acquire/present with semaphores + image layout transitions; DX11/GL: no-op |
 | `RHICommandContext` | `SetShaderResourceView()` | Bind SRV to pixel shader slot |
 | `RHICommandContext` | `ResourceBarrier()` | DX12: state transitions; VK: pipeline barriers; DX11/GL: no-op |
 | `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU debug annotations for RenderDoc/PIX pass grouping |

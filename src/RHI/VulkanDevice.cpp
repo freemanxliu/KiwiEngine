@@ -779,10 +779,19 @@ namespace Kiwi
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        // Depth stencil
-        if (desc.Format == EFormat::D24_UNORM_S8_UINT || desc.Format == EFormat::D32_FLOAT)
+        if (imageInfo.format == VK_FORMAT_UNDEFINED)
         {
-            imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+            std::cerr << "[Vulkan] CreateTexture: unsupported format, skipping" << std::endl;
+            return nullptr;
+        }
+
+        // Depth formats (including R32_TYPELESS which maps to D32_SFLOAT)
+        bool isDepth = (desc.Format == EFormat::D24_UNORM_S8_UINT ||
+                        desc.Format == EFormat::D32_FLOAT ||
+                        desc.Format == EFormat::R32_TYPELESS);
+        if (isDepth)
+        {
+            imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         }
         else
         {
@@ -970,6 +979,7 @@ namespace Kiwi
 
     void VulkanCommandContext::Reset()
     {
+        if (m_Fence == VK_NULL_HANDLE || m_CommandBuffer == VK_NULL_HANDLE) return;
         vkWaitForFences(m_Device, 1, &m_Fence, VK_TRUE, UINT64_MAX);
         vkResetFences(m_Device, 1, &m_Fence);
         vkResetCommandBuffer(m_CommandBuffer, 0);
@@ -979,11 +989,18 @@ namespace Kiwi
 
     void VulkanCommandContext::BeginCommandBuffer()
     {
+        if (m_IsRecording) return;  // Already recording
+
         VkCommandBufferBeginInfo beginInfo = {};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-        vkBeginCommandBuffer(m_CommandBuffer, &beginInfo);
+        VkResult result = vkBeginCommandBuffer(m_CommandBuffer, &beginInfo);
+        if (result != VK_SUCCESS)
+        {
+            std::cerr << "[Vulkan] vkBeginCommandBuffer failed with code: " << result << std::endl;
+            return;
+        }
         m_IsRecording = true;
     }
 
@@ -1450,18 +1467,22 @@ namespace Kiwi
     void VulkanDevice::ShutdownImGui()
     {
         WaitIdle();
-        ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplWin32_Shutdown();
+        if (ImGui::GetCurrentContext() && ImGui::GetIO().BackendRendererUserData)
+            ImGui_ImplVulkan_Shutdown();
+        if (ImGui::GetCurrentContext() && ImGui::GetIO().BackendPlatformUserData)
+            ImGui_ImplWin32_Shutdown();
     }
 
     void VulkanDevice::ImGuiNewFrame()
     {
-        ImGui_ImplVulkan_NewFrame();
+        if (ImGui::GetIO().BackendRendererUserData)
+            ImGui_ImplVulkan_NewFrame();
         ImGui_ImplWin32_NewFrame();
     }
 
     void VulkanDevice::ImGuiRenderDrawData(RHICommandContext* ctx)
     {
+        if (!ImGui::GetIO().BackendRendererUserData) return;
         auto* vkCtx = static_cast<VulkanCommandContext*>(ctx);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vkCtx->GetCommandBuffer());
     }

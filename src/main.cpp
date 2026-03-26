@@ -376,8 +376,19 @@ public:
     KiwiEngineApp()
         : Application(
             WindowDesc{ "Kiwi Engine - Scene Editor", 1280, 720 },
-            RHIInitParams{ RHI_API_TYPE::DX11, true })
+            RHIInitParams{ GetDefaultRHIType(), true })
     {
+    }
+
+    static RHI_API_TYPE GetDefaultRHIType()
+    {
+        auto& config = Kiwi::EngineConfig::Get();
+        std::string rhi = config.GetString("Rendering", "DefaultRHI", "DX11");
+        std::cout << "[Kiwi] DefaultRHI from config: '" << rhi << "'" << std::endl;
+        if (rhi == "DX12" || rhi == "dx12")   return RHI_API_TYPE::DX12;
+        if (rhi == "OpenGL" || rhi == "opengl" || rhi == "OPENGL") return RHI_API_TYPE::OPENGL;
+        if (rhi == "Vulkan" || rhi == "vulkan" || rhi == "VULKAN") return RHI_API_TYPE::VULKAN;
+        return RHI_API_TYPE::DX11;
     }
 
     ~KiwiEngineApp()
@@ -2311,8 +2322,12 @@ private:
                         m_PendingRHISwitch = true;
                         m_PendingRHIType = RHI_API_TYPE::OPENGL;
                     }
-                    if (ImGui::MenuItem("Vulkan", nullptr,
-                        currentRHI == RHI_API_TYPE::VULKAN, currentRHI != RHI_API_TYPE::VULKAN))
+
+                    // Vulkan is incompatible with RenderDoc in-process hook (NVIDIA nvoglv64.dll conflict)
+                    bool rdocLoaded = RenderDocIntegration::Get().IsAvailable();
+                    bool canSwitchVulkan = !rdocLoaded && (currentRHI != RHI_API_TYPE::VULKAN);
+                    if (ImGui::MenuItem("Vulkan", rdocLoaded ? "(RenderDoc active)" : nullptr,
+                        currentRHI == RHI_API_TYPE::VULKAN, canSwitchVulkan))
                     {
                         m_PendingRHISwitch = true;
                         m_PendingRHIType = RHI_API_TYPE::VULKAN;
@@ -2374,6 +2389,8 @@ private:
     {
         auto& rdoc = RenderDocIntegration::Get();
         if (!rdoc.IsAvailable()) return;
+        // RenderDoc capture not supported in Vulkan mode (RenderDoc + NVIDIA Vulkan ICD conflict)
+        if (GetCurrentRHIType() == RHI_API_TYPE::VULKAN) return;
 
         float menuBarHeight = ImGui::GetFrameHeight();
         float windowWidth = (float)GetWindow()->GetWidth();
@@ -2615,7 +2632,11 @@ private:
             ImGui::Text("FPS: %.1f (%.2f ms)", io.Framerate, 1000.0f / io.Framerate);
 
             // RHI backend
-            const char* rhiName = (GetCurrentRHIType() == RHI_API_TYPE::DX11) ? "DX11" : "DX12";
+            auto rhiType = GetCurrentRHIType();
+            const char* rhiName = (rhiType == RHI_API_TYPE::DX11) ? "DX11" :
+                                  (rhiType == RHI_API_TYPE::DX12) ? "DX12" :
+                                  (rhiType == RHI_API_TYPE::OPENGL) ? "OpenGL" :
+                                  (rhiType == RHI_API_TYPE::VULKAN) ? "Vulkan" : "Unknown";
             ImGui::Text("RHI: %s", rhiName);
 
             ImGui::Separator();
@@ -2946,7 +2967,11 @@ private:
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
         // Show current RHI
-        const char* rhiName = (GetCurrentRHIType() == RHI_API_TYPE::DX11) ? "Direct3D 11" : "Direct3D 12";
+        auto rhiType = GetCurrentRHIType();
+        const char* rhiName = (rhiType == RHI_API_TYPE::DX11) ? "Direct3D 11" :
+                              (rhiType == RHI_API_TYPE::DX12) ? "Direct3D 12" :
+                              (rhiType == RHI_API_TYPE::OPENGL) ? "OpenGL" :
+                              (rhiType == RHI_API_TYPE::VULKAN) ? "Vulkan" : "Unknown";
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "RHI: %s", rhiName);
         ImGui::Separator();
 
@@ -3961,7 +3986,7 @@ int main()
     {
         std::cout << "========================================" << std::endl;
         std::cout << "  Kiwi Engine - Scene Editor" << std::endl;
-        std::cout << "  RHI: Direct3D 11 / Direct3D 12" << std::endl;
+        std::cout << "  RHI: DX11 / DX12 / OpenGL / Vulkan" << std::endl;
         std::cout << "========================================" << std::endl;
         std::cout << std::endl;
 
@@ -3970,11 +3995,25 @@ int main()
         config.LoadDefaultConfig();
 
         // Initialize RenderDoc BEFORE creating any graphics device
+        // Note: RenderDoc's Vulkan hook conflicts with NVIDIA drivers (nvoglv64.dll)
+        // when both OpenGL and Vulkan are used in the same process.
+        // Skip RenderDoc if default RHI is Vulkan.
+        std::string defaultRHI = config.GetString("Rendering", "DefaultRHI", "DX11");
+        bool isVulkanDefault = (defaultRHI == "VULKAN" || defaultRHI == "Vulkan" || defaultRHI == "vulkan");
+
         auto& rdoc = Kiwi::RenderDocIntegration::Get();
-        bool rdocAvailable = rdoc.Initialize();
-        if (rdocAvailable)
+        if (!isVulkanDefault)
         {
-            std::cout << "[Kiwi] RenderDoc attached - frame capture available." << std::endl;
+            bool rdocAvailable = rdoc.Initialize();
+            if (rdocAvailable)
+            {
+                std::cout << "[Kiwi] RenderDoc attached - frame capture available." << std::endl;
+                std::cout << "[Kiwi] Note: Vulkan backend disabled when RenderDoc is active." << std::endl;
+            }
+        }
+        else
+        {
+            std::cout << "[Kiwi] Vulkan default RHI - RenderDoc skipped (incompatible)." << std::endl;
         }
         std::cout << std::endl;
 

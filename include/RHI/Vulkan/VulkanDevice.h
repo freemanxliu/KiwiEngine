@@ -17,6 +17,8 @@ namespace Kiwi
         switch (format)
         {
         case EFormat::R8G8B8A8_UNORM:     return VK_FORMAT_R8G8B8A8_UNORM;
+        case EFormat::R16G16B16A16_FLOAT:  return VK_FORMAT_R16G16B16A16_SFLOAT;
+        case EFormat::R16G16_FLOAT:        return VK_FORMAT_R16G16_SFLOAT;
         case EFormat::R32G32B32A32_FLOAT:  return VK_FORMAT_R32G32B32A32_SFLOAT;
         case EFormat::R32G32B32_FLOAT:     return VK_FORMAT_R32G32B32_SFLOAT;
         case EFormat::R32G32_FLOAT:        return VK_FORMAT_R32G32_SFLOAT;
@@ -25,6 +27,7 @@ namespace Kiwi
         case EFormat::R16_UINT:            return VK_FORMAT_R16_UINT;
         case EFormat::D24_UNORM_S8_UINT:   return VK_FORMAT_D24_UNORM_S8_UINT;
         case EFormat::D32_FLOAT:           return VK_FORMAT_D32_SFLOAT;
+        case EFormat::R32_TYPELESS:        return VK_FORMAT_D32_SFLOAT;  // Typeless → depth float
         default:                           return VK_FORMAT_UNDEFINED;
         }
     }

@@ -146,7 +146,7 @@
 - **射线拾取** — 点击视口选择物体，Gizmo 轴优先于场景物体。
 - **程序化网格** — 内置图元：立方体、球体、圆柱体、地面。
 - **内置数学库** — Vec2/3/4、Mat4（含 `Inverse()` Cramer 法则实现，用于 InvViewProj）、透视/正交投影、LookAt（左手坐标系）。
-- **RenderDoc 集成** — 一键截帧（🔵 按钮），启动时自动 attach，自动打开 RenderDoc。
+- **RenderDoc 集成** — 一键截帧（🔵 按钮），启动时自动 attach，自动打开 RenderDoc。默认 RHI 为 Vulkan 时自动跳过 RenderDoc（与 NVIDIA OpenGL/Vulkan 驱动钩子不兼容）。
 - **引擎配置** — 基于 INI 的单例配置系统（`Config/DefaultEngine.ini`），支持自动发现。
 
 ---
@@ -339,7 +339,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 
 ## 🔍 RenderDoc 集成
 
-- **自动 Attach**：在任何图形设备创建之前自动加载
+- **自动 Attach**：在任何图形设备创建之前自动加载（默认 RHI 为 Vulkan 时跳过）
 - **一键截帧**：右上角 🔵 按钮
 - **视觉反馈**：捕获时按钮变橙色，悬停显示捕获次数
 - **零配置**：直接运行即可，自动检测 RenderDoc
@@ -469,7 +469,7 @@ KiwiEngine/
 | `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: 完整 PSO；DX11: 轻量包装；GL: 链接程序 |
 | `RHIDevice` | `CreateTexture()` / `CreateTextureView()` | 创建纹理（支持 SRV、RTV、DSV 绑定标志） |
 | `RHIDevice` | `InitImGui()` / `ImGuiNewFrame()` / `ImGuiRenderDrawData()` | 后端特定的 ImGui 生命周期 |
-| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: 完整帧设置/收尾；DX11/GL: 空操作 |
+| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: 完整帧设置/收尾；VK: acquire/present + 信号量 + Image Layout 转换；DX11/GL: 空操作 |
 | `RHICommandContext` | `SetShaderResourceView()` | 绑定 SRV 到像素着色器槽位 |
 | `RHICommandContext` | `ResourceBarrier()` | DX12: 资源状态转换；DX11/GL: 空操作 |
 | `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU 调试标注，用于 RenderDoc/PIX Pass 分组 |
