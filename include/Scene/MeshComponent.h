@@ -2,6 +2,7 @@
 
 #include "Scene/Component.h"
 #include "Scene/Mesh.h"
+#include "Scene/PrimitiveType.h"
 #include <string>
 
 namespace Kiwi
@@ -24,6 +25,9 @@ namespace Kiwi
 
         // Mesh data
         Mesh MeshData;
+
+        // Primitive type used to generate this mesh (for serialization)
+        EPrimitiveType PrimitiveType = EPrimitiveType::Cube;
 
         // Rendering properties
         Vec4        Color      = { 0.8f, 0.8f, 0.8f, 1.0f }; // Object color

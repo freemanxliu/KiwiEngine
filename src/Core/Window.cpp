@@ -159,11 +159,16 @@ namespace Kiwi
             break;
 
         case WM_KEYDOWN:
+            window->m_Keys.SetKeyDown((uint8_t)wParam);
             if (wParam == VK_ESCAPE)
             {
                 window->SetShouldClose(true);
                 return 0;
             }
+            break;
+
+        case WM_KEYUP:
+            window->m_Keys.SetKeyUp((uint8_t)wParam);
             break;
 
         default:

@@ -146,11 +146,18 @@ namespace Kiwi
         if (newType == m_CurrentRHIType)
             return;
 
+        auto rhiName = [](RHI_API_TYPE t) -> const char* {
+            switch (t) {
+            case RHI_API_TYPE::DX11:   return "Direct3D 11";
+            case RHI_API_TYPE::DX12:   return "Direct3D 12";
+            case RHI_API_TYPE::OPENGL: return "OpenGL";
+            default:                   return "Unknown";
+            }
+        };
+
         std::cout << "[Kiwi] Switching RHI from "
-                  << (m_CurrentRHIType == RHI_API_TYPE::DX11 ? "Direct3D 11" : "Direct3D 12")
-                  << " to "
-                  << (newType == RHI_API_TYPE::DX11 ? "Direct3D 11" : "Direct3D 12")
-                  << "..." << std::endl;
+                  << rhiName(m_CurrentRHIType) << " to "
+                  << rhiName(newType) << "..." << std::endl;
 
         // 1. 通知子类释放 GPU 资源
         OnRHIShutdown();
@@ -208,8 +215,7 @@ namespace Kiwi
         OnRHIReady();
 
         std::cout << "[Kiwi] RHI switch complete! Now using "
-                  << (newType == RHI_API_TYPE::DX11 ? "Direct3D 11" : "Direct3D 12")
-                  << std::endl;
+                  << rhiName(newType) << std::endl;
     }
 
 } // namespace Kiwi

@@ -10,8 +10,9 @@ namespace Kiwi
     enum class RHI_API_TYPE
     {
         DX11,
-        DX12,    // 预留
-        VULKAN,  // 预留
+        DX12,
+        OPENGL,
+        VULKAN,  // Reserved
     };
 
     // 图形资源格式

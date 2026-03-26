@@ -1,4 +1,5 @@
 #include "RHI/DX11/DX11Device.h"
+#include "RHI/DXCCompiler.h"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
@@ -532,6 +533,7 @@ namespace Kiwi
         const ShaderMacro* macros,
         uint32_t macroCount)
     {
+        // DX11 always uses FXC (D3DCompile) — DXC no longer supports SM 5.0 profiles
         ComPtr<ID3DBlob> shaderBlob;
         ComPtr<ID3DBlob> errorBlob;
 
@@ -548,31 +550,20 @@ namespace Kiwi
             dxMacros = dxMacroVec.data();
         }
 
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_PACK_MATRIX_ROW_MAJOR;
 #if defined(_DEBUG)
         flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
         HRESULT hr = D3DCompile(
-            hlslSource,
-            strlen(hlslSource),
-            nullptr,
-            dxMacros,
-            nullptr,
-            entryPoint,
-            shaderModel,
-            flags,
-            0,
-            &shaderBlob,
-            &errorBlob);
+            hlslSource, strlen(hlslSource), nullptr, dxMacros, nullptr,
+            entryPoint, shaderModel, flags, 0, &shaderBlob, &errorBlob);
 
         if (FAILED(hr))
         {
             std::string errorMsg = "Shader compilation failed: ";
             if (errorBlob)
-            {
                 errorMsg += (const char*)errorBlob->GetBufferPointer();
-            }
             throw std::runtime_error(errorMsg);
         }
 
@@ -1111,6 +1102,14 @@ namespace Kiwi
                 std::unique_ptr<RHIDevice>& outDevice,
                 std::unique_ptr<RHICommandContext>& outContext);
             CreateDX12RHI(params, outDevice, outContext);
+            break;
+        }
+        case RHI_API_TYPE::OPENGL:
+        {
+            extern void CreateGLRHI(const RHIInitParams& params,
+                std::unique_ptr<RHIDevice>& outDevice,
+                std::unique_ptr<RHICommandContext>& outContext);
+            CreateGLRHI(params, outDevice, outContext);
             break;
         }
         case RHI_API_TYPE::VULKAN:

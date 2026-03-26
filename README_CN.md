@@ -2,11 +2,11 @@
 
 **[English README](README.md)**
 
-一个从零开始构建的轻量级 3D 渲染引擎与场景编辑器，基于 C++17 和 DirectX。采用**延迟渲染管线**和 G-Buffer 可视化，以及**深度 RHI（渲染硬件接口）抽象层**——应用层代码 100% 后端无关，零 `static_cast`、零 `isDX12` 分支、零 DX11/DX12 头文件引用。
+一个从零开始构建的轻量级 3D 渲染引擎与场景编辑器，基于 C++17。采用**延迟渲染管线**和 G-Buffer 可视化，以及**深度 RHI（渲染硬件接口）抽象层**，支持 **DX11、DX12 和 OpenGL** 运行时切换——应用层代码 100% 后端无关，零 `static_cast`、零 `isDX12` 分支、零后端头文件引用。
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
-![Vulkan](https://img.shields.io/badge/Vulkan-开发中-yellow)
+![OpenGL](https://img.shields.io/badge/OpenGL-4.5-blue)
 ![Platform](https://img.shields.io/badge/平台-Windows-lightgrey)
 ![Build](https://img.shields.io/badge/构建-CMake-orange)
 ![ImGui](https://img.shields.io/badge/ImGui-v1.91.8-purple)
@@ -18,17 +18,29 @@
 
 ### 🖥️ 渲染硬件接口（RHI）
 
-- **深度 RHI 抽象** — 应用层和场景代码不包含任何 DX11/DX12 头文件引用。所有后端特定逻辑（着色器编译、PSO 创建、ImGui 集成、命令列表生命周期、资源屏障）均隐藏在虚接口之后。
+- **深度 RHI 抽象** — 应用层和场景代码不包含任何 DX11/DX12/OpenGL 头文件引用。所有后端特定逻辑（着色器编译、PSO 创建、ImGui 集成、命令列表生命周期、资源屏障）均隐藏在虚接口之后。
 - **DX11 后端** — 完整的 DirectX 11 实现：设备、上下文、交换链、着色器、缓冲区、管线状态、ImGui 后端。
 - **DX12 后端** — 完整的 DirectX 12 实现：根签名（CBV + SRV 描述符表 + 静态采样器）、PSO、描述符堆（RTV/DSV/SRV/离屏 RTV）、Fence 同步、资源屏障、上传堆缓冲区、ImGui 后端。
-- **Vulkan 后端** *（开发中）* — Vulkan 实现进行中：设备、交换链、渲染通道、管线、SPIR-V 着色器。
-- **运行时 RHI 切换** — 通过菜单栏在 DX11 和 DX12 之间热切换（延迟到帧边界执行，无需重启）。
+- **OpenGL 后端** — 完整的 OpenGL 4.5 核心配置实现：WGL 上下文创建、glad2 加载器、基于 FBO 的渲染目标、GLSL 着色器编译与程序链接、前向渲染路径、ImGui OpenGL3 后端。
+- **运行时 RHI 切换** — 通过菜单栏在 DX11、DX12 和 OpenGL 之间热切换（延迟到帧边界执行，无需重启）。
+- **双轨着色器编译** — DX11 使用 FXC（SM 5.0 → DXBC）；DX12 使用 DXC（SM 6.0 → DXIL）并保留 FXC 回退；OpenGL 使用驱动原生 GLSL 编译。
 - **统一着色器编译** — `RHIDevice::CompileShader()` 和 `RHIDevice::CreateGraphicsPipelineState()`，各后端内部处理编译和 PSO 创建细节。
-- **帧生命周期抽象** — `RHICommandContext::BeginFrame()` / `EndFrame()` 封装 DX12 的 Reset/RootSig/DescriptorHeaps/ResourceBarrier 流程（DX11 为空操作）。
+- **帧生命周期抽象** — `RHICommandContext::BeginFrame()` / `EndFrame()` 封装 DX12 的 Reset/RootSig/DescriptorHeaps/ResourceBarrier 流程（DX11/GL 为空操作）。
 - **SRV 绑定抽象** — `RHICommandContext::SetShaderResourceView()` 实现后端无关的纹理绑定。
-- **资源状态管理** — `EResourceState` 枚举和 `ResourceBarrier()` 用于 DX12 资源状态转换（DX11 为空操作）。
+- **资源状态管理** — `EResourceState` 枚举和 `ResourceBarrier()` 用于 DX12 资源状态转换（DX11/GL 为空操作）。
 - **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
-- **GPU 资源调试命名** — 所有 GPU 资源（纹理、缓冲区）都携带描述性调试名称，在 RenderDoc 和 PIX 中可见。`TextureDesc::DebugName` 和 `BufferDesc::DebugName` 通过 `SetPrivateData`（DX11）和 `SetName`（DX12）自动应用。已命名的资源包括：G-Buffer RT、阴影贴图、深度缓冲、常量缓冲、网格顶点/索引缓冲（含物体名称）、Gizmo 缓冲和离屏渲染目标。
+- **GPU 资源调试命名** — 所有 GPU 资源（纹理、缓冲区）都携带描述性调试名称，在 RenderDoc 和 PIX 中可见。`TextureDesc::DebugName` 和 `BufferDesc::DebugName` 通过 `SetPrivateData`（DX11）和 `SetName`（DX12）自动应用。
+
+### 🔧 着色器编译管线
+
+| 后端 | 编译器 | Shader Model | 输出格式 | 备注 |
+|------|--------|-------------|---------|------|
+| **DX11** | FXC (`d3dcompiler.dll`) | SM 5.0 | DXBC | 传统编译器，稳定可靠 |
+| **DX12** | DXC (`dxcompiler.dll`) | SM 6.0 | DXIL | 现代编译器，自动通过 `UpgradeProfileForDXC()` 将 `vs_5_0` 升级为 `vs_6_0`，保留 FXC 回退 |
+| **OpenGL** | 驱动 GLSL | GLSL 450 | 原生 | `.glsl` 文件使用 `//!VERTEX` / `//!FRAGMENT` 分割标记 |
+
+- **DXC 集成** — `DXCCompiler` 单例封装 `IDxcCompiler3`，运行时通过 `LoadLibrary("dxcompiler.dll")` 加载。DXC 运行时 DLL（`dxcompiler.dll` + `dxil.dll`）由 CMake 自动复制到输出目录。
+- **ShaderLibrary** 根据当前活跃的 RHI 后端自动选择 HLSL（`Shaders/`）或 GLSL（`GLShaders/`）源文件。
 
 ### 🔦 延迟渲染管线（UE5 风格）
 
@@ -47,6 +59,8 @@
 - **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
 - **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer 中，可通过 Inspector UI 编辑。
 
+> **注意**：延迟渲染管线（G-Buffer、CSM 阴影、延迟光照）在 DX11 和 DX12 后端下激活。OpenGL 后端使用前向渲染路径。
+
 ### 👁️ 视图模式系统
 
 - **视图模式切换** — 菜单栏 → Rendering → View Mode。非 "Lit" 模式时，菜单栏显示当前模式指示器。
@@ -63,17 +77,18 @@
 ### 🎬 场景与组件系统
 
 - **实体-组件架构** — `SceneObject` 通过 `unique_ptr` 持有 `Component` 列表。提供模板方法 `AddComponent<T>`、`GetComponent<T>`、`RemoveComponent<T>`。
-- **MeshComponent（网格组件）** — 网格数据、颜色、着色器名称、排序顺序、材质属性（粗糙度、金属度）。
+- **MeshComponent（网格组件）** — 网格数据、颜色、着色器名称、排序顺序、图元类型、材质属性（粗糙度、金属度）。
 - **CameraComponent（相机组件）** — 透视/正交投影、可配置 FOV、近/远裁剪面、Main Camera 开关（互斥）。激活的相机驱动引擎渲染视角。
 - **DirectionalLightComponent（方向光组件）** — 方向由旋转决定，可配置颜色和强度。**级联阴影贴图（CSM）**参数：CastShadow、NumCascades (1-4)、ShadowMapResolution、ShadowDistance、CascadeSplitLambda、ShadowBias、NormalBias、ShadowStrength。
 - **PointLightComponent（点光源组件）** — 基于位置的光照，可配置半径，二次衰减。
 - **PostProcessComponent（后处理组件）** — 持有多个 `PostProcessMaterial`（着色器名称、强度、启用开关）。后处理效果按顺序应用。
 - **场景管理** — `Scene` 存储 `vector<unique_ptr<SceneObject>>`。工厂方法：`AddMeshObject`、`AddCameraObject`、`AddDirectionalLightObject`、`AddPointLightObject`、`AddPostProcessObject`、`AddEmptyObject`。
-- **JSON 序列化** — 完整的场景保存/加载，支持组件数组格式，向后兼容旧格式。
+- **JSON 序列化** — 完整的场景保存/加载，支持组件数组格式，向后兼容旧格式。File 菜单 → Save Scene（命名对话框）、Open Scene（自动扫描 `Scenes/` 目录）、Create Scene。默认场景（`Scenes/Default.json`）首次运行自动创建。
+- **窗口标题** — 显示当前场景名称："Kiwi Engine - \<场景名\>"。
 
 ### 🎨 着色器系统
 
-- **文件化着色器库** — 将 `.hlsl` 文件放入 `Shaders/` 文件夹，`ShaderLibrary` 在启动时自动扫描编译。通过 UI 下拉框为每个物体指定着色器。
+- **文件化着色器库** — 将 `.hlsl` 文件放入 `Shaders/` 文件夹（或 `.glsl` 放入 `GLShaders/`），`ShaderLibrary` 在启动时自动扫描编译，根据当前 RHI 后端自动选择正确的文件夹。通过 UI 下拉框为每个物体指定着色器。
 - **内置着色器**：
   | 着色器 | 描述 |
   |---|---|
@@ -85,6 +100,7 @@
   | **DeferredLighting** | 全屏 PBR 延迟光照（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样、Reinhard 色调映射 |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
+- **GLSL 着色器** — OpenGL 版本的 DefaultLit、Unlit 和 Wireframe 存放在 `GLShaders/` 目录，使用 `//!VERTEX` / `//!FRAGMENT` 标记分割着色器阶段。
 - **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
 - **自定义着色器** — 创建包含 `VSMain`/`PSMain` 入口点的 `.hlsl` 文件，使用共享的 CB 布局，放入 `Shaders/` 即可在运行时使用。
 
@@ -119,6 +135,8 @@
 ### 🛠️ 编辑器与工具
 
 - **ImGui 界面** — 完整的编辑器界面：菜单栏（File、Rendering）、场景面板（物体列表）、属性面板、物体放置面板。
+- **相机导航** — 按住鼠标右键 + WASD/方向键飞行移动主相机（水平面移动）；按住右键 + 鼠标拖动旋转相机方向（Yaw/Pitch，灵敏度 0.15°/px，Pitch 夹紧 ±89°）。
+- **相机设置** — 右上角 📷 按钮打开弹窗，可调节移动速度（0.5–50 units/s）和 FOV（10–120°）滑块。
 - **平移 Gizmo** — 三轴 Gizmo（X=红、Y=绿、Z=蓝），拖拽平移物体，活动轴变为黄色。**恒定屏幕大小** — Gizmo 根据相机距离自动缩放，无论缩放级别如何，始终保持相同的像素大小。
 - **屏幕空间 Gizmo 拾取** — Gizmo 轴选择使用 2D 屏幕空间距离（像素阈值）而非 3D 射线检测，无论相机角度或距离如何，都能提供可靠直觉的拾取体验。
 - **模型导入** — 加载外部 `.obj`（Wavefront OBJ，通过 tinyobjloader）和 `.fbx`（Autodesk FBX，通过 ufbx）模型文件。每个子网格成为独立的网格物体，附带材质漫反射颜色。自动顶点去重、多边形三角化、平面/平滑法线计算和 UV 坐标翻转。
@@ -134,11 +152,12 @@
 
 | 需求 | 版本 | 说明 |
 |---|---|---|
-| **操作系统** | Windows 10/11 | 需要 DirectX 11/12 支持 |
+| **操作系统** | Windows 10/11 | 需要 DirectX 11/12 和 OpenGL 4.5 支持 |
 | **Visual Studio** | 2022 (v17.x) | Community / Professional / Enterprise |
 | **MSVC 工具链** | v143+ | 通过 VS2022 "使用 C++ 的桌面开发" 工作负载安装 |
 | **CMake** | 3.20+ | VS2022 自带，或单独安装 |
 | **Windows SDK** | 10.0.19041+ | 包含 d3d11、d3d12、d3dcompiler、dxgi 头文件和库 |
+| **GPU** | DX11 FL 11.0+ / OpenGL 4.5 | 大多数现代 GPU 都支持 |
 | **RenderDoc** | 1.6+ *（可选）* | 用于帧捕获和 GPU 调试 |
 
 ---
@@ -193,8 +212,10 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 
 打开一个 1280×720 的 3D 场景编辑器窗口，你可以：
 
-- **切换 RHI**：菜单栏 → Rendering → RHI → Direct3D 11 / Direct3D 12
+- **切换 RHI**：菜单栏 → Rendering → RHI → Direct3D 11 / Direct3D 12 / OpenGL
 - **切换视图模式**：菜单栏 → Rendering → View Mode → Lit / Unlit / BaseColor / Roughness / Metallic
+- **相机导航**：按住右键 + WASD 飞行移动；右键 + 鼠标拖动旋转视角
+- **相机设置**：点击右上角 📷 按钮调节移动速度和 FOV
 - **添加物体**：Placer 面板 → Cube / Sphere / Cylinder / Floor / Post Process
 - **添加灯光**：Placer 面板 → Directional Light / Point Light
 - **添加相机**：Placer 面板 → Camera
@@ -204,7 +225,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 - **主相机**：Detail 面板 → 勾选 Main Camera（互斥）
 - **后处理**：Detail 面板 → 添加材质、调整顺序、调节强度、启用/禁用
 - **帧捕获**：点击右上角 🔵 按钮 → 自动打开 RenderDoc
-- **场景管理**：File 菜单 → Create Scene / Open Scene / Save Scene（JSON 格式）
+- **场景管理**：File 菜单 → Create Scene / Open Scene（扫描 `Scenes/` 文件夹） / Save Scene（命名对话框，JSON 格式）
 
 ---
 
@@ -248,7 +269,7 @@ bool vsync       = config.GetBool("Rendering", "VSync", true);
 
 ## 🎨 自定义着色器
 
-### 场景着色器
+### 场景着色器（HLSL — DX11/DX12）
 
 在 `Shaders/` 文件夹中创建 `.hlsl` 文件，入口点为 `VSMain` 和 `PSMain`：
 
@@ -268,6 +289,23 @@ cbuffer Constants : register(b0)
     float3 g_MaterialPadding;
     // GPULightData g_Lights[8];
 };
+```
+
+### 场景着色器（GLSL — OpenGL）
+
+在 `GLShaders/` 文件夹中创建 `.glsl` 文件，使用 `//!VERTEX` 和 `//!FRAGMENT` 标记：
+
+```glsl
+//!VERTEX
+#version 450 core
+layout(std140, binding = 0) uniform Constants { ... };
+layout(location = 0) in vec3 aPos;
+void main() { gl_Position = ...; }
+
+//!FRAGMENT
+#version 450 core
+out vec4 FragColor;
+void main() { FragColor = vec4(1.0); }
 ```
 
 ### 后处理着色器
@@ -322,16 +360,32 @@ KiwiEngine/
 ├── CMakeLists.txt                    # 构建配置（C++17, CMake 3.20+）
 ├── Config/
 │   └── DefaultEngine.ini             # 引擎设置（RenderDoc、渲染、窗口）
+├── docs/
+│   └── ShaderCompilationPipeline.drawio  # 着色器编译流程图
 ├── include/
 │   ├── RHI/
 │   │   ├── RHI.h                     # 抽象接口（Device、Context、SwapChain、Buffer）
 │   │   ├── RHITypes.h                # 类型定义（Format、BindFlags、ResourceState、BufferDesc）
-│   │   ├── DX11/                     # DX11 头文件与实现声明
-│   │   ├── DX12/                     # DX12 头文件与实现声明
-│   │   └── Vulkan/                   # Vulkan 头文件与实现声明
+│   │   ├── README.md                 # RHI 架构文档
+│   │   ├── DX11/                     # DX11 后端头文件
+│   │   │   ├── DX11Headers.h         # DX11 系统头文件
+│   │   │   ├── DX11Utils.h           # DX11 工具函数
+│   │   │   ├── DX11Resources.h       # DX11 资源包装类
+│   │   │   └── DX11Device.h          # DX11 Device / SwapChain / CommandContext
+│   │   ├── DX12/                     # DX12 后端头文件
+│   │   │   ├── DX12Headers.h         # DX12 系统头文件
+│   │   │   ├── DX12Resources.h       # DX12 资源包装类
+│   │   │   └── DX12Device.h          # DX12 Device / SwapChain / CommandContext
+│   │   ├── GL/                       # OpenGL 后端头文件
+│   │   │   ├── GLHeaders.h           # OpenGL / WGL 系统头文件
+│   │   │   ├── GLResources.h         # GL 资源包装类
+│   │   │   └── GLDevice.h            # GL Device / SwapChain / CommandContext
+│   │   └── DXC/                      # DXC 着色器编译器
+│   │       └── DXCCompiler.h         # DXC 单例封装
 │   ├── Core/
-│   │   ├── Window.h                  # Win32 窗口封装
+│   │   ├── Window.h                  # Win32 窗口封装 + KeyState 键盘跟踪
 │   │   ├── Application.h             # 应用框架（初始化、循环、RHI 切换）
+│   │   ├── EditorInput.h             # 统一编辑器输入管理（相机移动/旋转）
 │   │   └── EngineConfig.h            # 单例 INI 配置系统
 │   ├── Debug/
 │   │   └── RenderDocIntegration.h    # RenderDoc In-App API 封装
@@ -339,33 +393,36 @@ KiwiEngine/
 │   │   └── Math.h                    # Vec2/3/4、Mat4、投影、LookAt
 │   └── Scene/
 │       ├── Component.h               # 组件基类（Transform、EComponentType）
-│       ├── MeshComponent.h           # 网格 + 颜色 + 着色器引用
+│       ├── MeshComponent.h           # 网格 + 颜色 + 着色器 + 材质属性
 │       ├── CameraComponent.h         # 相机（透视/正交、FOV、MainCamera）
 │       ├── LightComponent.h          # 方向光与点光源组件
 │       ├── PostProcessComponent.h    # 后处理材质容器
 │       ├── SceneObject.h             # 实体与组件列表
+│       ├── PrimitiveType.h           # EPrimitiveType 枚举（打破循环依赖）
 │       ├── Scene.h                   # 场景管理与序列化
 │       ├── Mesh.h                    # 网格数据结构
 │       ├── Shaders.h                 # 内嵌 HLSL 与 CB 布局
 │       ├── ShaderLibrary.h           # 文件着色器扫描与编译
 │       ├── PostProcessShaders.h      # 后处理着色器定义（全屏 VS）
 │       ├── PostProcessShaderLibrary.h # 后处理着色器扫描与编译
-│       ├── ModelImporter.h            # OBJ/FBX 模型导入（tinyobjloader + ufbx）
-│       └── ViewMode.h                # 视图模式枚举（Lit、Unlit、BaseColor、Roughness、Metallic）
+│       ├── ModelImporter.h           # OBJ/FBX 模型导入（tinyobjloader + ufbx）
+│       └── ViewMode.h               # 视图模式枚举（Lit、Unlit、BaseColor、Roughness、Metallic）
 ├── src/
 │   ├── main.cpp                      # 入口点与场景编辑器（ImGui UI、渲染）
-│   ├── Core/                         # Window、Application、EngineConfig 实现
-│   ├── RHI/                          # DX11、DX12、Vulkan 后端实现
+│   ├── Core/                         # Window、Application、EditorInput、EngineConfig
+│   ├── RHI/                          # DX11、DX12、GL 后端实现 + DXC 编译器
 │   ├── Scene/                        # 网格生成、场景序列化、模型导入
 │   └── Debug/                        # RenderDoc 运行时加载
-├── Shaders/                          # 场景 HLSL 着色器（Default、Unlit、Wireframe、GBufferPass、DeferredLighting、ShadowPass、BufferVisualization）
+├── Shaders/                          # HLSL 着色器（Default、Unlit、Wireframe、DefaultLit、GBufferPass、DeferredLighting、ShadowPass、BufferVisualization）
+├── GLShaders/                        # GLSL 着色器（DefaultLit、Unlit、Wireframe）
 ├── PostProcessShaders/               # 后处理 HLSL 着色器（Grayscale、Vignette）
+├── Scenes/                           # 场景 JSON 文件（Default.json、用户场景）
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8
 │   ├── renderdoc/                    # RenderDoc In-App API 头文件
 │   ├── tinyobjloader/                # Wavefront OBJ 加载器
 │   ├── ufbx/                         # Autodesk FBX 加载器
-│   └── vulkan-headers/               # Vulkan SDK 头文件
+│   └── glad/                         # glad2 OpenGL 4.5 core 加载器
 └── tools/
     └── compile_shaders.mjs           # GLSL → SPIR-V 编译器（Vulkan 用）
 ```
@@ -377,21 +434,23 @@ KiwiEngine/
 ```
 ┌──────────────────────────────────────────┐
 │          应用层 / 场景编辑器              │  ← 100% 后端无关
-│   （零 DX11/DX12 头文件引用或类型转换）   │
+│   （零 DX11/DX12/GL 头文件引用或类型转换）│
 ├──────────────────────────────────────────┤
 │   组件系统                               │  ← Mesh、Camera、Light、PostProcess
 │   （SceneObject → vector<Component>）    │
 ├──────────────────────────────────────────┤
-│   着色器库                               │  ← 场景着色器 + 后处理着色器
+│   着色器库                               │  ← HLSL (Shaders/) + GLSL (GLShaders/)
 │   （文件化，运行时编译）                  │
+├──────────────────────────────────────────┤
+│   着色器编译器                            │  ← FXC (DX11) / DXC (DX12) / GLSL (GL)
 ├──────────────────────────────────────────┤
 │   调试 / RenderDoc 集成                  │  ← 一键截帧
 ├──────────────────────────────────────────┤
 │          RHI 抽象层                      │  ← RHIDevice、RHICommandContext、
 │                                          │     RHISwapChain、RHIBuffer...
 ├──────────────┬──────────────┬────────────┤
-│    DX11      │    DX12      │  Vulkan    │  ← 后端实现
-│  （已完成）   │  （已完成）   │ （开发中） │
+│    DX11      │    DX12      │  OpenGL    │  ← 后端实现
+│  （延迟渲染）│  （延迟渲染）│ （前向渲染）│
 └──────────────┴──────────────┴────────────┘
 ```
 
@@ -399,13 +458,13 @@ KiwiEngine/
 
 | 接口 | 方法 | 用途 |
 |---|---|---|
-| `RHIDevice` | `CompileShader()` | 编译 HLSL → 着色器二进制（后端内部处理细节） |
-| `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: 完整 PSO；DX11: 轻量包装 |
+| `RHIDevice` | `CompileShader()` | 编译 HLSL/GLSL → 着色器对象（后端内部处理细节） |
+| `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: 完整 PSO；DX11: 轻量包装；GL: 链接程序 |
 | `RHIDevice` | `CreateTexture()` / `CreateTextureView()` | 创建纹理（支持 SRV、RTV、DSV 绑定标志） |
 | `RHIDevice` | `InitImGui()` / `ImGuiNewFrame()` / `ImGuiRenderDrawData()` | 后端特定的 ImGui 生命周期 |
-| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: 完整帧设置/收尾；DX11: 空操作 |
+| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: 完整帧设置/收尾；DX11/GL: 空操作 |
 | `RHICommandContext` | `SetShaderResourceView()` | 绑定 SRV 到像素着色器槽位 |
-| `RHICommandContext` | `ResourceBarrier()` | DX12: 资源状态转换；DX11: 空操作 |
+| `RHICommandContext` | `ResourceBarrier()` | DX12: 资源状态转换；DX11/GL: 空操作 |
 | `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU 调试标注，用于 RenderDoc/PIX Pass 分组 |
 
 ### 添加新后端
@@ -425,9 +484,11 @@ KiwiEngine/
 | 缺少 Windows SDK | 通过 VS 安装程序 → 单个组件 → Windows 10/11 SDK 安装 |
 | 链接错误（d3d11.lib） | 确保 Windows SDK 已安装并被正确检测 |
 | 黑屏 | 检查控制台错误输出；确保 GPU 支持 DX11 Feature Level 11.0 |
+| OpenGL 上下文失败 | 确保 GPU 驱动支持 OpenGL 4.5 核心配置 |
 | C4819 编译警告 | 源文件含中文注释导致，不影响编译和运行 |
 | RenderDoc 未检测到 | 在 `Config/DefaultEngine.ini` 中设置 `DllPath`，或从 RenderDoc UI 启动 |
 | 后处理不渲染 | 确保场景中有 PostProcess 对象且至少有一个启用的材质 |
+| DXC 编译失败 | `dxcompiler.dll` + `dxil.dll` 由 CMake 自动复制；检查 `build/bin/` 中是否存在 |
 
 ---
 

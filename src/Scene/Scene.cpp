@@ -28,6 +28,7 @@ namespace Kiwi
         // Add MeshComponent
         auto* mesh = obj->AddComponent<MeshComponent>();
         mesh->MeshData = CreateMeshForType(type);
+        mesh->PrimitiveType = type;
 
         // Default color based on type
         switch (type)
@@ -292,6 +293,7 @@ namespace Kiwi
                     file << ",\n";
                     file << "          \"color\": [" << mesh.Color.x << ", " << mesh.Color.y << ", " << mesh.Color.z << ", " << mesh.Color.w << "],\n";
                     file << "          \"shader\": \"" << EscapeString(mesh.ShaderName) << "\",\n";
+                    file << "          \"primitiveType\": \"" << PrimitiveTypeToString(mesh.PrimitiveType) << "\",\n";
                     file << "          \"sortOrder\": " << mesh.SortOrder << ",\n";
                     file << "          \"roughness\": " << mesh.Roughness << ",\n";
                     file << "          \"metallic\": " << mesh.Metallic << "\n";
@@ -583,10 +585,13 @@ namespace Kiwi
                         float metallic = 0.0f;
                         if (ReadFloat(compStr, "metallic", metallic)) mesh->Metallic = metallic;
 
-                        // We need to determine the mesh type from the object name or a stored field
-                        // For now, detect from name pattern or default to Cube
-                        // TODO: store primitiveType in the component
-                        mesh->MeshData = CreateMeshForType(EPrimitiveType::Cube);
+                        // Read primitive type and rebuild mesh geometry
+                        std::string primTypeStr = ReadQuotedString(compStr, "primitiveType");
+                        EPrimitiveType primType = primTypeStr.empty()
+                            ? EPrimitiveType::Cube
+                            : StringToPrimitiveType(primTypeStr);
+                        mesh->PrimitiveType = primType;
+                        mesh->MeshData = CreateMeshForType(primType);
                     }
                     else if (compType == "CameraComponent")
                     {

@@ -1,8 +1,10 @@
 #include "Core/Application.h"
 #include "Core/Window.h"
 #include "Core/EngineConfig.h"
+#include "Core/EditorInput.h"
 #include "Scene/Mesh.h"
 #include "Scene/Shaders.h"
+#include "Scene/GLShaders.h"
 #include "Scene/ShaderLibrary.h"
 #include "Scene/Scene.h"
 #include "Scene/SceneObject.h"
@@ -335,7 +337,7 @@ static float RayAxisClosestParam(const Ray& ray, const Vec3& axisOrigin, const V
 
     float denom = a * c - b * b;
     if (std::abs(denom) < 1e-6f) return 0.0f;
-    return (b * e - c * d) / denom;
+    return (c * d - b * e) / denom;
 }
 
 // Check if ray is close enough to a gizmo axis to pick it
@@ -420,6 +422,22 @@ protected:
             }
             std::cout << "[Kiwi] Shader directory: " << m_ShaderDir << std::endl;
             std::cout << "[Kiwi] PostProcess shader directory: " << m_PostProcessShaderDir << std::endl;
+
+            // Scenes directory (same discovery logic)
+            m_ScenesDir = exeDir + "\\Scenes";
+            if (!fs::exists(m_ScenesDir))
+            {
+                std::string fallback = exeDir + "\\..\\..\\Scenes";
+                if (fs::exists(fallback))
+                    m_ScenesDir = fallback;
+                else
+                {
+                    // Create Scenes/ next to the source tree
+                    m_ScenesDir = fallback;
+                    fs::create_directories(m_ScenesDir);
+                }
+            }
+            std::cout << "[Kiwi] Scenes directory: " << m_ScenesDir << std::endl;
         }
 
         // ---- Init ImGui context (once) ----
@@ -432,32 +450,46 @@ protected:
         // ---- Init RHI-specific resources ----
         InitRHIResources();
 
-        // ---- Default scene ----
-        m_Scene.SetName("Default Scene");
-
-        // Add camera object
-        auto* camObj = m_Scene.AddCameraObject("Main Camera");
-        auto* cam = camObj->GetComponent<CameraComponent>();
-        cam->Position = Vec3(0.0f, 3.0f, -6.0f);
-        cam->Rotation = Vec3(20.0f, 0.0f, 0.0f); // Look slightly down
-        cam->FieldOfView = 45.0f;
-
-        // Add default directional light (sun-like)
-        auto* lightObj = m_Scene.AddDirectionalLightObject("Sun Light");
-        auto* sunLight = lightObj->GetComponent<DirectionalLightComponent>();
-        if (sunLight)
+        // ---- Load default scene from file ----
         {
-            sunLight->Rotation = { 50.0f, -30.0f, 0.0f };
-            sunLight->LightColor = { 1.0f, 1.0f, 0.9f };
-            sunLight->Intensity = 1.0f;
-        }
+            namespace fs = std::filesystem;
+            std::string defaultScene = m_ScenesDir + "\\Default.json";
+            if (fs::exists(defaultScene))
+            {
+                m_Scene.LoadFromFile(defaultScene);
+                std::cout << "[Kiwi] Loaded default scene: " << defaultScene << std::endl;
+            }
+            else
+            {
+                // First run: create a minimal default scene in-memory
+                m_Scene.SetName("Default Scene");
 
-        // Add scene objects
-        auto* floor = m_Scene.AddMeshObject(EPrimitiveType::Floor, "Ground");
-        (void)floor;
-        auto* cube = m_Scene.AddMeshObject(EPrimitiveType::Cube, "Cube_1");
-        auto* cubeMesh = cube->GetComponent<MeshComponent>();
-        if (cubeMesh) cubeMesh->Position = { 0.0f, 0.5f, 0.0f };
+                auto* camObj = m_Scene.AddCameraObject("Main Camera");
+                auto* cam = camObj->GetComponent<CameraComponent>();
+                cam->Position = Vec3(0.0f, 3.0f, -6.0f);
+                cam->Rotation = Vec3(20.0f, 0.0f, 0.0f);
+                cam->FieldOfView = 45.0f;
+
+                auto* lightObj = m_Scene.AddDirectionalLightObject("Sun Light");
+                auto* sunLight = lightObj->GetComponent<DirectionalLightComponent>();
+                if (sunLight)
+                {
+                    sunLight->Rotation = { 50.0f, -30.0f, 0.0f };
+                    sunLight->LightColor = { 1.0f, 1.0f, 0.9f };
+                    sunLight->Intensity = 1.0f;
+                }
+
+                auto* floor = m_Scene.AddMeshObject(EPrimitiveType::Floor, "Ground");
+                (void)floor;
+                auto* cube = m_Scene.AddMeshObject(EPrimitiveType::Cube, "Cube_1");
+                auto* cubeMesh = cube->GetComponent<MeshComponent>();
+                if (cubeMesh) cubeMesh->Position = { 0.0f, 0.5f, 0.0f };
+
+                // Save as Default.json for future runs
+                m_Scene.SaveToFile(defaultScene);
+                std::cout << "[Kiwi] Created default scene: " << defaultScene << std::endl;
+            }
+        }
 
         RebuildAllGPUBuffers();
 
@@ -472,12 +504,20 @@ protected:
         InitGizmoMeshes();
         BuildGizmoGPUBuffers();
 
+        // ---- Init Editor Input ----
+        m_EditorInput.Init(GetWindow(), &m_Scene);
+
         std::cout << "[Kiwi] Scene Editor initialized!" << std::endl;
     }
 
     void OnUpdate(float deltaTime) override
     {
         m_TotalTime += deltaTime;
+
+        // Update window title with scene name (only when changed)
+        UpdateWindowTitle();
+        // Camera fly navigation: hold right mouse button + WASD / arrow keys
+        m_EditorInput.Update(deltaTime);
 
         // Update camera matrices each frame
         UpdateCameraFromScene();
@@ -599,7 +639,10 @@ protected:
         m_PassTimer.BeginFrame();
 
         // ---- Choose rendering path based on ViewMode ----
-        bool useDeferredPipeline = (m_ViewMode == EViewMode::Lit ||
+        // GL backend: always use forward path (deferred GLSL shaders not yet implemented)
+        bool isGLBackend = (GetCurrentRHIType() == RHI_API_TYPE::OPENGL);
+        bool useDeferredPipeline = !isGLBackend &&
+                                    (m_ViewMode == EViewMode::Lit ||
                                      m_ViewMode == EViewMode::BaseColor ||
                                      m_ViewMode == EViewMode::Roughness ||
                                      m_ViewMode == EViewMode::Metallic);
@@ -861,6 +904,7 @@ protected:
         DrawRenderDocOverlay();
         DrawStatsOverlay();
         DrawViewModeButton();
+        DrawCameraButton();
         DrawUI();
 
         ImGui::Render();
@@ -1265,6 +1309,17 @@ protected:
     // Camera Management
     // ============================================================
 
+    void UpdateWindowTitle()
+    {
+        std::string title = "Kiwi Engine - " + m_Scene.GetName();
+        if (title != m_LastWindowTitle)
+        {
+            m_LastWindowTitle = title;
+            std::wstring wtitle(title.begin(), title.end());
+            SetWindowTextW(GetWindow()->GetHWND(), wtitle.c_str());
+        }
+    }
+
     void UpdateCameraFromScene()
     {
         auto* cam = m_Scene.GetActiveCamera();
@@ -1416,8 +1471,10 @@ private:
         auto device = GetDevice();
 
         // We need a temporary VS to create the shared input layout
+        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
+        const char* defaultVSSrc = isGL ? g_VertexShaderGLSL : g_VertexShaderHLSL;
         auto tempVS = device->CompileShader(
-            EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
+            EShaderType::Vertex, defaultVSSrc, "main", "vs_5_0");
 
         // Create input layout (shared across all shaders — same vertex format)
         InputElementDesc inputElements[] = {
@@ -1439,18 +1496,31 @@ private:
         // Pipeline state (DX11: empty wrapper, DX12: managed per-shader)
         m_PipelineState = device->CreatePipelineState();
 
-        // Initialize ShaderLibrary (fully backend-agnostic)
-        m_ShaderLibrary.Initialize(m_ShaderDir, device, m_InputLayout.get());
+        // Initialize ShaderLibrary — GL uses GLShaders/ directory
+        std::string shaderDir = isGL ? (m_ShaderDir + "\\..\\GLShaders") : m_ShaderDir;
+        {
+            namespace fs = std::filesystem;
+            if (!fs::exists(shaderDir))
+            {
+                // Fallback: try source tree
+                std::string fallback = m_ShaderDir + "\\..\\..\\..\\GLShaders";
+                if (isGL && fs::exists(fallback)) shaderDir = fallback;
+            }
+        }
+        m_ShaderLibrary.Initialize(shaderDir, device, m_InputLayout.get());
 
         // Initialize post-process resources
         InitPostProcessResources(device);
 
-        // Initialize deferred rendering resources
-        CompileDeferredShaders(device);
-        CreateGBufferResources(device, GetWindow()->GetWidth(), GetWindow()->GetHeight());
+        // Initialize deferred rendering resources (DX11/DX12 only — GLSL deferred shaders not yet implemented)
+        if (!isGL)
+        {
+            CompileDeferredShaders(device);
+            CreateGBufferResources(device, GetWindow()->GetWidth(), GetWindow()->GetHeight());
 
-        // Initialize shadow map resources
-        InitShadowResources(device);
+            // Initialize shadow map resources
+            InitShadowResources(device);
+        }
 
         // Init ImGui backend
         device->InitImGui(GetWindow()->GetHWND());
@@ -1460,6 +1530,7 @@ private:
 
     void InitPostProcessResources(RHIDevice* device)
     {
+        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
         // PostProcess shader library
         m_PostProcessLibrary.Initialize(m_PostProcessShaderDir, device);
 
@@ -1476,10 +1547,12 @@ private:
         m_PostProcessSampler = device->CreateSampler();
 
         // Compile passthrough shader (for final blit from offscreen to backbuffer)
+        const char* ppVSSrc = isGL ? g_PostProcessVS_GLSL : g_PostProcessVS;
+        const char* ppPSSrc = isGL ? g_PostProcessPassthroughPS_GLSL : g_PostProcessPassthroughPS;
         m_PassthroughVS = device->CompileShader(
-            EShaderType::Vertex, g_PostProcessVS, "VSMain", "vs_5_0");
+            EShaderType::Vertex, ppVSSrc, "VSMain", "vs_5_0");
         m_PassthroughPS = device->CompileShader(
-            EShaderType::Pixel, g_PostProcessPassthroughPS, "PSMain", "ps_5_0");
+            EShaderType::Pixel, ppPSSrc, "PSMain", "ps_5_0");
         if (m_PassthroughVS && m_PassthroughPS)
         {
             m_PassthroughPSO = device->CreateGraphicsPipelineState(
@@ -2169,16 +2242,44 @@ private:
                     m_GPUMeshes.clear();
                     m_Scene.SetName("New Scene");
                 }
-                if (ImGui::MenuItem("Open Scene"))
+
+                // Open Scene — lists all .json files in Scenes/ directory
+                if (ImGui::BeginMenu("Open Scene"))
                 {
-                    if (m_Scene.LoadFromFile("scene.json"))
+                    namespace fs = std::filesystem;
+                    bool hasFiles = false;
+                    if (fs::exists(m_ScenesDir))
                     {
-                        RebuildAllGPUBuffers();
+                        for (auto& entry : fs::directory_iterator(m_ScenesDir))
+                        {
+                            if (entry.is_regular_file() && entry.path().extension() == ".json")
+                            {
+                                std::string filename = entry.path().stem().string();
+                                if (ImGui::MenuItem(filename.c_str()))
+                                {
+                                    if (m_Scene.LoadFromFile(entry.path().string()))
+                                    {
+                                        RebuildAllGPUBuffers();
+                                    }
+                                }
+                                hasFiles = true;
+                            }
+                        }
                     }
+                    if (!hasFiles)
+                    {
+                        ImGui::TextDisabled("(no scene files)");
+                    }
+                    ImGui::EndMenu();
                 }
+
                 if (ImGui::MenuItem("Save Scene"))
                 {
-                    m_Scene.SaveToFile("scene.json");
+                    m_ShowSaveDialog = true;
+                    // Pre-fill with current scene name
+                    std::string name = m_Scene.GetName();
+                    strncpy(m_SaveSceneName, name.c_str(), sizeof(m_SaveSceneName) - 1);
+                    m_SaveSceneName[sizeof(m_SaveSceneName) - 1] = '\0';
                 }
                 ImGui::EndMenu();
             }
@@ -2201,6 +2302,12 @@ private:
                         m_PendingRHISwitch = true;
                         m_PendingRHIType = RHI_API_TYPE::DX12;
                     }
+                    if (ImGui::MenuItem("OpenGL", nullptr,
+                        currentRHI == RHI_API_TYPE::OPENGL, currentRHI != RHI_API_TYPE::OPENGL))
+                    {
+                        m_PendingRHISwitch = true;
+                        m_PendingRHIType = RHI_API_TYPE::OPENGL;
+                    }
 
                     ImGui::EndMenu();
                 }
@@ -2209,6 +2316,44 @@ private:
             }
 
             ImGui::EndMainMenuBar();
+        }
+
+        // Save Scene dialog (modal popup)
+        if (m_ShowSaveDialog)
+        {
+            ImGui::OpenPopup("Save Scene##SaveDlg");
+            m_ShowSaveDialog = false;
+        }
+
+        if (ImGui::BeginPopupModal("Save Scene##SaveDlg", nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("Scene name:");
+            ImGui::SetNextItemWidth(300.0f);
+            bool enterPressed = ImGui::InputText("##SceneName", m_SaveSceneName,
+                sizeof(m_SaveSceneName), ImGuiInputTextFlags_EnterReturnsTrue);
+
+            ImGui::Spacing();
+
+            bool doSave = false;
+            if (ImGui::Button("Save", ImVec2(120, 0)) || enterPressed)
+                doSave = true;
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+
+            if (doSave && m_SaveSceneName[0] != '\0')
+            {
+                namespace fs = std::filesystem;
+                std::string name(m_SaveSceneName);
+                m_Scene.SetName(name);
+                std::string filepath = m_ScenesDir + "\\" + name + ".json";
+                fs::create_directories(m_ScenesDir);
+                m_Scene.SaveToFile(filepath);
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
         }
     }
 
@@ -2544,7 +2689,7 @@ private:
         float btnSize = 32.0f;
         float btnGap = 6.0f;
 
-        // Right-to-left layout: RenderDoc | Stats | ViewMode
+        // Right-to-left layout: RenderDoc | Stats | ViewMode | Camera
         float rdocBtnX = windowWidth - btnSize - 12.0f;
         float statsBtnX = rdocBtnX - btnSize - btnGap;
         float viewModeBtnX = statsBtnX - btnSize - btnGap;
@@ -2640,6 +2785,134 @@ private:
 
                 if (ImGui::MenuItem("Unlit", nullptr, m_ViewMode == EViewMode::Unlit))
                     m_ViewMode = EViewMode::Unlit;
+
+                ImGui::EndPopup();
+            }
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+    }
+
+    // ============================================================
+    // Camera Settings Button (top-right, left of ViewMode button)
+    // ============================================================
+
+    void DrawCameraButton()
+    {
+        float menuBarHeight = ImGui::GetFrameHeight();
+        float windowWidth = (float)GetWindow()->GetWidth();
+        float btnSize = 32.0f;
+        float btnGap = 6.0f;
+
+        // Right-to-left layout: RenderDoc | Stats | ViewMode | Camera
+        float rdocBtnX = windowWidth - btnSize - 12.0f;
+        float statsBtnX = rdocBtnX - btnSize - btnGap;
+        float viewModeBtnX = statsBtnX - btnSize - btnGap;
+        float cameraBtnX = viewModeBtnX - btnSize - btnGap;
+
+        ImGui::SetNextWindowPos(
+            ImVec2(cameraBtnX, menuBarHeight + 6.0f),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.0f);
+
+        ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+        if (ImGui::Begin("##CameraBtn", nullptr, flags))
+        {
+            ImVec4 btnColor    = ImVec4(0.25f, 0.32f, 0.38f, 0.95f);
+            ImVec4 hoverColor  = ImVec4(0.32f, 0.42f, 0.50f, 1.0f);
+            ImVec4 activeColor = ImVec4(0.18f, 0.25f, 0.30f, 1.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+
+            if (ImGui::Button("##CameraIcon", ImVec2(btnSize, btnSize)))
+            {
+                ImGui::OpenPopup("CameraSettingsPopup");
+            }
+
+            ImGui::PopStyleVar(1);  // FrameRounding
+            ImGui::PopStyleColor(4);
+
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("Camera Settings");
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Move speed & FOV");
+                ImGui::EndTooltip();
+            }
+
+            // Draw camera icon on the button
+            ImVec2 btnMin = ImGui::GetItemRectMin();
+            ImVec2 btnMax = ImGui::GetItemRectMax();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 center = ImVec2((btnMin.x + btnMax.x) * 0.5f, (btnMin.y + btnMax.y) * 0.5f);
+
+            ImU32 iconColor = IM_COL32(200, 200, 200, 255);
+            // Film camera side profile
+            // Camera body
+            drawList->AddRectFilled(
+                ImVec2(center.x - 6.0f, center.y - 3.0f),
+                ImVec2(center.x + 6.0f, center.y + 5.0f),
+                iconColor, 2.0f);
+            // Lens barrel (front)
+            drawList->AddRectFilled(
+                ImVec2(center.x + 6.0f, center.y - 1.0f),
+                ImVec2(center.x + 10.0f, center.y + 3.0f),
+                iconColor, 1.0f);
+            // Film reel (top-left circle)
+            drawList->AddCircleFilled(
+                ImVec2(center.x - 3.0f, center.y - 6.0f), 4.0f, iconColor);
+            drawList->AddCircleFilled(
+                ImVec2(center.x - 3.0f, center.y - 6.0f), 1.5f,
+                IM_COL32(40, 50, 60, 255));
+            // Film reel (top-right circle, smaller)
+            drawList->AddCircleFilled(
+                ImVec2(center.x + 4.0f, center.y - 5.0f), 3.0f, iconColor);
+            drawList->AddCircleFilled(
+                ImVec2(center.x + 4.0f, center.y - 5.0f), 1.2f,
+                IM_COL32(40, 50, 60, 255));
+
+            // Popup with sliders
+            if (ImGui::BeginPopup("CameraSettingsPopup"))
+            {
+                ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Camera Settings");
+                ImGui::Separator();
+
+                // Move speed slider
+                float moveSpeed = m_EditorInput.GetCameraMoveSpeed();
+                ImGui::SetNextItemWidth(180.0f);
+                if (ImGui::SliderFloat("Move Speed", &moveSpeed, 0.5f, 50.0f, "%.1f"))
+                {
+                    m_EditorInput.SetCameraMoveSpeed(moveSpeed);
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Camera movement speed when holding Right Mouse + WASD");
+
+                // FOV slider (only for perspective cameras)
+                auto* cam = m_Scene.GetActiveCamera();
+                if (cam && cam->Projection == ECameraProjection::Perspective)
+                {
+                    ImGui::SetNextItemWidth(180.0f);
+                    ImGui::SliderFloat("FOV", &cam->FieldOfView, 10.0f, 120.0f, "%.0f deg");
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Camera field of view (degrees)");
+                }
 
                 ImGui::EndPopup();
             }
@@ -3214,9 +3487,9 @@ private:
     {
         Vec3 diff = gizmoPos - m_CameraPosition;
         float dist = diff.Length();
-        // Scale factor: at distance 5 the gizmo is 1x size. Closer = smaller, farther = bigger.
+        // Scale factor: at referenceDistance the gizmo is 1x size. Closer = smaller, farther = bigger.
         // This keeps it roughly the same pixel size on screen.
-        const float referenceDistance = 5.0f;
+        const float referenceDistance = 8.0f;
         return std::max(0.1f, dist / referenceDistance);
     }
 
@@ -3538,12 +3811,19 @@ private:
     // ============================================================
 
     Scene m_Scene;
+    EditorInput m_EditorInput;
     std::vector<GPUMeshData> m_GPUMeshes;
     std::vector<RenderItem> m_RenderList; // Sorted visible objects from InitView()
 
     // Shader Library — manages all loaded shaders
     ShaderLibrary m_ShaderLibrary;
     std::string m_ShaderDir; // Path to Shaders/ folder
+    std::string m_ScenesDir; // Path to Scenes/ folder
+
+    // Save Scene dialog state
+    bool m_ShowSaveDialog = false;
+    char m_SaveSceneName[128] = {};
+    std::string m_LastWindowTitle; // Track to avoid redundant SetWindowText
 
     // RHI resources (shared interface)
     std::unique_ptr<RHIInputLayout>   m_InputLayout;

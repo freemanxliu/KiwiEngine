@@ -1,0 +1,209 @@
+<mxfile host="app.diagrams.net" modified="2026-03-26T16:38:00.000Z" agent="KiwiEngine" version="24.0.0">
+  <diagram id="shader-pipeline" name="Shader Compilation Pipeline">
+    <mxGraphModel dx="2200" dy="1800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="&lt;b&gt;KiwiEngine Shader Compilation Pipeline&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;fontSize=20;" vertex="1" parent="1">
+          <mxGeometry x="600" y="20" width="500" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- ================================================================ -->
+        <!-- Row 1: DX11 — FXC only (DXC does not support SM 5.x)            -->
+        <!-- ================================================================ -->
+        <mxCell id="r1_label" value="&lt;b&gt;DX11&lt;/b&gt;" style="text;html=1;align=right;fontSize=16;fontColor=#1565C0;" vertex="1" parent="1">
+          <mxGeometry x="10" y="105" width="80" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_hlsl" value="&lt;b&gt;HLSL 源码&lt;/b&gt;&lt;br&gt;(.hlsl)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="100" y="90" width="150" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_fxc" value="&lt;b&gt;FXC 编译器&lt;/b&gt;&lt;br&gt;D3DCompile()&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;d3dcompiler.dll&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="330" y="85" width="170" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_note" value="&lt;font color=&quot;#CC0000&quot;&gt;DXC 不支持 SM 5.x&lt;br&gt;DX11 只能用 FXC&lt;/font&gt;" style="text;html=1;align=center;fontSize=9;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="345" y="148" width="130" height="25" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_dxbc" value="&lt;b&gt;DXBC&lt;/b&gt;&lt;br&gt;ID3DBlob&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;SM 5.0&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="580" y="90" width="130" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_cso" value="&lt;font color=&quot;#888&quot;&gt;可离线预编译 .cso&lt;/font&gt;" style="text;html=1;align=center;fontSize=9;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="585" y="143" width="110" height="16" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_create" value="&lt;b&gt;Create*Shader()&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;独立 VS/PS API 对象&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="790" y="90" width="170" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_bind" value="&lt;b&gt;VSSetShader()&lt;br&gt;PSSetShader()&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;逐帧分别绑定&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="85" width="150" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d11_gpu" value="&lt;b&gt;GPU ISA&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#fff&quot;&gt;驱动翻译 DXBC→原生指令&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6B6B;strokeColor=#CC0000;fontColor=#FFFFFF;" vertex="1" parent="1">
+          <mxGeometry x="1270" y="90" width="180" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- DX11 edges -->
+        <mxCell id="d11e1" edge="1" source="d11_hlsl" target="d11_fxc" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d11e2" edge="1" source="d11_fxc" target="d11_dxbc" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d11e3" edge="1" source="d11_dxbc" target="d11_create" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d11e4" edge="1" source="d11_create" target="d11_bind" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d11e5" edge="1" source="d11_bind" target="d11_gpu" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Separator -->
+        <mxCell id="sep1" value="" style="shape=line;strokeColor=#CCCCCC;strokeWidth=1;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="195" width="1470" height="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ================================================================ -->
+        <!-- Row 2: DX12 — DXC (SM 6.0 → DXIL) + FXC fallback (SM 5.0 → DXBC) -->
+        <!-- ================================================================ -->
+        <mxCell id="r2_label" value="&lt;b&gt;DX12&lt;/b&gt;" style="text;html=1;align=right;fontSize=16;fontColor=#6A1B9A;" vertex="1" parent="1">
+          <mxGeometry x="10" y="310" width="80" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d12_hlsl" value="&lt;b&gt;HLSL 源码&lt;/b&gt;&lt;br&gt;(.hlsl)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="100" y="295" width="150" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- Branch: DXC (Current) — top -->
+        <mxCell id="d12_dxc" value="&lt;b&gt;DXC 编译器&lt;/b&gt;&lt;br&gt;IDxcCompiler3&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;dxcompiler.dll&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFD700;strokeColor=#B8860B;" vertex="1" parent="1">
+          <mxGeometry x="330" y="240" width="170" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="d12_dxc_label" value="&lt;b&gt;Current&lt;/b&gt;" style="text;html=1;align=center;fontSize=10;fontColor=#B8860B;" vertex="1" parent="1">
+          <mxGeometry x="375" y="222" width="55" height="18" as="geometry"/>
+        </mxCell>
+        <mxCell id="d12_upgrade" value="&lt;font color=&quot;#0066CC&quot;&gt;自动升级 vs_5_0→vs_6_0&lt;/font&gt;" style="text;html=1;align=center;fontSize=9;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="335" y="297" width="155" height="16" as="geometry"/>
+        </mxCell>
+
+        <!-- Branch: FXC fallback — bottom -->
+        <mxCell id="d12_fxc" value="&lt;b&gt;FXC 编译器&lt;/b&gt;&lt;br&gt;D3DCompile()&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;d3dcompiler.dll&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="330" y="340" width="170" height="55" as="geometry"/>
+        </mxCell>
+        <mxCell id="d12_fxc_label" value="&lt;font color=&quot;#999&quot;&gt;Fallback (DXC 不可用时)&lt;/font&gt;" style="text;html=1;align=center;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="340" y="397" width="140" height="16" as="geometry"/>
+        </mxCell>
+
+        <!-- DXC → DXIL -->
+        <mxCell id="d12_dxil" value="&lt;b&gt;DXIL&lt;/b&gt;&lt;br&gt;IDxcBlob&lt;br&gt;&lt;font color=&quot;#0066CC&quot;&gt;SM 6.0 (DXIL)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B3E5FC;strokeColor=#0277BD;" vertex="1" parent="1">
+          <mxGeometry x="580" y="245" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="d12_dxil_note" value="&lt;font color=&quot;#888&quot;&gt;需 dxil.dll 签名验证&lt;/font&gt;" style="text;html=1;align=center;fontSize=9;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="585" y="297" width="120" height="16" as="geometry"/>
+        </mxCell>
+
+        <!-- FXC → DXBC -->
+        <mxCell id="d12_dxbc" value="&lt;b&gt;DXBC&lt;/b&gt;&lt;br&gt;ID3DBlob&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;SM 5.0&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="580" y="345" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- Both merge → store blob -->
+        <mxCell id="d12_blob" value="&lt;b&gt;存 blob&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;DX12 无独立&lt;br&gt;VS/PS 对象&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="800" y="290" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d12_pso" value="&lt;b&gt;CreateGraphics&lt;br&gt;PipelineState&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;VS+PS blob → PSO&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="285" width="160" height="55" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d12_bind" value="&lt;b&gt;SetPipelineState()&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;一步切换全部状态&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="290" width="160" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="d12_gpu" value="&lt;b&gt;GPU ISA&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#fff&quot;&gt;驱动翻译 DXIL/DXBC→原生指令&lt;br&gt;(CreatePSO 时完成)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6B6B;strokeColor=#CC0000;fontColor=#FFFFFF;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="282" width="190" height="60" as="geometry"/>
+        </mxCell>
+
+        <!-- DX12 edges -->
+        <mxCell id="d12e1a" edge="1" source="d12_hlsl" target="d12_dxc" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e1b" style="dashed=1;" edge="1" source="d12_hlsl" target="d12_fxc" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e2a" edge="1" source="d12_dxc" target="d12_dxil" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e2b" style="dashed=1;" edge="1" source="d12_fxc" target="d12_dxbc" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e3a" edge="1" source="d12_dxil" target="d12_blob" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e3b" style="dashed=1;" edge="1" source="d12_dxbc" target="d12_blob" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e4" edge="1" source="d12_blob" target="d12_pso" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e5" edge="1" source="d12_pso" target="d12_bind" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="d12e6" edge="1" source="d12_bind" target="d12_gpu" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Separator -->
+        <mxCell id="sep2" value="" style="shape=line;strokeColor=#CCCCCC;strokeWidth=1;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="440" width="1710" height="1" as="geometry"/>
+        </mxCell>
+
+        <!-- ================================================================ -->
+        <!-- Row 3: OpenGL                                                     -->
+        <!-- ================================================================ -->
+        <mxCell id="r3_label" value="&lt;b&gt;OpenGL&lt;/b&gt;" style="text;html=1;align=right;fontSize=16;fontColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="10" y="505" width="80" height="30" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gl_src" value="&lt;b&gt;GLSL 源码&lt;/b&gt;&lt;br&gt;(.glsl)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#388E3C;" vertex="1" parent="1">
+          <mxGeometry x="100" y="490" width="150" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gl_comp" value="&lt;b&gt;GPU 驱动编译器&lt;/b&gt;&lt;br&gt;glCreateShader&lt;br&gt;glCompileShader&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;NV/AMD/Intel 各自实现&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#A5D6A7;strokeColor=#2E7D32;" vertex="1" parent="1">
+          <mxGeometry x="330" y="480" width="170" height="70" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gl_obj" value="&lt;b&gt;Shader 对象&lt;/b&gt;&lt;br&gt;GLuint (VS / FS)&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;无标准中间码&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#388E3C;" vertex="1" parent="1">
+          <mxGeometry x="580" y="490" width="140" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gl_link" value="&lt;b&gt;glLinkProgram&lt;/b&gt;&lt;br&gt;VS + FS → Program&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;≈ DX12 PSO&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="800" y="490" width="160" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gl_spirv" value="&lt;font color=&quot;#888&quot;&gt;可选: SPIR-V (GL_ARB_gl_spirv)&lt;/font&gt;" style="text;html=1;align=center;fontSize=9;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="812" y="543" width="140" height="16" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gl_use" value="&lt;b&gt;glUseProgram()&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;绑定整个 program&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="490" width="150" height="50" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="gl_gpu" value="&lt;b&gt;GPU ISA&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#fff&quot;&gt;驱动翻译 GLSL→原生指令&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FF6B6B;strokeColor=#CC0000;fontColor=#FFFFFF;" vertex="1" parent="1">
+          <mxGeometry x="1270" y="490" width="180" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- OpenGL edges -->
+        <mxCell id="gle1" edge="1" source="gl_src" target="gl_comp" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="gle2" edge="1" source="gl_comp" target="gl_obj" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="gle3" edge="1" source="gl_obj" target="gl_link" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="gle4" edge="1" source="gl_link" target="gl_use" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="gle5" edge="1" source="gl_use" target="gl_gpu" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- ================================================================ -->
+        <!-- Legend -->
+        <!-- ================================================================ -->
+        <mxCell id="leg_t" value="&lt;b&gt;图例&lt;/b&gt;" style="text;html=1;align=left;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="600" width="60" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="l1" value="" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="30" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l1t" value="HLSL/GLSL 源码" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="52" y="627" width="90" height="18" as="geometry"/></mxCell>
+        <mxCell id="l2" value="" style="rounded=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="155" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l2t" value="FXC (d3dcompiler)" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="177" y="627" width="105" height="18" as="geometry"/></mxCell>
+        <mxCell id="l3" value="" style="rounded=1;fillColor=#FFD700;strokeColor=#B8860B;" vertex="1" parent="1"><mxGeometry x="295" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l3t" value="DXC (dxcompiler)" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="317" y="627" width="100" height="18" as="geometry"/></mxCell>
+        <mxCell id="l4" value="" style="rounded=1;fillColor=#A5D6A7;strokeColor=#2E7D32;" vertex="1" parent="1"><mxGeometry x="430" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l4t" value="GL 驱动编译器" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="452" y="627" width="85" height="18" as="geometry"/></mxCell>
+        <mxCell id="l5" value="" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="550" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l5t" value="DXBC (SM 5.0)" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="572" y="627" width="85" height="18" as="geometry"/></mxCell>
+        <mxCell id="l6" value="" style="rounded=1;fillColor=#B3E5FC;strokeColor=#0277BD;" vertex="1" parent="1"><mxGeometry x="670" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l6t" value="DXIL (SM 6.0+)" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="692" y="627" width="85" height="18" as="geometry"/></mxCell>
+        <mxCell id="l7" value="" style="rounded=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="790" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l7t" value="API 对象 / PSO" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="812" y="627" width="90" height="18" as="geometry"/></mxCell>
+        <mxCell id="l8" value="" style="rounded=1;fillColor=#FF6B6B;strokeColor=#CC0000;" vertex="1" parent="1"><mxGeometry x="915" y="630" width="18" height="14" as="geometry"/></mxCell>
+        <mxCell id="l8t" value="GPU 原生指令" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="937" y="627" width="80" height="18" as="geometry"/></mxCell>
+        <mxCell id="l9t" value="&lt;font color=&quot;#888&quot;&gt;─── 实线=主路径　- - - 虚线=fallback/可选&lt;/font&gt;" style="text;html=1;align=left;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1030" y="627" width="250" height="18" as="geometry"/></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

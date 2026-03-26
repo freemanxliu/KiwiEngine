@@ -2,6 +2,7 @@
 
 #include "RHI/RHI.h"
 #include "Scene/Shaders.h"
+#include "Scene/GLShaders.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -90,11 +91,16 @@ namespace Kiwi
             auto shader = std::make_unique<CompiledShader>();
             shader->Name = "Default";
 
-            // Use unified CompileShader — no need to know which backend
+            bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
+            const char* vsSrc = isGL ? g_VertexShaderGLSL : g_VertexShaderHLSL;
+            const char* psSrc = isGL ? g_PixelShaderGLSL  : g_PixelShaderHLSL;
+            const char* vsEntry = isGL ? "main" : "main";
+            const char* psEntry = isGL ? "main" : "main";
+
             shader->VertexShader = device->CompileShader(
-                EShaderType::Vertex, g_VertexShaderHLSL, "main", "vs_5_0");
+                EShaderType::Vertex, vsSrc, vsEntry, "vs_5_0");
             shader->PixelShader = device->CompileShader(
-                EShaderType::Pixel, g_PixelShaderHLSL, "main", "ps_5_0");
+                EShaderType::Pixel, psSrc, psEntry, "ps_5_0");
 
             // Create PSO through unified interface
             shader->PSO = device->CreateGraphicsPipelineState(
@@ -120,7 +126,9 @@ namespace Kiwi
             {
                 if (!entry.is_regular_file()) continue;
                 auto ext = entry.path().extension().string();
-                if (ext != ".hlsl" && ext != ".HLSL") continue;
+                bool isHLSL = (ext == ".hlsl" || ext == ".HLSL");
+                bool isGLSL = (ext == ".glsl" || ext == ".GLSL");
+                if (!isHLSL && !isGLSL) continue;
 
                 std::string name = entry.path().stem().string();
 

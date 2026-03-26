@@ -3,6 +3,7 @@
 #include "RHI/DX11/DX11Headers.h"
 #include <functional>
 #include <string>
+#include <array>
 
 namespace Kiwi
 {
@@ -23,6 +24,17 @@ namespace Kiwi
         bool    LeftDown = false;
         bool    RightDown = false;
         bool    LeftClicked = false;  // Single frame click
+    };
+
+    // Keyboard state (256 virtual key codes)
+    class KeyState
+    {
+    public:
+        void SetKeyDown(uint8_t vk) { m_Keys[vk] = true; }
+        void SetKeyUp(uint8_t vk)   { m_Keys[vk] = false; }
+        bool IsKeyDown(uint8_t vk) const { return m_Keys[vk]; }
+    private:
+        std::array<bool, 256> m_Keys = {};
     };
 
     class Window
@@ -50,6 +62,10 @@ namespace Kiwi
         const MouseState& GetMouseState() const { return m_Mouse; }
         void ResetFrameState() { m_Mouse.LeftClicked = false; }
 
+        // Keyboard
+        const KeyState& GetKeyState() const { return m_Keys; }
+        bool IsKeyDown(uint8_t vk) const { return m_Keys.IsKeyDown(vk); }
+
         // Resize callback
         using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
         void SetResizeCallback(ResizeCallback callback) { m_OnResize = callback; }
@@ -64,6 +80,7 @@ namespace Kiwi
         bool         m_ShouldClose = false;
         ResizeCallback m_OnResize;
         MouseState   m_Mouse;
+        KeyState     m_Keys;
     };
 
 } // namespace Kiwi

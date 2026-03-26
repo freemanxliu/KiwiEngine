@@ -1,4 +1,5 @@
 #include "RHI/DX12/DX12Device.h"
+#include "RHI/DXCCompiler.h"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx12.h>
@@ -610,40 +611,78 @@ namespace Kiwi
         return std::make_unique<DX12Shader>(type, blob.Get());
     }
 
+    // Upgrade SM 5.x profile to 6.0 for DXC (DXC no longer supports SM 5.x)
+    static std::string UpgradeProfileForDXC(const char* shaderModel)
+    {
+        std::string sm(shaderModel);
+        // Replace "_5_0" or "_5_1" with "_6_0"
+        auto pos = sm.find("_5_0");
+        if (pos == std::string::npos) pos = sm.find("_5_1");
+        if (pos != std::string::npos)
+            sm.replace(pos, 4, "_6_0");
+        return sm;
+    }
+
     std::unique_ptr<RHIShader> DX12Device::CompileShader(
         EShaderType type, const char* hlslSource, const char* entryPoint,
         const char* shaderModel, const ShaderMacro* macros, uint32_t macroCount)
     {
-        ComPtr<ID3DBlob> shaderBlob;
-        ComPtr<ID3DBlob> errorBlob;
+        auto& dxc = DXCCompiler::Get();
 
-        D3D_SHADER_MACRO* dxMacros = nullptr;
-        std::vector<D3D_SHADER_MACRO> dxMacroVec;
-        if (macros && macroCount > 0)
+        if (dxc.IsAvailable())
         {
-            dxMacroVec.reserve(macroCount + 1);
-            for (uint32_t i = 0; i < macroCount; i++)
-                dxMacroVec.push_back({ macros[i].Name, macros[i].Definition });
-            dxMacroVec.push_back({ nullptr, nullptr });
-            dxMacros = dxMacroVec.data();
-        }
+            // DXC requires SM 6.0+; auto-upgrade SM 5.x profiles
+            std::string dxcProfile = UpgradeProfileForDXC(shaderModel);
 
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
+            bool debug = false;
 #if defined(_DEBUG)
-        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+            debug = true;
+#endif
+            auto result = dxc.Compile(hlslSource, entryPoint, dxcProfile.c_str(), macros, macroCount, debug);
+            if (!result.Success)
+            {
+                std::string errorMsg = "DXC Shader compilation failed (" + dxcProfile + "): " + result.ErrorMsg;
+                throw std::runtime_error(errorMsg);
+            }
+
+            return CreateShader(type,
+                result.Bytecode->GetBufferPointer(),
+                result.Bytecode->GetBufferSize());
+        }
+        else
+        {
+            // Fallback to FXC (D3DCompile) with original SM 5.x profile
+            ComPtr<ID3DBlob> shaderBlob;
+            ComPtr<ID3DBlob> errorBlob;
+
+            D3D_SHADER_MACRO* dxMacros = nullptr;
+            std::vector<D3D_SHADER_MACRO> dxMacroVec;
+            if (macros && macroCount > 0)
+            {
+                dxMacroVec.reserve(macroCount + 1);
+                for (uint32_t i = 0; i < macroCount; i++)
+                    dxMacroVec.push_back({ macros[i].Name, macros[i].Definition });
+                dxMacroVec.push_back({ nullptr, nullptr });
+                dxMacros = dxMacroVec.data();
+            }
+
+            UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_PACK_MATRIX_ROW_MAJOR;
+#if defined(_DEBUG)
+            flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
-        HRESULT hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, dxMacros, nullptr,
-            entryPoint, shaderModel, flags, 0, &shaderBlob, &errorBlob);
-        if (FAILED(hr))
-        {
-            std::string errorMsg = "DX12 Shader compilation failed: ";
-            if (errorBlob)
-                errorMsg += (const char*)errorBlob->GetBufferPointer();
-            throw std::runtime_error(errorMsg);
-        }
+            HRESULT hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, dxMacros, nullptr,
+                entryPoint, shaderModel, flags, 0, &shaderBlob, &errorBlob);
+            if (FAILED(hr))
+            {
+                std::string errorMsg = "FXC DX12 Shader compilation failed: ";
+                if (errorBlob)
+                    errorMsg += (const char*)errorBlob->GetBufferPointer();
+                throw std::runtime_error(errorMsg);
+            }
 
-        return CreateShader(type, shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
+            return CreateShader(type, shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
+        }
     }
 
     std::unique_ptr<RHIInputLayout> DX12Device::CreateInputLayout(
@@ -683,8 +722,17 @@ namespace Kiwi
 
         psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
         psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
-        psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
-        psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
+
+        if (psShader && psShader->GetBlob())
+        {
+            psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
+            psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
+        }
+        else
+        {
+            psoDesc.PS.pShaderBytecode = nullptr;
+            psoDesc.PS.BytecodeLength = 0;
+        }
 
         // inputLayout 可以为 nullptr（例如后处理全屏三角形使用 SV_VertexID，无需顶点输入）
         if (dx12InputLayout)
@@ -744,8 +792,17 @@ namespace Kiwi
 
         psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
         psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
-        psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
-        psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
+
+        if (psShader && psShader->GetBlob())
+        {
+            psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
+            psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
+        }
+        else
+        {
+            psoDesc.PS.pShaderBytecode = nullptr;
+            psoDesc.PS.BytecodeLength = 0;
+        }
 
         if (dx12InputLayout)
         {

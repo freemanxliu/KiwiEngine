@@ -2,6 +2,7 @@
 
 #include "RHI/RHI.h"
 #include "Scene/PostProcessShaders.h"
+#include "Scene/GLShaders.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -38,8 +39,10 @@ namespace Kiwi
             m_ShaderNames.clear();
 
             // Compile the shared fullscreen vertex shader
+            bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
+            const char* vsSrc = isGL ? g_PostProcessVS_GLSL : g_PostProcessVS;
             m_FullscreenVS = device->CompileShader(
-                EShaderType::Vertex, g_PostProcessVS, "VSMain", "vs_5_0");
+                EShaderType::Vertex, vsSrc, "VSMain", "vs_5_0");
 
             if (!m_FullscreenVS)
             {
@@ -100,7 +103,8 @@ namespace Kiwi
             {
                 if (!entry.is_regular_file()) continue;
                 auto ext = entry.path().extension().string();
-                if (ext != ".hlsl" && ext != ".HLSL") continue;
+                bool isShader = (ext == ".hlsl" || ext == ".HLSL" || ext == ".glsl" || ext == ".GLSL");
+                if (!isShader) continue;
 
                 std::string name = entry.path().stem().string();
 
@@ -149,8 +153,10 @@ namespace Kiwi
                 if (!shader->PixelShader) return false;
 
                 // Clone VS reference (compile a new VS instance for PSO creation)
+                bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
+                const char* vsSrc = isGL ? g_PostProcessVS_GLSL : g_PostProcessVS;
                 shader->VertexShader = device->CompileShader(
-                    EShaderType::Vertex, g_PostProcessVS, "VSMain", "vs_5_0");
+                    EShaderType::Vertex, vsSrc, "VSMain", "vs_5_0");
 
                 if (!shader->VertexShader) return false;
 
