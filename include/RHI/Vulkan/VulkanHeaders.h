@@ -14,9 +14,6 @@
 
 #include <vulkan/vulkan.h>
 
-// HLSL compilation (for SPIR-V we use d3dcompiler to compile HLSL, then dxc or runtime compilation)
-#include <d3dcompiler.h>
-
 #include <vector>
 #include <array>
 #include <string>

@@ -12,7 +12,7 @@ namespace Kiwi
         DX11,
         DX12,
         OPENGL,
-        VULKAN,  // Reserved
+        VULKAN,
     };
 
     // 图形资源格式

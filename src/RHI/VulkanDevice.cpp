@@ -5,6 +5,10 @@
 #include <iostream>
 #include <set>
 
+#include <imgui.h>
+#include <imgui_impl_vulkan.h>
+#include <imgui_impl_win32.h>
+
 namespace Kiwi
 {
 
@@ -149,44 +153,28 @@ namespace Kiwi
         colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-        VkAttachmentDescription depthAttachment = {};
-        depthAttachment.format = VK_FORMAT_D24_UNORM_S8_UINT;
-        depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
         VkAttachmentReference colorRef = {};
         colorRef.attachment = 0;
         colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-        VkAttachmentReference depthRef = {};
-        depthRef.attachment = 1;
-        depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkSubpassDescription subpass = {};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorRef;
-        subpass.pDepthStencilAttachment = &depthRef;
+        subpass.pDepthStencilAttachment = nullptr;  // No depth for now
 
         VkSubpassDependency dependency = {};
         dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         dependency.dstSubpass = 0;
-        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         dependency.srcAccessMask = 0;
-        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-        std::array<VkAttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
         VkRenderPassCreateInfo renderPassInfo = {};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = (uint32_t)attachments.size();
-        renderPassInfo.pAttachments = attachments.data();
+        renderPassInfo.attachmentCount = 1;
+        renderPassInfo.pAttachments = &colorAttachment;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
         renderPassInfo.dependencyCount = 1;
@@ -298,7 +286,25 @@ namespace Kiwi
             m_BackBufferViews.push_back(std::make_unique<VulkanTextureView>(m_Device, imageView));
         }
 
-        // Note: Framebuffers will be created when DSV is available (in main.cpp)
+        // Create framebuffers (color only, no depth for now)
+        for (uint32_t i = 0; i < swapImageCount; i++)
+        {
+            VkImageView attachments[] = { static_cast<VulkanTextureView*>(m_BackBufferViews[i].get())->GetVkImageView() };
+
+            VkFramebufferCreateInfo fbInfo = {};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = m_RenderPass;
+            fbInfo.attachmentCount = 1;
+            fbInfo.pAttachments = attachments;
+            fbInfo.width = m_Extent.width;
+            fbInfo.height = m_Extent.height;
+            fbInfo.layers = 1;
+
+            VkFramebuffer framebuffer;
+            if (vkCreateFramebuffer(m_Device, &fbInfo, nullptr, &framebuffer) != VK_SUCCESS)
+                throw std::runtime_error("Failed to create Vulkan framebuffer");
+            m_Framebuffers.push_back(framebuffer);
+        }
     }
 
     void VulkanSwapChain::CleanupSwapChain()
@@ -703,7 +709,12 @@ namespace Kiwi
         if (!presentSupport)
             throw std::runtime_error("Graphics queue does not support presentation");
 
-        return std::make_unique<VulkanSwapChain>(m_Device, m_PhysicalDevice, surface, m_GraphicsQueue, desc);
+        auto swapChain = std::make_unique<VulkanSwapChain>(m_Device, m_PhysicalDevice, surface, m_GraphicsQueue, desc);
+
+        // Cache the render pass for PSO creation and ImGui
+        m_MainRenderPass = swapChain->GetRenderPass();
+
+        return swapChain;
     }
 
     std::unique_ptr<RHIBuffer> VulkanDevice::CreateBuffer(const BufferDesc& desc, const void* initialData)
@@ -1162,6 +1173,297 @@ namespace Kiwi
     {
         vkCmdBindDescriptorSets(m_CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 layout, 0, 1, &descriptorSet, 0, nullptr);
+    }
+
+    void VulkanCommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)
+    {
+        // In Vulkan, SRV binding is done via descriptor sets — handled externally
+        // For forward rendering, this is a no-op; full implementation needs descriptor management
+    }
+
+    // ============================================================
+    // VulkanCommandContext — Frame Lifecycle
+    // ============================================================
+
+    void VulkanCommandContext::BeginFrame(RHISwapChain* swapChain)
+    {
+        auto* vkSwap = static_cast<VulkanSwapChain*>(swapChain);
+
+        // Wait for previous frame
+        Reset();
+
+        // Acquire next swap chain image
+        vkSwap->AcquireNextImage();
+
+        // Begin command buffer
+        BeginCommandBuffer();
+
+        // Begin render pass
+        VkClearValue clearValues[1];
+        clearValues[0].color = { { 0.1f, 0.1f, 0.15f, 1.0f } };
+
+        BeginRenderPass(
+            vkSwap->GetRenderPass(),
+            vkSwap->GetCurrentFramebuffer(),
+            vkSwap->GetExtent(),
+            clearValues, 1);
+    }
+
+    void VulkanCommandContext::EndFrame(RHISwapChain* swapChain)
+    {
+        auto* vkSwap = static_cast<VulkanSwapChain*>(swapChain);
+
+        // End render pass
+        EndRenderPass();
+
+        // End command buffer
+        EndCommandBuffer();
+
+        // Submit with semaphore synchronization
+        VkSemaphore waitSemaphores[] = { vkSwap->GetImageAvailableSemaphore() };
+        VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkSemaphore signalSemaphores[] = { vkSwap->GetRenderFinishedSemaphore() };
+
+        VkSubmitInfo submitInfo = {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &m_CommandBuffer;
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = signalSemaphores;
+
+        vkQueueSubmit(m_GraphicsQueue, 1, &submitInfo, m_Fence);
+    }
+
+    // ============================================================
+    // VulkanDevice — CompileShader (GLSL via runtime compilation)
+    // ============================================================
+
+    std::unique_ptr<RHIShader> VulkanDevice::CompileShader(
+        EShaderType type, const char* source, const char* entryPoint,
+        const char* shaderModel, const ShaderMacro* macros, uint32_t macroCount)
+    {
+        // Vulkan CompileShader expects GLSL source with //!VERTEX / //!FRAGMENT markers
+        // (same format as OpenGL backend)
+        // We extract the appropriate stage and compile via glslang at runtime
+        // For now, use a simplified approach: treat source as GLSL, compile via shaderc or 
+        // just create a dummy shader module
+        // TODO: Integrate runtime GLSL->SPIR-V compilation (via shaderc or glslang C API)
+
+        std::cerr << "[Vulkan] CompileShader: Runtime GLSL->SPIR-V not yet implemented. "
+                  << "Use CreateShader with pre-compiled SPIR-V." << std::endl;
+
+        // Return a null shader module as placeholder
+        VkShaderModule module = VK_NULL_HANDLE;
+        std::vector<uint32_t> emptySpirv;
+        return std::make_unique<VulkanShader>(m_Device, module, type, emptySpirv);
+    }
+
+    // ============================================================
+    // VulkanDevice — CreateGraphicsPipelineState
+    // ============================================================
+
+    std::unique_ptr<RHIPipelineState> VulkanDevice::CreateGraphicsPipelineState(
+        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
+    {
+        PipelineStateDesc defaultDesc;
+        defaultDesc.NumRenderTargets = 1;
+        defaultDesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+        defaultDesc.DSVFormat = EFormat::D32_FLOAT;
+        return CreateGraphicsPipelineState(vertexShader, pixelShader, inputLayout, defaultDesc);
+    }
+
+    std::unique_ptr<RHIPipelineState> VulkanDevice::CreateGraphicsPipelineState(
+        RHIShader* vertexShader, RHIShader* pixelShader,
+        RHIInputLayout* inputLayout, const PipelineStateDesc& pipelineDesc)
+    {
+        auto* vkVS = static_cast<VulkanShader*>(vertexShader);
+        auto* vkPS = pixelShader ? static_cast<VulkanShader*>(pixelShader) : nullptr;
+        auto* vkLayout = inputLayout ? static_cast<VulkanInputLayout*>(inputLayout) : nullptr;
+
+        // Check for null shader modules
+        if (!vkVS || vkVS->GetVkShaderModule() == VK_NULL_HANDLE)
+        {
+            std::cerr << "[Vulkan] CreateGraphicsPipelineState: null vertex shader" << std::endl;
+            return std::make_unique<VulkanPipelineState>(m_Device, VK_NULL_HANDLE);
+        }
+
+        // Shader stages
+        std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+
+        VkPipelineShaderStageCreateInfo vsStage = {};
+        vsStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vsStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vsStage.module = vkVS->GetVkShaderModule();
+        vsStage.pName = "main";
+        shaderStages.push_back(vsStage);
+
+        if (vkPS && vkPS->GetVkShaderModule() != VK_NULL_HANDLE)
+        {
+            VkPipelineShaderStageCreateInfo psStage = {};
+            psStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            psStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            psStage.module = vkPS->GetVkShaderModule();
+            psStage.pName = "main";
+            shaderStages.push_back(psStage);
+        }
+
+        // Vertex input
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        if (vkLayout)
+        {
+            auto binding = vkLayout->GetBinding();
+            vertexInputInfo.vertexBindingDescriptionCount = 1;
+            vertexInputInfo.pVertexBindingDescriptions = &binding;
+            vertexInputInfo.vertexAttributeDescriptionCount = (uint32_t)vkLayout->GetAttributes().size();
+            vertexInputInfo.pVertexAttributeDescriptions = vkLayout->GetAttributes().data();
+        }
+
+        // Input assembly
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+        // Viewport / scissor (dynamic state)
+        VkPipelineViewportStateCreateInfo viewportState = {};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.scissorCount = 1;
+
+        // Rasterizer
+        VkPipelineRasterizationStateCreateInfo rasterizer = {};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_FALSE;
+        rasterizer.rasterizerDiscardEnable = VK_FALSE;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;  // Left-handed like DX
+        rasterizer.depthBiasEnable = VK_FALSE;
+
+        // Multisampling
+        VkPipelineMultisampleStateCreateInfo multisampling = {};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        // Depth stencil
+        VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = pipelineDesc.DepthEnabled ? VK_TRUE : VK_FALSE;
+        depthStencil.depthWriteEnable = pipelineDesc.DepthWrite ? VK_TRUE : VK_FALSE;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        depthStencil.depthBoundsTestEnable = VK_FALSE;
+        depthStencil.stencilTestEnable = VK_FALSE;
+
+        // Color blending
+        std::vector<VkPipelineColorBlendAttachmentState> colorAttachments(pipelineDesc.NumRenderTargets);
+        for (uint32_t i = 0; i < pipelineDesc.NumRenderTargets; i++)
+        {
+            colorAttachments[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                                  VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            colorAttachments[i].blendEnable = VK_FALSE;
+        }
+
+        VkPipelineColorBlendStateCreateInfo colorBlending = {};
+        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        colorBlending.logicOpEnable = VK_FALSE;
+        colorBlending.attachmentCount = pipelineDesc.NumRenderTargets;
+        colorBlending.pAttachments = colorAttachments.data();
+
+        // Dynamic state (viewport + scissor)
+        VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        VkPipelineDynamicStateCreateInfo dynamicState = {};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamicState.dynamicStateCount = 2;
+        dynamicState.pDynamicStates = dynamicStates;
+
+        // Use the main render pass from swapchain
+        VkRenderPass renderPass = m_MainRenderPass;
+        if (renderPass == VK_NULL_HANDLE)
+        {
+            std::cerr << "[Vulkan] CreateGraphicsPipelineState: no render pass set" << std::endl;
+            return std::make_unique<VulkanPipelineState>(m_Device, VK_NULL_HANDLE);
+        }
+
+        // Create the pipeline
+        VkGraphicsPipelineCreateInfo pipelineInfo = {};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = (uint32_t)shaderStages.size();
+        pipelineInfo.pStages = shaderStages.data();
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = &depthStencil;
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = &dynamicState;
+        pipelineInfo.layout = m_PipelineLayout;
+        pipelineInfo.renderPass = renderPass;
+        pipelineInfo.subpass = 0;
+        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+        VkPipeline pipeline;
+        if (vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS)
+        {
+            std::cerr << "[Vulkan] Failed to create graphics pipeline" << std::endl;
+            return std::make_unique<VulkanPipelineState>(m_Device, VK_NULL_HANDLE);
+        }
+
+        return std::make_unique<VulkanPipelineState>(m_Device, pipeline);
+    }
+
+    // ============================================================
+    // VulkanDevice — ImGui Integration
+    // ============================================================
+
+    void VulkanDevice::InitImGui(void* windowHandle)
+    {
+        HWND hwnd = (HWND)windowHandle;
+
+        ImGui_ImplWin32_Init(hwnd);
+
+        ImGui_ImplVulkan_InitInfo initInfo = {};
+        initInfo.Instance = m_Instance;
+        initInfo.PhysicalDevice = m_PhysicalDevice;
+        initInfo.Device = m_Device;
+        initInfo.QueueFamily = m_GraphicsQueueFamily;
+        initInfo.Queue = m_GraphicsQueue;
+        initInfo.DescriptorPool = m_DescriptorPool;
+        initInfo.RenderPass = m_MainRenderPass;
+        initInfo.MinImageCount = 2;
+        initInfo.ImageCount = 2;
+        initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        initInfo.PipelineCache = VK_NULL_HANDLE;
+        initInfo.Subpass = 0;
+
+        ImGui_ImplVulkan_Init(&initInfo);
+
+        std::cout << "[Vulkan] ImGui Vulkan backend initialized" << std::endl;
+    }
+
+    void VulkanDevice::ShutdownImGui()
+    {
+        WaitIdle();
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+    }
+
+    void VulkanDevice::ImGuiNewFrame()
+    {
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+    }
+
+    void VulkanDevice::ImGuiRenderDrawData(RHICommandContext* ctx)
+    {
+        auto* vkCtx = static_cast<VulkanCommandContext*>(ctx);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), vkCtx->GetCommandBuffer());
     }
 
     // ============================================================

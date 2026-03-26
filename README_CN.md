@@ -2,11 +2,12 @@
 
 **[English README](README.md)**
 
-一个从零开始构建的轻量级 3D 渲染引擎与场景编辑器，基于 C++17。采用**延迟渲染管线**和 G-Buffer 可视化，以及**深度 RHI（渲染硬件接口）抽象层**，支持 **DX11、DX12 和 OpenGL** 运行时切换——应用层代码 100% 后端无关，零 `static_cast`、零 `isDX12` 分支、零后端头文件引用。
+一个从零开始构建的轻量级 3D 渲染引擎与场景编辑器，基于 C++17。采用**延迟渲染管线**和 G-Buffer 可视化，以及**深度 RHI（渲染硬件接口）抽象层**，支持 **DX11、DX12、OpenGL 和 Vulkan** 运行时切换——应用层代码 100% 后端无关，零 `static_cast`、零 `isDX12` 分支、零后端头文件引用。
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
 ![OpenGL](https://img.shields.io/badge/OpenGL-4.5-blue)
+![Vulkan](https://img.shields.io/badge/Vulkan-1.2-red)
 ![Platform](https://img.shields.io/badge/平台-Windows-lightgrey)
 ![Build](https://img.shields.io/badge/构建-CMake-orange)
 ![ImGui](https://img.shields.io/badge/ImGui-v1.91.8-purple)
@@ -18,11 +19,12 @@
 
 ### 🖥️ 渲染硬件接口（RHI）
 
-- **深度 RHI 抽象** — 应用层和场景代码不包含任何 DX11/DX12/OpenGL 头文件引用。所有后端特定逻辑（着色器编译、PSO 创建、ImGui 集成、命令列表生命周期、资源屏障）均隐藏在虚接口之后。
+- **深度 RHI 抽象** — 应用层和场景代码不包含任何 DX11/DX12/OpenGL/Vulkan 头文件引用。所有后端特定逻辑（着色器编译、PSO 创建、ImGui 集成、命令列表生命周期、资源屏障）均隐藏在虚接口之后。
 - **DX11 后端** — 完整的 DirectX 11 实现：设备、上下文、交换链、着色器、缓冲区、管线状态、ImGui 后端。
 - **DX12 后端** — 完整的 DirectX 12 实现：根签名（CBV + SRV 描述符表 + 静态采样器）、PSO、描述符堆（RTV/DSV/SRV/离屏 RTV）、Fence 同步、资源屏障、上传堆缓冲区、ImGui 后端。
 - **OpenGL 后端** — 完整的 OpenGL 4.5 核心配置实现：WGL 上下文创建、glad2 加载器、基于 FBO 的渲染目标、GLSL 着色器编译与程序链接、前向渲染路径、ImGui OpenGL3 后端。
-- **运行时 RHI 切换** — 通过菜单栏在 DX11、DX12 和 OpenGL 之间热切换（延迟到帧边界执行，无需重启）。
+- **Vulkan 后端** — Vulkan 1.2 实现：VkInstance（含 Validation Layer）、物理/逻辑设备、交换链（Win32 Surface）、Render Pass、Framebuffer、命令缓冲（Fence 同步）、描述符池/集、VkPipeline 创建、SPIR-V Shader Module、ImGui Vulkan 后端。前向渲染路径。
+- **运行时 RHI 切换** — 通过菜单栏在 DX11、DX12、OpenGL 和 Vulkan 之间热切换（延迟到帧边界执行，无需重启）。
 - **双轨着色器编译** — DX11 使用 FXC（SM 5.0 → DXBC）；DX12 使用 DXC（SM 6.0 → DXIL）并保留 FXC 回退；OpenGL 使用驱动原生 GLSL 编译。
 - **统一着色器编译** — `RHIDevice::CompileShader()` 和 `RHIDevice::CreateGraphicsPipelineState()`，各后端内部处理编译和 PSO 创建细节。
 - **帧生命周期抽象** — `RHICommandContext::BeginFrame()` / `EndFrame()` 封装 DX12 的 Reset/RootSig/DescriptorHeaps/ResourceBarrier 流程（DX11/GL 为空操作）。
@@ -38,6 +40,7 @@
 | **DX11** | FXC (`d3dcompiler.dll`) | SM 5.0 | DXBC | 传统编译器，稳定可靠 |
 | **DX12** | DXC (`dxcompiler.dll`) | SM 6.0 | DXIL | 现代编译器，自动通过 `UpgradeProfileForDXC()` 将 `vs_5_0` 升级为 `vs_6_0`，保留 FXC 回退 |
 | **OpenGL** | 驱动 GLSL | GLSL 450 | 原生 | `.glsl` 文件使用 `//!VERTEX` / `//!FRAGMENT` 分割标记 |
+| **Vulkan** | glslang / shaderc | GLSL 450 → SPIR-V | SPIR-V | 预编译或运行时 GLSL→SPIR-V；每阶段一个 `VkShaderModule` |
 
 - **DXC 集成** — `DXCCompiler` 单例封装 `IDxcCompiler3`，运行时通过 `LoadLibrary("dxcompiler.dll")` 加载。DXC 运行时 DLL（`dxcompiler.dll` + `dxil.dll`）由 CMake 自动复制到输出目录。
 - **ShaderLibrary** 根据当前活跃的 RHI 后端自动选择 HLSL（`Shaders/`）或 GLSL（`GLShaders/`）源文件。
@@ -59,7 +62,7 @@
 - **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
 - **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer 中，可通过 Inspector UI 编辑。
 
-> **注意**：延迟渲染管线（G-Buffer、CSM 阴影、延迟光照）在 DX11 和 DX12 后端下激活。OpenGL 后端使用前向渲染路径。
+> **注意**：延迟渲染管线（G-Buffer、CSM 阴影、延迟光照）在 DX11 和 DX12 后端下激活。OpenGL 和 Vulkan 后端使用前向渲染路径。
 
 ### 👁️ 视图模式系统
 
@@ -212,7 +215,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 
 打开一个 1280×720 的 3D 场景编辑器窗口，你可以：
 
-- **切换 RHI**：菜单栏 → Rendering → RHI → Direct3D 11 / Direct3D 12 / OpenGL
+- **切换 RHI**：菜单栏 → Rendering → RHI → Direct3D 11 / Direct3D 12 / OpenGL / Vulkan
 - **切换视图模式**：菜单栏 → Rendering → View Mode → Lit / Unlit / BaseColor / Roughness / Metallic
 - **相机导航**：按住右键 + WASD 飞行移动；右键 + 鼠标拖动旋转视角
 - **相机设置**：点击右上角 📷 按钮调节移动速度和 FOV
@@ -380,6 +383,9 @@ KiwiEngine/
 │   │   │   ├── GLHeaders.h           # OpenGL / WGL 系统头文件
 │   │   │   ├── GLResources.h         # GL 资源包装类
 │   │   │   └── GLDevice.h            # GL Device / SwapChain / CommandContext
+│   │   ├── Vulkan/                   # Vulkan 后端头文件
+│   │   │   ├── VulkanHeaders.h       # Vulkan / Win32 系统头文件
+│   │   │   └── VulkanDevice.h        # Vulkan Device / SwapChain / CommandContext
 │   │   └── DXC/                      # DXC 着色器编译器
 │   │       └── DXCCompiler.h         # DXC 单例封装
 │   ├── Core/
@@ -410,7 +416,7 @@ KiwiEngine/
 ├── src/
 │   ├── main.cpp                      # 入口点与场景编辑器（ImGui UI、渲染）
 │   ├── Core/                         # Window、Application、EditorInput、EngineConfig
-│   ├── RHI/                          # DX11、DX12、GL 后端实现 + DXC 编译器
+│   ├── RHI/                          # DX11、DX12、GL、Vulkan 后端实现 + DXC 编译器
 │   ├── Scene/                        # 网格生成、场景序列化、模型导入
 │   └── Debug/                        # RenderDoc 运行时加载
 ├── Shaders/                          # HLSL 着色器（Default、Unlit、Wireframe、DefaultLit、GBufferPass、DeferredLighting、ShadowPass、BufferVisualization）
@@ -422,7 +428,8 @@ KiwiEngine/
 │   ├── renderdoc/                    # RenderDoc In-App API 头文件
 │   ├── tinyobjloader/                # Wavefront OBJ 加载器
 │   ├── ufbx/                         # Autodesk FBX 加载器
-│   └── glad/                         # glad2 OpenGL 4.5 core 加载器
+│   ├── glad/                         # glad2 OpenGL 4.5 core 加载器
+│   └── vulkan-headers/               # Vulkan SDK 头文件 + vulkan-1.lib
 └── tools/
     └── compile_shaders.mjs           # GLSL → SPIR-V 编译器（Vulkan 用）
 ```
@@ -432,26 +439,26 @@ KiwiEngine/
 ## 🏗️ 架构
 
 ```
-┌──────────────────────────────────────────┐
-│          应用层 / 场景编辑器              │  ← 100% 后端无关
-│   （零 DX11/DX12/GL 头文件引用或类型转换）│
-├──────────────────────────────────────────┤
-│   组件系统                               │  ← Mesh、Camera、Light、PostProcess
-│   （SceneObject → vector<Component>）    │
-├──────────────────────────────────────────┤
-│   着色器库                               │  ← HLSL (Shaders/) + GLSL (GLShaders/)
-│   （文件化，运行时编译）                  │
-├──────────────────────────────────────────┤
-│   着色器编译器                            │  ← FXC (DX11) / DXC (DX12) / GLSL (GL)
-├──────────────────────────────────────────┤
-│   调试 / RenderDoc 集成                  │  ← 一键截帧
-├──────────────────────────────────────────┤
-│          RHI 抽象层                      │  ← RHIDevice、RHICommandContext、
-│                                          │     RHISwapChain、RHIBuffer...
-├──────────────┬──────────────┬────────────┤
-│    DX11      │    DX12      │  OpenGL    │  ← 后端实现
-│  （延迟渲染）│  （延迟渲染）│ （前向渲染）│
-└──────────────┴──────────────┴────────────┘
+┌──────────────────────────────────────────────────────┐
+│          应用层 / 场景编辑器                          │  ← 100% 后端无关
+│   （零 DX11/DX12/GL/VK 头文件引用或类型转换）        │
+├──────────────────────────────────────────────────────┤
+│   组件系统                                           │  ← Mesh、Camera、Light、PostProcess
+│   （SceneObject → vector<Component>）                │
+├──────────────────────────────────────────────────────┤
+│   着色器库                                           │  ← HLSL (Shaders/) + GLSL (GLShaders/)
+│   （文件化，运行时编译）                              │
+├──────────────────────────────────────────────────────┤
+│   着色器编译器                                       │  ← FXC/DXC/GLSL/SPIR-V
+├──────────────────────────────────────────────────────┤
+│   调试 / RenderDoc 集成                              │  ← 一键截帧
+├──────────────────────────────────────────────────────┤
+│          RHI 抽象层                                  │  ← RHIDevice、RHICommandContext、
+│                                                      │     RHISwapChain、RHIBuffer...
+├─────────────┬─────────────┬────────────┬─────────────┤
+│    DX11     │    DX12     │  OpenGL    │   Vulkan    │  ← 后端实现
+│  （延迟渲染）│ （延迟渲染）│ （前向渲染）│ （前向渲染）│
+└─────────────┴─────────────┴────────────┴─────────────┘
 ```
 
 ### 核心 RHI 虚方法

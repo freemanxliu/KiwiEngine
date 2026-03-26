@@ -265,11 +265,31 @@ namespace Kiwi
         std::unique_ptr<RHIPipelineState> CreatePipelineState() override;
         std::unique_ptr<RHISampler> CreateSampler() override;
 
+        // CompileShader — Vulkan uses GLSL source, compiles via glslang-style or treats as SPIR-V passthrough
+        std::unique_ptr<RHIShader> CompileShader(
+            EShaderType type, const char* source, const char* entryPoint,
+            const char* shaderModel, const ShaderMacro* macros = nullptr,
+            uint32_t macroCount = 0) override;
+
+        // CreateGraphicsPipelineState — creates real VkPipeline
+        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader, RHIShader* pixelShader,
+            RHIInputLayout* inputLayout) override;
+
+        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            RHIShader* vertexShader, RHIShader* pixelShader,
+            RHIInputLayout* inputLayout,
+            const PipelineStateDesc& pipelineDesc) override;
+
         bool IsFeatureSupported(const char* feature) const override { return true; }
 
-        // Compile HLSL to SPIR-V (via DXIL/glslang or dxc)
-        // For simplicity, we compile HLSL to DXBC and then use runtime SPIR-V
-        // Actually: we use a simple GLSL fallback for Vulkan
+        // ImGui integration
+        void InitImGui(void* windowHandle) override;
+        void ShutdownImGui() override;
+        void ImGuiNewFrame() override;
+        void ImGuiRenderDrawData(RHICommandContext* ctx) override;
+
+        // Compile from pre-compiled SPIR-V
         std::unique_ptr<RHIShader> CompileShaderFromSPIRV(EShaderType type,
             const uint32_t* spirvCode, size_t spirvSize);
 
@@ -285,6 +305,10 @@ namespace Kiwi
         // Pipeline layout & descriptor set layout
         VkPipelineLayout GetPipelineLayout() const { return m_PipelineLayout; }
         VkDescriptorSetLayout GetDescriptorSetLayout() const { return m_DescriptorSetLayout; }
+
+        // Get the main render pass (for pipeline creation)
+        VkRenderPass GetMainRenderPass() const { return m_MainRenderPass; }
+        void SetMainRenderPass(VkRenderPass rp) { m_MainRenderPass = rp; }
 
         // Allocate descriptor set for constant buffer
         VkDescriptorSet AllocateDescriptorSet();
@@ -313,6 +337,7 @@ namespace Kiwi
         VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
         VkDescriptorSetLayout m_DescriptorSetLayout = VK_NULL_HANDLE;
         VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
+        VkRenderPass m_MainRenderPass = VK_NULL_HANDLE;  // cached from SwapChain
         bool m_EnableDebug;
 
         VkSurfaceKHR m_LastSurface = VK_NULL_HANDLE; // cached for queue family check
@@ -334,6 +359,10 @@ namespace Kiwi
         ~VulkanCommandContext() override;
 
         void* GetNativeHandle() const override { return (void*)m_CommandBuffer; }
+
+        // Frame lifecycle
+        void BeginFrame(RHISwapChain* swapChain) override;
+        void EndFrame(RHISwapChain* swapChain) override;
 
         // Resource barriers
         void ResourceBarrier(RHITexture* texture, int stateBefore, int stateAfter) override;
@@ -357,6 +386,9 @@ namespace Kiwi
 
         // Constant Buffer
         void SetConstantBuffer(uint32_t slot, RHIBuffer* buffer) override;
+
+        // Shader Resource View
+        void SetShaderResourceView(uint32_t slot, RHITextureView* srv) override;
 
         // Sampler
         void SetSampler(uint32_t slot, RHISampler* sampler) override;

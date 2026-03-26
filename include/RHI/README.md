@@ -1,6 +1,6 @@
 # KiwiEngine RHI (Rendering Hardware Interface)
 
-KiwiEngine 的 RHI 层提供统一的图形 API 抽象，支持 DX11 / DX12 / OpenGL 三套后端运行时切换。应用层代码 100% 后端无关，零 `isDX12` 分支，零 `static_cast` 到后端类型。
+KiwiEngine 的 RHI 层提供统一的图形 API 抽象，支持 DX11 / DX12 / OpenGL / Vulkan 四套后端运行时切换。应用层代码 100% 后端无关，零 `isDX12` 分支，零 `static_cast` 到后端类型。
 
 ## 架构总览
 
@@ -21,6 +21,9 @@ RHI 抽象层
 │   ├── GLHeaders.h          — OpenGL / WGL 系统头文件
 │   ├── GLResources.h        — 资源包装类
 │   └── GLDevice.h           — Device / SwapChain / CommandContext
+├── Vulkan/                 — Vulkan 后端
+│   ├── VulkanHeaders.h      — Vulkan / Win32 系统头文件
+│   └── VulkanDevice.h       — Device / SwapChain / CommandContext + 资源类
 └── DXC/                    — DXC 着色器编译器
     └── DXCCompiler.h        — DXC 单例封装（IDxcCompiler3）
 ```
@@ -28,16 +31,16 @@ RHI 抽象层
 ## 继承关系
 
 ```
-RHIBuffer ─────────── DX11Buffer         DX12Buffer         GLBuffer
-RHITexture ────────── DX11Texture        DX12Texture        GLTexture
-RHITextureView ────── DX11TextureView    DX12TextureView    GLTextureView
-RHIShader ─────────── DX11Shader         DX12Shader         GLShader
-RHIInputLayout ────── DX11InputLayout    DX12InputLayout    GLInputLayout
-RHIPipelineState ──── DX11PipelineState  DX12PipelineState  GLPipelineState
-RHISampler ────────── DX11Sampler        DX12Sampler        GLSampler
-RHISwapChain ──────── DX11SwapChain      DX12SwapChain      GLSwapChain
-RHIDevice ─────────── DX11Device         DX12Device         GLDevice
-RHICommandContext ─── DX11CommandContext  DX12CommandContext  GLCommandContext
+RHIBuffer ─────────── DX11Buffer         DX12Buffer         GLBuffer         VulkanBuffer
+RHITexture ────────── DX11Texture        DX12Texture        GLTexture        VulkanTexture
+RHITextureView ────── DX11TextureView    DX12TextureView    GLTextureView    VulkanTextureView
+RHIShader ─────────── DX11Shader         DX12Shader         GLShader         VulkanShader
+RHIInputLayout ────── DX11InputLayout    DX12InputLayout    GLInputLayout    VulkanInputLayout
+RHIPipelineState ──── DX11PipelineState  DX12PipelineState  GLPipelineState  VulkanPipelineState
+RHISampler ────────── DX11Sampler        DX12Sampler        GLSampler        VulkanSampler
+RHISwapChain ──────── DX11SwapChain      DX12SwapChain      GLSwapChain      VulkanSwapChain
+RHIDevice ─────────── DX11Device         DX12Device         GLDevice         VulkanDevice
+RHICommandContext ─── DX11CommandContext  DX12CommandContext  GLCommandContext  VulkanCommandContext
 ```
 
 ## 核心接口
@@ -146,6 +149,26 @@ GPU 原生指令               ← 驱动翻译
 - **ShaderLibrary** 根据 `GetApiType()` 自动选择 HLSL (`Shaders/`) 或 GLSL (`GLShaders/`) 源文件
 - **无标准中间字节码**：GLSL 编译直接由驱动完成，不像 DXBC/DXIL 有统一中间格式
 
+### Vulkan：GLSL → SPIR-V
+
+```
+GLSL 源码 (.glsl)
+    ↓  glslang / shaderc  ← 离线编译或运行时
+SPIR-V 字节码 (uint32_t[])   ← 标准中间码，跨驱动可移植
+    ↓  vkCreateShaderModule
+VkShaderModule (VS / FS)
+    ↓  vkCreateGraphicsPipelines
+VkPipeline   ← 相当于 DX12 PSO
+    ↓
+GPU 原生指令               ← 驱动翻译 SPIR-V→原生
+```
+
+- **编译器**：glslang 或 shaderc（离线预编译 or 运行时）
+- **SPIR-V**：Standard Portable Intermediate Representation for Vulkan — 跨驱动、可验证的标准中间码
+- **VkShaderModule**：从 SPIR-V 创建，每个着色器阶段独立
+- **VkPipeline**：类似 DX12 PSO，打包 VS+FS+顶点输入+光栅化+深度+颜色混合
+- **Dynamic State**：Viewport 和 Scissor 通过 `VK_DYNAMIC_STATE_*` 避免 PSO 重建
+
 ## 运行时 RHI 切换
 
 通过 `Application::SwitchRHI(RHI_API_TYPE)` 实现，在帧边界安全执行：
@@ -163,24 +186,25 @@ SwitchRHI(newType):
   9. OnRHIReady()                 ← 通知子类重建所有 GPU 资源
 ```
 
-UI 菜单路径：`Rendering → RHI → { Direct3D 11 | Direct3D 12 | OpenGL }`
+UI 菜单路径：`Rendering → RHI → { Direct3D 11 | Direct3D 12 | OpenGL | Vulkan }`
 
 ## 设计要点
 
 1. **抽象粒度**：所有资源基类只暴露 `GetNativeHandle() → void*`，后端内部通过 `static_cast` 向下转换
 2. **所有权模型**：Device 作为工厂，返回 `std::unique_ptr<>` 管理资源生命周期
 3. **差异处理**：
-   - `BeginFrame/EndFrame`、`ResourceBarrier` — DX12 真正执行，DX11/GL 空实现
-   - `PipelineState` — DX11 是离散 state 包装，DX12 是真 PSO，GL 是 linked program
-   - `InputLayout` — DX11 是 API 对象，DX12 是 desc 数组，GL 是 element 描述 + VAO
-4. **ImGui 集成**：每个后端有独立的 ImGui 实现后端（`imgui_impl_dx11` / `imgui_impl_dx12` / `imgui_impl_opengl3`）
+   - `BeginFrame/EndFrame`、`ResourceBarrier` — DX12/Vulkan 真正执行，DX11/GL 空实现
+   - `PipelineState` — DX11 是离散 state 包装，DX12 是真 PSO，GL 是 linked program，Vulkan 是 VkPipeline
+   - `InputLayout` — DX11 是 API 对象，DX12 是 desc 数组，GL 是 element 描述 + VAO，Vulkan 是 VkVertexInputAttributeDescription
+4. **ImGui 集成**：每个后端有独立的 ImGui 实现后端（`imgui_impl_dx11` / `imgui_impl_dx12` / `imgui_impl_opengl3` / `imgui_impl_vulkan`）
 5. **第三方依赖**：
    - DX11/DX12：`d3d11.lib` / `d3d12.lib` / `d3dcompiler.lib` / `dxgi.lib`
    - OpenGL：`opengl32.lib` + glad (OpenGL 4.5 core loader, `third_party/glad/`)
+   - Vulkan：`vulkan-1.lib` + Vulkan SDK headers (`third_party/vulkan-headers/`)
 
 ## 未来扩展
 
-- `RHI_API_TYPE::VULKAN` 已预留枚举值
 - DX12 已集成 DXC 编译器，支持 SM 6.0 特性；如需 wave intrinsics、mesh shader 等高级特性，只需在 shader 中使用对应 SM 6.x profile
 - OpenGL 后端可通过 `GL_ARB_gl_spirv` 扩展支持 SPIR-V，实现与 Vulkan 共享 shader 编译管线
-- OpenGL 后端的延迟渲染管线（G-Buffer + CSM 阴影）待实现，当前为前向渲染
+- OpenGL/Vulkan 后端的延迟渲染管线（G-Buffer + CSM 阴影）待实现，当前为前向渲染
+- Vulkan 后端待集成运行时 GLSL→SPIR-V 编译（shaderc/glslang C API）

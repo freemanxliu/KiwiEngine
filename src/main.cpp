@@ -639,9 +639,10 @@ protected:
         m_PassTimer.BeginFrame();
 
         // ---- Choose rendering path based on ViewMode ----
-        // GL backend: always use forward path (deferred GLSL shaders not yet implemented)
+        // GL/Vulkan backend: always use forward path (deferred shaders not yet implemented)
         bool isGLBackend = (GetCurrentRHIType() == RHI_API_TYPE::OPENGL);
-        bool useDeferredPipeline = !isGLBackend &&
+        bool isVulkanBackend = (GetCurrentRHIType() == RHI_API_TYPE::VULKAN);
+        bool useDeferredPipeline = !isGLBackend && !isVulkanBackend &&
                                     (m_ViewMode == EViewMode::Lit ||
                                      m_ViewMode == EViewMode::BaseColor ||
                                      m_ViewMode == EViewMode::Roughness ||
@@ -1471,7 +1472,8 @@ private:
         auto device = GetDevice();
 
         // We need a temporary VS to create the shared input layout
-        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
+        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL ||
+                     device->GetApiType() == RHI_API_TYPE::VULKAN);
         const char* defaultVSSrc = isGL ? g_VertexShaderGLSL : g_VertexShaderHLSL;
         auto tempVS = device->CompileShader(
             EShaderType::Vertex, defaultVSSrc, "main", "vs_5_0");
@@ -1530,7 +1532,8 @@ private:
 
     void InitPostProcessResources(RHIDevice* device)
     {
-        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
+        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL ||
+                     device->GetApiType() == RHI_API_TYPE::VULKAN);
         // PostProcess shader library
         m_PostProcessLibrary.Initialize(m_PostProcessShaderDir, device);
 
@@ -2307,6 +2310,12 @@ private:
                     {
                         m_PendingRHISwitch = true;
                         m_PendingRHIType = RHI_API_TYPE::OPENGL;
+                    }
+                    if (ImGui::MenuItem("Vulkan", nullptr,
+                        currentRHI == RHI_API_TYPE::VULKAN, currentRHI != RHI_API_TYPE::VULKAN))
+                    {
+                        m_PendingRHISwitch = true;
+                        m_PendingRHIType = RHI_API_TYPE::VULKAN;
                     }
 
                     ImGui::EndMenu();

@@ -2,11 +2,12 @@
 
 **[中文版 README](README_CN.md)**
 
-A lightweight 3D rendering engine and scene editor built from scratch with C++17. Features a **deferred rendering pipeline** with G-Buffer visualization, a **fully abstract RHI (Render Hardware Interface) layer** supporting **DX11, DX12, and OpenGL** with runtime switching — application code is 100% backend-agnostic with zero `static_cast` to specific backends, zero `isDX12` branching, and zero backend header includes in application code.
+A lightweight 3D rendering engine and scene editor built from scratch with C++17. Features a **deferred rendering pipeline** with G-Buffer visualization, a **fully abstract RHI (Render Hardware Interface) layer** supporting **DX11, DX12, OpenGL, and Vulkan** with runtime switching — application code is 100% backend-agnostic with zero `static_cast` to specific backends, zero `isDX12` branching, and zero backend header includes in application code.
 
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![DirectX 11/12](https://img.shields.io/badge/DirectX-11%20%7C%2012-green)
 ![OpenGL](https://img.shields.io/badge/OpenGL-4.5-blue)
+![Vulkan](https://img.shields.io/badge/Vulkan-1.2-red)
 ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 ![Build](https://img.shields.io/badge/Build-CMake-orange)
 ![ImGui](https://img.shields.io/badge/ImGui-v1.91.8-purple)
@@ -18,11 +19,12 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 
 ### 🖥️ Rendering Hardware Interface (RHI)
 
-- **Deep RHI Abstraction** — Application and scene code contain zero references to DX11/DX12/OpenGL headers. All backend-specific logic (shader compilation, PSO creation, ImGui integration, command list lifecycle, resource barriers) lives behind virtual interfaces.
+- **Deep RHI Abstraction** — Application and scene code contain zero references to DX11/DX12/OpenGL/Vulkan headers. All backend-specific logic (shader compilation, PSO creation, ImGui integration, command list lifecycle, resource barriers) lives behind virtual interfaces.
 - **DX11 Backend** — Full DirectX 11 implementation: device, context, swap chain, shaders, buffers, pipeline state, ImGui backend.
 - **DX12 Backend** — Full DirectX 12 implementation: root signature (CBV + SRV descriptor table + static sampler), PSO, descriptor heaps (RTV/DSV/SRV/offscreen RTV), fence sync, resource barriers, upload heap buffers, ImGui backend.
 - **OpenGL Backend** — Full OpenGL 4.5 core profile implementation: WGL context creation, glad2 loader, FBO-based render targets, GLSL shader compilation and program linking, forward rendering path, ImGui OpenGL3 backend.
-- **Runtime RHI Switching** — Hot-switch between DX11, DX12, and OpenGL at runtime via the menu bar (deferred to frame boundary, no restart needed).
+- **Vulkan Backend** — Vulkan 1.2 implementation: VkInstance with validation layers, physical/logical device, swap chain (Win32 surface), render pass, framebuffers, command buffers with fence sync, descriptor pool/sets, VkPipeline creation, SPIR-V shader modules, ImGui Vulkan backend. Forward rendering path.
+- **Runtime RHI Switching** — Hot-switch between DX11, DX12, OpenGL, and Vulkan at runtime via the menu bar (deferred to frame boundary, no restart needed).
 - **Dual Shader Compiler** — DX11 uses FXC (SM 5.0 → DXBC); DX12 uses DXC (SM 6.0 → DXIL) with FXC fallback; OpenGL uses driver-native GLSL compilation.
 - **Unified Shader Compilation** — `RHIDevice::CompileShader()` and `RHIDevice::CreateGraphicsPipelineState()` — each backend handles its own compilation and PSO creation internally.
 - **Frame Lifecycle Abstraction** — `RHICommandContext::BeginFrame()` / `EndFrame()` encapsulate DX12's Reset/RootSignature/DescriptorHeaps/ResourceBarrier cycle (DX11/GL: no-op).
@@ -38,6 +40,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 | **DX11** | FXC (`d3dcompiler.dll`) | SM 5.0 | DXBC | Legacy compiler, stable |
 | **DX12** | DXC (`dxcompiler.dll`) | SM 6.0 | DXIL | Modern compiler with FXC fallback; auto-upgrades `vs_5_0` → `vs_6_0` via `UpgradeProfileForDXC()` |
 | **OpenGL** | Driver GLSL | GLSL 450 | Native | `//!VERTEX` / `//!FRAGMENT` split markers in `.glsl` files |
+| **Vulkan** | glslang / shaderc | GLSL 450 → SPIR-V | SPIR-V | Pre-compiled or runtime GLSL→SPIR-V; `VkShaderModule` per stage |
 
 - **DXC Integration** — `DXCCompiler` singleton wraps `IDxcCompiler3`, runtime-loaded via `LoadLibrary("dxcompiler.dll")`. DXC runtime DLLs (`dxcompiler.dll` + `dxil.dll`) are automatically copied to the output directory by CMake.
 - **ShaderLibrary** auto-selects HLSL (`Shaders/`) or GLSL (`GLShaders/`) source files based on the active RHI backend.
@@ -59,7 +62,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Forward Gizmo Pass** — Translation gizmo is rendered on top of the deferred result using forward rendering with depth for correct occlusion.
 - **Material Properties** — Each `MeshComponent` has `Roughness` [0,1] and `Metallic` [0,1] properties, stored in G-Buffer and editable via Inspector UI.
 
-> **Note**: The deferred rendering pipeline (G-Buffer, CSM shadows, deferred lighting) is active for DX11 and DX12 backends. The OpenGL backend uses a forward rendering path.
+> **Note**: The deferred rendering pipeline (G-Buffer, CSM shadows, deferred lighting) is active for DX11 and DX12 backends. The OpenGL and Vulkan backends use a forward rendering path.
 
 ### 👁️ View Mode System
 
@@ -212,7 +215,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 
 A 1280×720 window opens showing a 3D scene editor. You can:
 
-- **Switch RHI**: Menu bar → Rendering → RHI → Direct3D 11 / Direct3D 12 / OpenGL
+- **Switch RHI**: Menu bar → Rendering → RHI → Direct3D 11 / Direct3D 12 / OpenGL / Vulkan
 - **Switch View Mode**: Menu bar → Rendering → View Mode → Lit / Unlit / BaseColor / Roughness / Metallic
 - **Navigate camera**: Hold right mouse button + WASD to fly; right mouse button + drag to look around
 - **Camera settings**: Click 📷 button (top-right) to adjust move speed and FOV
@@ -380,6 +383,9 @@ KiwiEngine/
 │   │   │   ├── GLHeaders.h           # OpenGL / WGL system headers
 │   │   │   ├── GLResources.h         # GL resource wrapper classes
 │   │   │   └── GLDevice.h            # GL Device / SwapChain / CommandContext
+│   │   ├── Vulkan/                   # Vulkan backend headers
+│   │   │   ├── VulkanHeaders.h       # Vulkan / Win32 system headers
+│   │   │   └── VulkanDevice.h        # Vulkan Device / SwapChain / CommandContext
 │   │   └── DXC/                      # DXC shader compiler
 │   │       └── DXCCompiler.h         # DXC singleton wrapper
 │   ├── Core/
@@ -410,7 +416,7 @@ KiwiEngine/
 ├── src/
 │   ├── main.cpp                      # Entry point & scene editor (ImGui UI, rendering)
 │   ├── Core/                         # Window, Application, EditorInput, EngineConfig
-│   ├── RHI/                          # DX11, DX12, GL backend implementations + DXC compiler
+│   ├── RHI/                          # DX11, DX12, GL, Vulkan backend implementations + DXC compiler
 │   ├── Scene/                        # Mesh generation, Scene serialization, Model import
 │   └── Debug/                        # RenderDoc runtime loading
 ├── Shaders/                          # HLSL shaders (Default, Unlit, Wireframe, DefaultLit, GBufferPass, DeferredLighting, ShadowPass, BufferVisualization)
@@ -422,7 +428,8 @@ KiwiEngine/
 │   ├── renderdoc/                    # RenderDoc In-App API header
 │   ├── tinyobjloader/                # Wavefront OBJ loader
 │   ├── ufbx/                         # Autodesk FBX loader
-│   └── glad/                         # glad2 OpenGL 4.5 core loader
+│   ├── glad/                         # glad2 OpenGL 4.5 core loader
+│   └── vulkan-headers/               # Vulkan SDK headers + vulkan-1.lib
 └── tools/
     └── compile_shaders.mjs           # GLSL → SPIR-V compiler (Vulkan)
 ```
@@ -432,26 +439,26 @@ KiwiEngine/
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────┐
-│          Application / Scene Editor      │  ← 100% backend-agnostic
-│   (zero DX11/DX12/GL includes or casts)  │
-├──────────────────────────────────────────┤
-│   Component System                       │  ← Mesh, Camera, Light, PostProcess
-│   (SceneObject → vector<Component>)      │
-├──────────────────────────────────────────┤
-│   Shader Libraries                       │  ← HLSL (Shaders/) + GLSL (GLShaders/)
-│   (file-based, compiled at runtime)      │
-├──────────────────────────────────────────┤
-│   Shader Compilers                       │  ← FXC (DX11) / DXC (DX12) / GLSL (GL)
-├──────────────────────────────────────────┤
-│   Debug / RenderDoc Integration          │  ← One-click frame capture
-├──────────────────────────────────────────┤
-│          RHI Abstract Layer              │  ← RHIDevice, RHICommandContext,
-│                                          │     RHISwapChain, RHIBuffer...
-├──────────────┬──────────────┬────────────┤
-│    DX11      │    DX12      │  OpenGL    │  ← Backend implementations
-│  (deferred)  │  (deferred)  │ (forward)  │
-└──────────────┴──────────────┴────────────┘
+┌──────────────────────────────────────────────────────┐
+│              Application / Scene Editor              │  ← 100% backend-agnostic
+│   (zero DX11/DX12/GL/VK includes or casts)           │
+├──────────────────────────────────────────────────────┤
+│   Component System                                   │  ← Mesh, Camera, Light, PostProcess
+│   (SceneObject → vector<Component>)                  │
+├──────────────────────────────────────────────────────┤
+│   Shader Libraries                                   │  ← HLSL (Shaders/) + GLSL (GLShaders/)
+│   (file-based, compiled at runtime)                  │
+├──────────────────────────────────────────────────────┤
+│   Shader Compilers                                   │  ← FXC/DXC/GLSL/SPIR-V
+├──────────────────────────────────────────────────────┤
+│   Debug / RenderDoc Integration                      │  ← One-click frame capture
+├──────────────────────────────────────────────────────┤
+│              RHI Abstract Layer                      │  ← RHIDevice, RHICommandContext,
+│                                                      │     RHISwapChain, RHIBuffer...
+├─────────────┬─────────────┬────────────┬─────────────┤
+│    DX11     │    DX12     │  OpenGL    │   Vulkan    │  ← Backend implementations
+│  (deferred) │  (deferred) │ (forward)  │  (forward)  │
+└─────────────┴─────────────┴────────────┴─────────────┘
 ```
 
 ### Key RHI Virtual Methods
@@ -459,12 +466,12 @@ KiwiEngine/
 | Interface | Method | Purpose |
 |---|---|---|
 | `RHIDevice` | `CompileShader()` | Compile HLSL/GLSL → shader object (backend handles internals) |
-| `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: full PSO; DX11: lightweight wrapper; GL: linked program |
+| `RHIDevice` | `CreateGraphicsPipelineState()` | DX12: full PSO; DX11: lightweight wrapper; GL: linked program; VK: VkPipeline |
 | `RHIDevice` | `CreateTexture()` / `CreateTextureView()` | Create textures with bind flags (SRV, RTV, DSV) |
 | `RHIDevice` | `InitImGui()` / `ImGuiNewFrame()` / `ImGuiRenderDrawData()` | Backend-specific ImGui lifecycle |
-| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: full frame setup/teardown; DX11/GL: no-op |
+| `RHICommandContext` | `BeginFrame()` / `EndFrame()` | DX12: full frame setup/teardown; VK: acquire/present with semaphores; DX11/GL: no-op |
 | `RHICommandContext` | `SetShaderResourceView()` | Bind SRV to pixel shader slot |
-| `RHICommandContext` | `ResourceBarrier()` | DX12: state transitions; DX11/GL: no-op |
+| `RHICommandContext` | `ResourceBarrier()` | DX12: state transitions; VK: pipeline barriers; DX11/GL: no-op |
 | `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU debug annotations for RenderDoc/PIX pass grouping |
 
 ### Adding a New Backend

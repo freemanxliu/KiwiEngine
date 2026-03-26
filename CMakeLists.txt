@@ -22,6 +22,7 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
     ${IMGUI_DIR}/backends/imgui_impl_dx12.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
     ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
 )
 
@@ -39,6 +40,7 @@ set(SOURCES
     src/RHI/DX12Device.cpp
     src/RHI/DXCCompiler.cpp
     src/RHI/GLDevice.cpp
+    src/RHI/VulkanDevice.cpp
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
     src/Debug/RenderDocIntegration.cpp
@@ -58,6 +60,8 @@ set(HEADERS
     include/RHI/GL/GLHeaders.h
     include/RHI/GL/GLResources.h
     include/RHI/GL/GLDevice.h
+    include/RHI/Vulkan/VulkanHeaders.h
+    include/RHI/Vulkan/VulkanDevice.h
     include/Core/Window.h
     include/Core/Application.h
     include/Core/EngineConfig.h
@@ -84,6 +88,7 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES} ${GLAD_SOU
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/third_party/renderdoc
+    ${CMAKE_SOURCE_DIR}/third_party/vulkan-headers/include
     ${GLAD_DIR}/include
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
@@ -98,6 +103,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     dxguid
     dwmapi
     opengl32
+    ${CMAKE_SOURCE_DIR}/third_party/vulkan-headers/lib/vulkan-1.lib
 )
 
 # ---- 定义 ----

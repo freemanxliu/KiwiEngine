@@ -151,6 +151,7 @@ namespace Kiwi
             case RHI_API_TYPE::DX11:   return "Direct3D 11";
             case RHI_API_TYPE::DX12:   return "Direct3D 12";
             case RHI_API_TYPE::OPENGL: return "OpenGL";
+            case RHI_API_TYPE::VULKAN: return "Vulkan";
             default:                   return "Unknown";
             }
         };

@@ -1113,7 +1113,13 @@ namespace Kiwi
             break;
         }
         case RHI_API_TYPE::VULKAN:
-            throw std::runtime_error("Vulkan RHI backend is not yet implemented");
+        {
+            extern void CreateVulkanRHI(const RHIInitParams& params,
+                std::unique_ptr<RHIDevice>& outDevice,
+                std::unique_ptr<RHICommandContext>& outContext);
+            CreateVulkanRHI(params, outDevice, outContext);
+            break;
+        }
         default:
             throw std::runtime_error("Unknown RHI API type");
         }
