@@ -30,17 +30,11 @@ namespace Kiwi
         mesh->MeshData = CreateMeshForType(type);
         mesh->PrimitiveType = type;
 
-        // Default color based on type
-        switch (type)
+        // Floor gets default scale/position; color is controlled by Material
+        if (type == EPrimitiveType::Floor)
         {
-        case EPrimitiveType::Cube:     mesh->Color = { 0.9f, 0.3f, 0.3f, 1.0f }; break;
-        case EPrimitiveType::Sphere:   mesh->Color = { 0.3f, 0.7f, 0.9f, 1.0f }; break;
-        case EPrimitiveType::Cylinder: mesh->Color = { 0.3f, 0.9f, 0.4f, 1.0f }; break;
-        case EPrimitiveType::Floor:
-            mesh->Color = { 0.6f, 0.6f, 0.6f, 1.0f };
             mesh->Scale = { 10.0f, 1.0f, 10.0f };
             mesh->Position.y = -0.5f;
-            break;
         }
 
         SceneObject* ptr = obj.get();
@@ -291,33 +285,9 @@ namespace Kiwi
                 {
                     const auto& mesh = static_cast<const MeshComponent&>(comp);
                     file << ",\n";
-                    file << "          \"color\": [" << mesh.Color.x << ", " << mesh.Color.y << ", " << mesh.Color.z << ", " << mesh.Color.w << "],\n";
-                    file << "          \"shader\": \"" << EscapeString(mesh.ShaderName) << "\",\n";
+                    file << "          \"materialName\": \"" << EscapeString(mesh.MaterialName) << "\",\n";
                     file << "          \"primitiveType\": \"" << PrimitiveTypeToString(mesh.PrimitiveType) << "\",\n";
-                    file << "          \"sortOrder\": " << mesh.SortOrder << ",\n";
-                    file << "          \"roughness\": " << mesh.Roughness << ",\n";
-                    file << "          \"metallic\": " << mesh.Metallic;
-                    if (!mesh.BaseColorTexture.empty() || !mesh.NormalTexture.empty() || !mesh.MetallicRoughnessTexture.empty())
-                    {
-                        file << ",\n";
-                        if (!mesh.BaseColorTexture.empty())
-                            file << "          \"baseColorTexture\": \"" << EscapeString(mesh.BaseColorTexture) << "\"";
-                        if (!mesh.NormalTexture.empty())
-                        {
-                            if (!mesh.BaseColorTexture.empty()) file << ",\n";
-                            file << "          \"normalTexture\": \"" << EscapeString(mesh.NormalTexture) << "\"";
-                        }
-                        if (!mesh.MetallicRoughnessTexture.empty())
-                        {
-                            if (!mesh.BaseColorTexture.empty() || !mesh.NormalTexture.empty()) file << ",\n";
-                            file << "          \"metallicRoughnessTexture\": \"" << EscapeString(mesh.MetallicRoughnessTexture) << "\"";
-                        }
-                        file << "\n";
-                    }
-                    else
-                    {
-                        file << "\n";
-                    }
+                    file << "          \"sortOrder\": " << mesh.SortOrder << "\n";
                 }
                 else if (comp.GetType() == EComponentType::Camera)
                 {
@@ -591,28 +561,12 @@ namespace Kiwi
                         mesh->Scale = compScale;
                         mesh->Enabled = enabled;
 
-                        Vec4 color;
-                        if (ReadVec4(compStr, "color", color)) mesh->Color = color;
-
-                        std::string shaderName = ReadQuotedString(compStr, "shader");
-                        if (!shaderName.empty()) mesh->ShaderName = shaderName;
+                        // Material reference
+                        std::string matName = ReadQuotedString(compStr, "materialName");
+                        if (!matName.empty()) mesh->MaterialName = matName;
 
                         int32_t sortOrder = 0;
                         if (ReadInt(compStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;
-
-                        float roughness = 0.5f;
-                        if (ReadFloat(compStr, "roughness", roughness)) mesh->Roughness = roughness;
-
-                        float metallic = 0.0f;
-                        if (ReadFloat(compStr, "metallic", metallic)) mesh->Metallic = metallic;
-
-                        // Texture paths
-                        std::string baseColorTex = ReadQuotedString(compStr, "baseColorTexture");
-                        if (!baseColorTex.empty()) mesh->BaseColorTexture = baseColorTex;
-                        std::string normalTex = ReadQuotedString(compStr, "normalTexture");
-                        if (!normalTex.empty()) mesh->NormalTexture = normalTex;
-                        std::string mrTex = ReadQuotedString(compStr, "metallicRoughnessTexture");
-                        if (!mrTex.empty()) mesh->MetallicRoughnessTexture = mrTex;
 
                         // Read primitive type and rebuild mesh geometry
                         std::string primTypeStr = ReadQuotedString(compStr, "primitiveType");
@@ -745,31 +699,15 @@ namespace Kiwi
                 if (mesh)
                 {
                     Vec3 pos, rot, scale;
-                    Vec4 color;
                     if (ReadVec3(objStr, "position", pos)) mesh->Position = pos;
                     if (ReadVec3(objStr, "rotation", rot)) mesh->Rotation = rot;
                     if (ReadVec3(objStr, "scale", scale))  mesh->Scale = scale;
-                    if (ReadVec4(objStr, "color", color))  mesh->Color = color;
 
-                    std::string shaderName = ReadQuotedString(objStr, "shader");
-                    if (!shaderName.empty()) mesh->ShaderName = shaderName;
+                    std::string matName = ReadQuotedString(objStr, "materialName");
+                    if (!matName.empty()) mesh->MaterialName = matName;
 
                     int32_t sortOrder = 0;
                     if (ReadInt(objStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;
-
-                    float roughness = 0.5f;
-                    if (ReadFloat(objStr, "roughness", roughness)) mesh->Roughness = roughness;
-
-                    float metallic = 0.0f;
-                    if (ReadFloat(objStr, "metallic", metallic)) mesh->Metallic = metallic;
-
-                    // Texture paths (backward compat)
-                    std::string baseColorTex = ReadQuotedString(objStr, "baseColorTexture");
-                    if (!baseColorTex.empty()) mesh->BaseColorTexture = baseColorTex;
-                    std::string normalTex = ReadQuotedString(objStr, "normalTexture");
-                    if (!normalTex.empty()) mesh->NormalTexture = normalTex;
-                    std::string mrTex = ReadQuotedString(objStr, "metallicRoughnessTexture");
-                    if (!mrTex.empty()) mesh->MetallicRoughnessTexture = mrTex;
                 }
             }
         }

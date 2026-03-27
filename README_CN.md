@@ -59,8 +59,8 @@
 - **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。通过 `CreateGraphicsPipelineState()` 和 `PipelineStateDesc` 创建 MRT PSO。
 - **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 从深度重建世界坐标，解码 Octahedron 法线，读取 G-Buffer 材质属性，计算 **UE5 风格 PBR 光照**。BRDF 对齐 UE5 `DefaultLitBxDF`：**D_GGX**（Trowbridge-Reitz NDF）、**Vis_SmithJointApprox**（联合 Smith 可见性，分母已内置）、**F_Schlick**（含 2% 反射率阴影阈值）、**Diffuse_Burley**（Disney 漫反射，粗糙度相关）、**EnvBRDFApprox**（Lazarov 2013 解析近似，无需 LUT）用于间接高光。支持多光源，应用级联阴影贴图和 Reinhard 色调映射。
 - **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联，所有级联渲染到**单张阴影 Atlas**（2x2 布局）。每个级联占 Atlas 纹理的一个象限（`R32_TYPELESS`，`2*cascadeSize × 2*cascadeSize`）。PSSM 混合对数和均匀分割方案。着色器根据视空间距离选择级联并计算 UV 偏移到 Atlas 对应区域。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
-- **前向 Gizmo Pass** — 平移 Gizmo 在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
-- **材质属性** — 每个 `MeshComponent` 包含 `Roughness` [0,1] 和 `Metallic` [0,1] 属性，存储在 G-Buffer 中，可通过 Inspector UI 编辑。
+- **前向 Gizmo Pass** — 变换 Gizmo（平移/旋转/缩放）在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
+- **材质属性** — 材质资产定义粗糙度 [0,1]、金属度 [0,1]、基础颜色和贴图。属性存储在 G-Buffer 中，可通过材质编辑器/Inspector UI 编辑。
 
 > **注意**：延迟渲染管线（G-Buffer、CSM 阴影、延迟光照）在 DX11 和 DX12 后端下激活。OpenGL 和 Vulkan 后端使用前向渲染路径。
 
@@ -77,10 +77,38 @@
   | **Metallic** | 缓冲区可视化 | G-Buffer 金属度 (GBufferA Blue, 灰度) |
 - **缓冲区可视化** — G-Buffer Pass 执行后，专用的 `BufferVisualization` 着色器采样指定的 G-Buffer 通道并以全屏 Pass 显示。
 
+### 🧱 材质系统
+
+- **材质资产** — `.mat` 文件（JSON 格式），独立于网格数据定义材质属性。每个材质引用一个着色器并定义属性值（浮点数、颜色、贴图）。
+- **MaterialLibrary** — 单例材质管理器。首次运行自动创建 `Default-Material.mat`，启动时扫描 `Materials/` 文件夹。材质通过名称从 `MeshComponent` 引用。
+- **着色器属性元数据** — 着色器可声明 `// @Properties { }` 块定义 UI 可见属性（Float、Range、Color、Texture2D）。材质编辑器解析这些元数据生成动态属性 UI。
+- **材质编辑器** — 在 Content Browser 中双击 `.mat` 文件打开浮动编辑器窗口。功能：着色器选择下拉框、基于 @Properties 的动态 UI（含颜色预览色块）、贴图槽位行（Pick 按钮 + 模态弹窗 + Content Browser 拖放）、Save/Close 按钮。
+- **属性迁移** — 所有外观属性（颜色、粗糙度、金属度、贴图路径）定义在 Material 中，不在 MeshComponent 中。UploadObjectCB 和贴图绑定在渲染时从材质读取。
+
+### 🖼️ 纹理系统
+
+- **TextureManager** — 通过 stb_image 运行时加载纹理。支持 PNG、JPG、BMP、TGA 格式。基于路径的缓存确保每张纹理只加载一次。
+- **默认纹理** — 始终可用的回退纹理：白色（1×1）、黑色（1×1）、平坦法线（128,128,255 — 中性法线贴图）。
+- **GPU 资源生命周期** — RHI 切换时所有纹理正确释放。DX11：修复 SysMemPitch；DX12：上传堆初始化数据。
+- **纹理选择器** — 模态弹窗列出 `Textures/` 目录中所有文件供选择。同时支持从 Content Browser 拖放（`KIWI_TEXTURE` 载荷）。
+
+### 📁 内容浏览器
+
+- **资产浏览器窗口** — 从 Window 菜单打开的浮动窗口。左侧：文件夹树（Scenes/Shaders/GLShaders/PostProcessShaders/Textures/Materials）。右侧：文件表格。
+- **右键菜单** — Show In Explorer（在系统文件管理器中高亮）+ Open File（使用默认应用打开）。
+- **双击行为** — `.json` → 加载场景；`.mat` → 打开材质编辑器；`.png/.jpg` → 预加载纹理到 GPU 缓存。
+- **拖放** — 纹理文件可从 Content Browser 拖放到材质编辑器的贴图槽位。
+
+### 🖼️ 多视口（ImGui Docking）
+
+- **ImGui Docking 分支** — 升级到 ImGui docking 分支，支持窗口停靠和多视口。
+- **可拖出窗口** — 任何 ImGui 窗口都可拖出主窗口成为独立 OS 窗口，各自拥有独立的交换链。
+- **ViewportsEnabled** — 完整启用视口拖拽和多窗口支持。
+
 ### 🎬 场景与组件系统
 
 - **实体-组件架构** — `SceneObject` 通过 `unique_ptr` 持有 `Component` 列表。提供模板方法 `AddComponent<T>`、`GetComponent<T>`、`RemoveComponent<T>`。
-- **MeshComponent（网格组件）** — 网格数据、颜色、着色器名称、排序顺序、图元类型、材质属性（粗糙度、金属度）。
+- **MeshComponent（网格组件）** — 网格数据、材质名称引用、排序顺序、图元类型。外观属性（颜色、粗糙度、金属度、贴图）定义在 Material 资产中。
 - **CameraComponent（相机组件）** — 透视/正交投影、可配置 FOV、近/远裁剪面、Main Camera 开关（互斥）。激活的相机驱动引擎渲染视角。
 - **DirectionalLightComponent（方向光组件）** — 方向由旋转决定，可配置颜色和强度。**级联阴影贴图（CSM）**参数：CastShadow、NumCascades (1-4)、ShadowMapResolution、ShadowDistance、CascadeSplitLambda、ShadowBias、NormalBias、ShadowStrength。
 - **PointLightComponent（点光源组件）** — 基于位置的光照，可配置半径，二次衰减。
@@ -141,7 +169,8 @@
 - **相机导航** — 按住鼠标右键 + WASD/方向键飞行移动主相机（水平面移动）；按住右键 + 鼠标拖动旋转相机方向（Yaw/Pitch，灵敏度 0.15°/px，Pitch 夹紧 ±89°）。
 - **相机设置** — 右上角 📷 按钮打开弹窗，可调节移动速度（0.5–50 units/s）和 FOV（10–120°）滑块。
 - **平移 Gizmo** — 三轴 Gizmo（X=红、Y=绿、Z=蓝），拖拽平移物体，活动轴变为黄色。**恒定屏幕大小** — Gizmo 根据相机距离自动缩放，无论缩放级别如何，始终保持相同的像素大小。
-- **屏幕空间 Gizmo 拾取** — Gizmo 轴选择使用 2D 屏幕空间距离（像素阈值）而非 3D 射线检测，无论相机角度或距离如何，都能提供可靠直觉的拾取体验。
+- **旋转/缩放 Gizmo** — 三模式变换 Gizmo（平移/旋转/缩放），通过 W/E/R 快捷键或工具栏按钮切换。旋转使用环形手柄 + 屏幕空间角度拾取；缩放使用轴+立方体手柄 + 射线投影。右上角显示当前模式图标。
+- **屏幕空间 Gizmo 拾取** — Gizmo 轴选择使用 2D 屏幕空间距离（像素阈值）和平移/缩放轴的环点云采样（40 个采样点）来选择旋转环，无论相机角度或距离如何，都能提供可靠直觉的拾取体验。
 - **模型导入** — 加载外部 `.obj`（Wavefront OBJ，通过 tinyobjloader）和 `.fbx`（Autodesk FBX，通过 ufbx）模型文件。每个子网格成为独立的网格物体，附带材质漫反射颜色。自动顶点去重、多边形三角化、平面/平滑法线计算和 UV 坐标翻转。
 - **射线拾取** — 点击视口选择物体，Gizmo 轴优先于场景物体。
 - **程序化网格** — 内置图元：立方体、球体、圆柱体、地面。
@@ -223,12 +252,15 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 - **添加灯光**：Placer 面板 → Directional Light / Point Light
 - **添加相机**：Placer 面板 → Camera
 - **选择物体**：点击视口中的物体或从物体列表选择
-- **移动物体**：拖拽 Gizmo 轴（红=X、绿=Y、蓝=Z）
-- **编辑属性**：Detail 面板 → 位置 / 旋转 / 缩放 / 颜色 / 着色器 / FOV / 灯光参数
+- **变换物体**：W（平移）/ E（旋转）/ R（缩放）— 拖拽 Gizmo 轴变换物体；右上角模式按钮
+- **编辑属性**：Detail 面板 → Transform / Material / Shader / FOV / 灯光参数
 - **主相机**：Detail 面板 → 勾选 Main Camera（互斥）
 - **后处理**：Detail 面板 → 添加材质、调整顺序、调节强度、启用/禁用
+- **材质编辑器**：Content Browser → 双击 `.mat` 文件 → 编辑着色器、属性、贴图；可从浏览器拖入贴图
+- **内容浏览器**：Window 菜单 → 浏览 Scenes/Shaders/Textures/Materials；拖放贴图；右键打开 Explorer
 - **帧捕获**：点击右上角 🔵 按钮 → 自动打开 RenderDoc
 - **场景管理**：File 菜单 → Create Scene / Open Scene（扫描 `Scenes/` 文件夹） / Save Scene（命名对话框，JSON 格式）
+- **多视口**：拖拽面板边框停靠；拖拽窗口标题栏出主窗口创建独立 OS 窗口
 
 ---
 
@@ -399,16 +431,19 @@ KiwiEngine/
 │   │   └── Math.h                    # Vec2/3/4、Mat4、投影、LookAt
 │   └── Scene/
 │       ├── Component.h               # 组件基类（Transform、EComponentType）
-│       ├── MeshComponent.h           # 网格 + 颜色 + 着色器 + 材质属性
+│       ├── MeshComponent.h           # 网格 + 材质引用 + 排序顺序
+│       ├── Material.h                # 材质资产 + MaterialLibrary + ShaderProperties 解析器
+│       ├── TextureManager.h          # 纹理加载 (stb_image) + GPU 纹理缓存 + 默认纹理
 │       ├── CameraComponent.h         # 相机（透视/正交、FOV、MainCamera）
 │       ├── LightComponent.h          # 方向光与点光源组件
 │       ├── PostProcessComponent.h    # 后处理材质容器
 │       ├── SceneObject.h             # 实体与组件列表
 │       ├── PrimitiveType.h           # EPrimitiveType 枚举（打破循环依赖）
 │       ├── Scene.h                   # 场景管理与序列化
-│       ├── Mesh.h                    # 网格数据结构
+│       ├── Mesh.h                    # 网格数据结构（Vertex: Position/Normal/Tangent/Color/UV）
 │       ├── Shaders.h                 # 内嵌 HLSL 与 CB 布局
 │       ├── ShaderLibrary.h           # 文件着色器扫描与编译
+│       ├── GLShaders.h               # OpenGL 后端 GLSL 着色器定义
 │       ├── PostProcessShaders.h      # 后处理着色器定义（全屏 VS）
 │       ├── PostProcessShaderLibrary.h # 后处理着色器扫描与编译
 │       ├── ModelImporter.h           # OBJ/FBX 模型导入（tinyobjloader + ufbx）
@@ -422,6 +457,8 @@ KiwiEngine/
 ├── Shaders/                          # HLSL 着色器（Default、Unlit、Wireframe、DefaultLit、GBufferPass、DeferredLighting、ShadowPass、BufferVisualization）
 ├── GLShaders/                        # GLSL 着色器（DefaultLit、Unlit、Wireframe）
 ├── PostProcessShaders/               # 后处理 HLSL 着色器（Grayscale、Vignette）
+├── Textures/                         # 用户纹理文件（PNG、JPG、BMP、TGA）
+├── Materials/                        # 材质资产文件（.mat JSON）
 ├── Scenes/                           # 场景 JSON 文件（Default.json、用户场景）
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8

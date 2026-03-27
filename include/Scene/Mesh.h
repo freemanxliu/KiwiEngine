@@ -15,6 +15,7 @@ namespace Kiwi
     {
         Vec3 Position;
         Vec3 Normal;
+        Vec3 Tangent;     // Tangent vector for TBN normal mapping
         Vec4 Color;
         Vec2 TexCoord;    // UV coordinates for texture sampling
     };

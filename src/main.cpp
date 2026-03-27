@@ -228,16 +228,145 @@ static void ComputeWorldAABB(const MeshComponent& mesh, Vec3& outMin, Vec3& outM
 }
 
 // ============================================================
-// Gizmo — Translation Arrows (3 axis cylinders + cones)
+// Gizmo — Translation / Rotation / Scale
 // ============================================================
 
 enum class EGizmoAxis { None = 0, X, Y, Z };
+enum class EGizmoMode { Translate = 0, Rotate, Scale };
 
 struct GizmoMeshData
 {
     std::vector<Vertex> Vertices;
     std::vector<uint32_t> Indices;
 };
+
+// ---- Generate a torus ring around the given normal axis (for rotation gizmo) ----
+static GizmoMeshData CreateGizmoRing(const Vec3& axisNormal, const Vec4& color,
+                                     float ringRadius = 1.0f, float tubeRadius = 0.03f,
+                                     uint32_t ringSegs = 40, uint32_t tubeSegs = 8)
+{
+    GizmoMeshData gizmo;
+
+    // Build orthonormal basis: axisNormal is the ring's "up"
+    Vec3 N = axisNormal;
+    Vec3 T; // tangent in ring plane
+    if (std::abs(N.y) < 0.99f)
+        T = Vec3(0, 1, 0).Cross(N).Normalize();
+    else
+        T = Vec3(1, 0, 0).Cross(N).Normalize();
+    Vec3 B = N.Cross(T).Normalize();
+
+    auto addVert = [&](Vec3 pos, Vec3 norm)
+    {
+        gizmo.Vertices.push_back({ pos, norm, { 1.0f, 1.0f, 1.0f, 1.0f } });
+    };
+
+    // Ring: for each ring segment, build a small tube cross-section
+    for (uint32_t i = 0; i <= ringSegs; i++)
+    {
+        float phi = (float)i / ringSegs * 2.0f * PI;
+        float cp = cosf(phi), sp = sinf(phi);
+        Vec3 ringCenter = T * (ringRadius * cp) + B * (ringRadius * sp);
+        // Outward radial direction in ring plane
+        Vec3 radial = (T * cp + B * sp).Normalize();
+
+        for (uint32_t j = 0; j <= tubeSegs; j++)
+        {
+            float theta = (float)j / tubeSegs * 2.0f * PI;
+            float ct = cosf(theta), st = sinf(theta);
+            Vec3 tubeDir = radial * ct + N * st;
+            Vec3 pos = ringCenter + tubeDir * tubeRadius;
+            addVert(pos, tubeDir);
+        }
+    }
+
+    // Indices
+    uint32_t stride = tubeSegs + 1;
+    for (uint32_t i = 0; i < ringSegs; i++)
+    {
+        for (uint32_t j = 0; j < tubeSegs; j++)
+        {
+            uint32_t a = i * stride + j;
+            uint32_t b = (i + 1) * stride + j;
+            gizmo.Indices.push_back(a);
+            gizmo.Indices.push_back(b);
+            gizmo.Indices.push_back(a + 1);
+            gizmo.Indices.push_back(a + 1);
+            gizmo.Indices.push_back(b);
+            gizmo.Indices.push_back(b + 1);
+        }
+    }
+    return gizmo;
+}
+
+// ---- Generate a scale axis: shaft cylinder + cube end cap ----
+static GizmoMeshData CreateGizmoScaleAxis(const Vec3& axisDir, const Vec4& color,
+                                          float length = 1.2f, float shaftRadius = 0.02f,
+                                          float cubeHalf = 0.07f)
+{
+    GizmoMeshData gizmo;
+    const uint32_t segments = 12;
+    float shaftLength = length - cubeHalf * 2.0f;
+
+    Vec3 up = axisDir;
+    Vec3 right;
+    if (std::abs(up.y) < 0.99f)
+        right = Vec3(0, 1, 0).Cross(up).Normalize();
+    else
+        right = Vec3(1, 0, 0).Cross(up).Normalize();
+    Vec3 forward = up.Cross(right).Normalize();
+
+    auto addVert = [&](Vec3 pos, Vec3 norm)
+    {
+        gizmo.Vertices.push_back({ pos, norm, { 1.0f, 1.0f, 1.0f, 1.0f } });
+    };
+
+    // Shaft (cylinder)
+    for (uint32_t i = 0; i <= segments; i++)
+    {
+        float theta = (float)i / segments * 2.0f * PI;
+        float ct = cosf(theta), st = sinf(theta);
+        Vec3 circleDir = right * ct + forward * st;
+        Vec3 bottom = circleDir * shaftRadius;
+        Vec3 top    = circleDir * shaftRadius + up * shaftLength;
+        addVert(bottom, circleDir);
+        addVert(top,    circleDir);
+    }
+    for (uint32_t i = 0; i < segments; i++)
+    {
+        uint32_t b = i * 2;
+        gizmo.Indices.push_back(b);
+        gizmo.Indices.push_back(b + 2);
+        gizmo.Indices.push_back(b + 1);
+        gizmo.Indices.push_back(b + 1);
+        gizmo.Indices.push_back(b + 2);
+        gizmo.Indices.push_back(b + 3);
+    }
+
+    // Cube end cap (6 faces of a box at the end)
+    Vec3 c = up * length; // cube center
+    Vec3 axes[3] = { right, up, forward };
+    for (int face = 0; face < 6; face++)
+    {
+        int dim   = face / 2;
+        float sign = (face % 2 == 0) ? 1.0f : -1.0f;
+        Vec3 norm = axes[dim] * sign;
+        Vec3 t1   = axes[(dim + 1) % 3];
+        Vec3 t2   = axes[(dim + 2) % 3];
+        uint32_t base = (uint32_t)gizmo.Vertices.size();
+        addVert(c + norm * cubeHalf - t1 * cubeHalf - t2 * cubeHalf, norm);
+        addVert(c + norm * cubeHalf + t1 * cubeHalf - t2 * cubeHalf, norm);
+        addVert(c + norm * cubeHalf + t1 * cubeHalf + t2 * cubeHalf, norm);
+        addVert(c + norm * cubeHalf - t1 * cubeHalf + t2 * cubeHalf, norm);
+        gizmo.Indices.push_back(base);     gizmo.Indices.push_back(base + 1); gizmo.Indices.push_back(base + 2);
+        gizmo.Indices.push_back(base);     gizmo.Indices.push_back(base + 2); gizmo.Indices.push_back(base + 3);
+    }
+    return gizmo;
+}
+
+
+
+
 
 static GizmoMeshData CreateGizmoArrow(const Vec3& axisDir, const Vec4& color, float length = 1.2f, float shaftRadius = 0.02f, float headRadius = 0.06f, float headLength = 0.2f)
 {
@@ -601,8 +730,19 @@ protected:
                         m_DragStartMouseX = mouse.X;
                         m_DragStartMouseY = mouse.Y;
                         auto* sel = m_Scene.GetSelectedObject();
-                        // Get position from primary component
-                        m_DragStartPos = sel->GetPosition();
+                        m_DragStartPos      = sel->GetPosition();
+                        m_DragStartRotation = sel->GetRotation();
+                        m_DragStartScale    = sel->GetScale();
+
+                        // For rotate: record starting angle projected on screen
+                        if (m_GizmoMode == EGizmoMode::Rotate)
+                        {
+                            uint32_t w = GetWindow()->GetWidth();
+                            uint32_t h = GetWindow()->GetHeight();
+                            Vec2 originSS = WorldToScreen(m_DragStartPos, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                            Vec2 mp = { (float)mouse.X, (float)mouse.Y };
+                            m_DragStartAngle = atan2f(mp.y - originSS.y, mp.x - originSS.x);
+                        }
                     }
                     else
                     {
@@ -624,9 +764,6 @@ protected:
                     uint32_t w = GetWindow()->GetWidth();
                     uint32_t h = GetWindow()->GetHeight();
 
-                    Ray rayNow = ScreenToRay(mouse.X, mouse.Y, w, h, m_ViewMatrix, m_ProjectionMatrix);
-                    Ray rayStart = ScreenToRay(m_DragStartMouseX, m_DragStartMouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
-
                     Vec3 axisDir;
                     switch (m_DragAxis)
                     {
@@ -636,11 +773,45 @@ protected:
                     default: break;
                     }
 
-                    float tNow = RayAxisClosestParam(rayNow, m_DragStartPos, axisDir);
-                    float tStart = RayAxisClosestParam(rayStart, m_DragStartPos, axisDir);
-                    float delta = tNow - tStart;
+                    if (m_GizmoMode == EGizmoMode::Translate)
+                    {
+                        Ray rayNow   = ScreenToRay(mouse.X, mouse.Y, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                        Ray rayStart = ScreenToRay(m_DragStartMouseX, m_DragStartMouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                        float tNow   = RayAxisClosestParam(rayNow,   m_DragStartPos, axisDir);
+                        float tStart = RayAxisClosestParam(rayStart, m_DragStartPos, axisDir);
+                        sel->GetPosition() = m_DragStartPos + axisDir * (tNow - tStart);
+                    }
+                    else if (m_GizmoMode == EGizmoMode::Rotate)
+                    {
+                        // Compute angle delta on screen: atan2 of cursor vs gizmo origin SS
+                        Vec2 originSS = WorldToScreen(m_DragStartPos, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                        Vec2 mp = { (float)mouse.X, (float)mouse.Y };
+                        float curAngle = atan2f(mp.y - originSS.y, mp.x - originSS.x);
+                        float deltaRad = curAngle - m_DragStartAngle;
+                        float deltaDeg = deltaRad * (180.0f / PI);
 
-                    sel->GetPosition() = m_DragStartPos + axisDir * delta;
+                        Vec3 newRot = m_DragStartRotation;
+                        if      (m_DragAxis == EGizmoAxis::X) newRot.x += deltaDeg;
+                        else if (m_DragAxis == EGizmoAxis::Y) newRot.y += deltaDeg;
+                        else if (m_DragAxis == EGizmoAxis::Z) newRot.z += deltaDeg;
+                        sel->GetRotation() = newRot;
+                    }
+                    else if (m_GizmoMode == EGizmoMode::Scale)
+                    {
+                        // Project axis on screen: delta pixels along axis screen direction → scale
+                        Ray rayNow   = ScreenToRay(mouse.X, mouse.Y, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                        Ray rayStart = ScreenToRay(m_DragStartMouseX, m_DragStartMouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                        float tNow   = RayAxisClosestParam(rayNow,   m_DragStartPos, axisDir);
+                        float tStart = RayAxisClosestParam(rayStart, m_DragStartPos, axisDir);
+                        float delta  = tNow - tStart; // world units dragged
+
+                        Vec3 newScale = m_DragStartScale;
+                        // Scale in the dragged axis
+                        if      (m_DragAxis == EGizmoAxis::X) newScale.x = std::max(0.001f, m_DragStartScale.x + delta);
+                        else if (m_DragAxis == EGizmoAxis::Y) newScale.y = std::max(0.001f, m_DragStartScale.y + delta);
+                        else if (m_DragAxis == EGizmoAxis::Z) newScale.z = std::max(0.001f, m_DragStartScale.z + delta);
+                        sel->GetScale() = newScale;
+                    }
                 }
             }
 
@@ -965,8 +1136,10 @@ protected:
         DrawStatsOverlay();
         DrawViewModeButton();
         DrawCameraButton();
+        DrawGizmoModeBar();
         DrawUI();
         DrawContentBrowser();
+        DrawMaterialEditor();
 
         ImGui::Render();
         device->ImGuiRenderDrawData(ctx);
@@ -998,27 +1171,33 @@ protected:
     {
         Mat4 worldMatrix = meshComp->GetWorldMatrix();
 
+        // Fetch material for PBR properties
+        Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
+        Vec4  color     = mat ? mat->GetColor("_Color",     { 0.8f, 0.8f, 0.8f, 1.0f }) : Vec4{ 0.8f, 0.8f, 0.8f, 1.0f };
+        float roughness = mat ? mat->GetFloat("_Roughness", 0.5f) : 0.5f;
+        float metallic  = mat ? mat->GetFloat("_Metallic",  0.0f) : 0.0f;
+        std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
+        std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
+
         ConstantBufferData cbd = {};
         memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
         memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
         memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-        cbd.ObjectColor[0] = meshComp->Color.x;
-        cbd.ObjectColor[1] = meshComp->Color.y;
-        cbd.ObjectColor[2] = meshComp->Color.z;
-        cbd.ObjectColor[3] = meshComp->Color.w;
+        cbd.ObjectColor[0] = color.x;
+        cbd.ObjectColor[1] = color.y;
+        cbd.ObjectColor[2] = color.z;
+        cbd.ObjectColor[3] = color.w;
         cbd.Selected = 0.0f;
         cbd.NumLights = m_NumActiveLights;
         cbd.CameraPos[0] = m_CameraPosition.x;
         cbd.CameraPos[1] = m_CameraPosition.y;
         cbd.CameraPos[2] = m_CameraPosition.z;
-        cbd.Roughness = meshComp->Roughness;
-        cbd.Metallic = meshComp->Metallic;
+        cbd.Roughness = roughness;
+        cbd.Metallic  = metallic;
 
         // Texture flags
-        bool hasBaseColorTex = !meshComp->BaseColorTexture.empty();
-        bool hasNormalTex = !meshComp->NormalTexture.empty();
-        cbd.HasBaseColorTex = hasBaseColorTex ? 1.0f : 0.0f;
-        cbd.HasNormalTex = hasNormalTex ? 1.0f : 0.0f;
+        cbd.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
+        cbd.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
         cbd.MaterialPadding = 0.0f;
 
         memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
@@ -1035,11 +1214,16 @@ protected:
     // Helper: Bind material textures for the current object
     void BindMaterialTextures(RHICommandContext* ctx, MeshComponent* meshComp)
     {
+        Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
+        std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
+        std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
+        std::string mrTex        = mat ? mat->GetTexture("_MetallicRoughnessTex") : "";
+
         // t4 = BaseColor texture
-        if (!meshComp->BaseColorTexture.empty())
+        if (!baseColorTex.empty())
         {
-            GPUTexture* tex = m_TextureManager.GetTexture(meshComp->BaseColorTexture);
-            if (!tex) tex = m_TextureManager.LoadTexture(meshComp->BaseColorTexture);
+            GPUTexture* tex = m_TextureManager.GetTexture(baseColorTex);
+            if (!tex) tex = m_TextureManager.LoadTexture(baseColorTex);
             if (tex && tex->SRV)
                 ctx->SetShaderResourceView(4, tex->SRV.get());
             else
@@ -1047,16 +1231,15 @@ protected:
         }
         else
         {
-            // Bind white texture as default (no texture)
             if (m_TextureManager.GetWhiteTexture())
                 ctx->SetShaderResourceView(4, m_TextureManager.GetWhiteTexture()->SRV.get());
         }
 
         // t5 = Normal map texture
-        if (!meshComp->NormalTexture.empty())
+        if (!normalTex.empty())
         {
-            GPUTexture* tex = m_TextureManager.GetTexture(meshComp->NormalTexture);
-            if (!tex) tex = m_TextureManager.LoadTexture(meshComp->NormalTexture);
+            GPUTexture* tex = m_TextureManager.GetTexture(normalTex);
+            if (!tex) tex = m_TextureManager.LoadTexture(normalTex);
             if (tex && tex->SRV)
                 ctx->SetShaderResourceView(5, tex->SRV.get());
             else
@@ -1066,6 +1249,15 @@ protected:
         {
             if (m_TextureManager.GetDefaultNormalTexture())
                 ctx->SetShaderResourceView(5, m_TextureManager.GetDefaultNormalTexture()->SRV.get());
+        }
+
+        // t6 = MetallicRoughness texture (optional; not yet sampled in shader but bound for future use)
+        if (!mrTex.empty())
+        {
+            GPUTexture* tex = m_TextureManager.GetTexture(mrTex);
+            if (!tex) tex = m_TextureManager.LoadTexture(mrTex);
+            if (tex && tex->SRV)
+                ctx->SetShaderResourceView(6, tex->SRV.get());
         }
     }
 
@@ -1120,9 +1312,15 @@ protected:
                 continue;
 
             // --- Per-object shader switching ---
+            std::string matShaderName;
+            if (!forceShaderName)
+            {
+                Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
+                matShaderName = mat ? mat->ShaderName : "DefaultLit";
+            }
             const std::string& shaderName = forceShaderName
                 ? std::string(forceShaderName)
-                : meshComp->ShaderName;
+                : matShaderName;
             if (shaderName != lastShaderName)
             {
                 CompiledShader* shader = m_ShaderLibrary.GetShader(shaderName);
@@ -1546,6 +1744,10 @@ protected:
         {
             m_GizmoVB[i].reset();
             m_GizmoIB[i].reset();
+            m_GizmoRingVB[i].reset();
+            m_GizmoRingIB[i].reset();
+            m_GizmoScaleVB[i].reset();
+            m_GizmoScaleIB[i].reset();
         }
         m_DirLightIndicatorVB.reset();
         m_DirLightIndicatorIB.reset();
@@ -1602,12 +1804,13 @@ private:
 
         // Create input layout (shared across all shaders — same vertex format)
         InputElementDesc inputElements[] = {
-            { "POSITION", 0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Position), 0, 0 },
-            { "NORMAL",   0, EFormat::R32G32B32_FLOAT, (uint32_t)offsetof(Vertex, Normal),   0, 0 },
-            { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color), 0, 0 },
-            { "TEXCOORD", 0, EFormat::R32G32_FLOAT,    (uint32_t)offsetof(Vertex, TexCoord), 0, 0 },
+            { "POSITION", 0, EFormat::R32G32B32_FLOAT,    (uint32_t)offsetof(Vertex, Position), 0, 0 },
+            { "NORMAL",   0, EFormat::R32G32B32_FLOAT,    (uint32_t)offsetof(Vertex, Normal),   0, 0 },
+            { "TANGENT",  0, EFormat::R32G32B32_FLOAT,    (uint32_t)offsetof(Vertex, Tangent),  0, 0 },
+            { "COLOR",    0, EFormat::R32G32B32A32_FLOAT, (uint32_t)offsetof(Vertex, Color),    0, 0 },
+            { "TEXCOORD", 0, EFormat::R32G32_FLOAT,       (uint32_t)offsetof(Vertex, TexCoord), 0, 0 },
         };
-        m_InputLayout = device->CreateInputLayout(inputElements, 4, tempVS.get());
+        m_InputLayout = device->CreateInputLayout(inputElements, 5, tempVS.get());
 
         // Constant buffer
         BufferDesc cbDesc;
@@ -3088,6 +3291,246 @@ private:
     }
 
     // ============================================================
+    // Gizmo Mode Bar (top-left of viewport: W=Translate, E=Rotate, R=Scale)
+    // ============================================================
+
+    void DrawGizmoModeBar()
+    {
+        float menuBarHeight = ImGui::GetFrameHeight();
+        ImGuiViewport* mvp = ImGui::GetMainViewport();
+        float vpX = mvp->Pos.x, vpY = mvp->Pos.y;
+
+        // W / E / R shortcut keys (only when ImGui doesn't want keyboard)
+        ImGuiIO& io = ImGui::GetIO();
+        if (!io.WantCaptureKeyboard)
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false) && !m_IsDragging)
+                m_GizmoMode = EGizmoMode::Translate;
+            if (ImGui::IsKeyPressed(ImGuiKey_E, false) && !m_IsDragging)
+                m_GizmoMode = EGizmoMode::Rotate;
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !m_IsDragging)
+                m_GizmoMode = EGizmoMode::Scale;
+        }
+
+        // ---- Left toolbar (W/E/R text buttons) ----
+        {
+            float btnW = 36.0f, btnH = 26.0f, gap = 2.0f, padLeft = 8.0f;
+            ImGui::SetNextWindowPos(
+                ImVec2(vpX + padLeft, vpY + menuBarHeight + 6.0f),
+                ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.75f);
+
+            ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(gap, 0));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+            if (ImGui::Begin("##GizmoModeBar", nullptr, flags))
+            {
+                struct ModeBtn { const char* label; EGizmoMode mode; const char* tip; };
+                ModeBtn btns[] = {
+                    { "W", EGizmoMode::Translate, "Translate (W)" },
+                    { "E", EGizmoMode::Rotate,    "Rotate (E)"    },
+                    { "R", EGizmoMode::Scale,     "Scale (R)"     },
+                };
+
+                for (int i = 0; i < 3; i++)
+                {
+                    bool active = (m_GizmoMode == btns[i].mode);
+                    if (active)
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.85f, 1.0f));
+                    else
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.28f, 0.34f, 0.95f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.60f, 0.90f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.75f, 1.0f));
+
+                    if (ImGui::Button(btns[i].label, ImVec2(btnW, btnH)))
+                        m_GizmoMode = btns[i].mode;
+
+                    ImGui::PopStyleColor(3);
+
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted(btns[i].tip);
+                        ImGui::EndTooltip();
+                    }
+
+                    if (i < 2) ImGui::SameLine();
+                }
+            }
+            ImGui::End();
+            ImGui::PopStyleVar(4);
+        }
+
+        // ---- Right toolbar: 3 icon buttons, 26px, left of Camera button ----
+        // Layout (right-to-left): RenderDoc(32) | Stats(32) | ViewMode(32) | Camera(32) | [Gizmo x3]
+        {
+            float bigBtn = 32.0f, bigGap = 6.0f;
+            float windowWidth = (float)GetWindow()->GetWidth();
+            float rdocBtnX     = windowWidth - bigBtn - 12.0f;
+            float statsBtnX    = rdocBtnX  - bigBtn - bigGap;
+            float viewModeBtnX = statsBtnX - bigBtn - bigGap;
+            float cameraBtnX   = viewModeBtnX - bigBtn - bigGap;
+
+            // Gizmo group: 3 buttons of 26px with 2px gap = 82px total
+            float gizmoBtnSize = 26.0f;
+            float gizmoGap     = 2.0f;
+            float gizmoGroupW  = gizmoBtnSize * 3 + gizmoGap * 2;
+            float gizmoBtnX    = cameraBtnX - gizmoGroupW - bigGap;
+
+            ImGui::SetNextWindowPos(
+                ImVec2(vpX + gizmoBtnX, vpY + menuBarHeight + 6.0f),
+                ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.0f);
+
+            ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0, 0));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,      ImVec2(gizmoGap, 0));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,    6.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+            if (ImGui::Begin("##GizmoModeTopRight", nullptr, flags))
+            {
+                struct GizmoBtn { EGizmoMode mode; const char* tip; };
+                GizmoBtn btns[3] = {
+                    { EGizmoMode::Translate, "Translate (W)" },
+                    { EGizmoMode::Rotate,    "Rotate (E)"    },
+                    { EGizmoMode::Scale,     "Scale (R)"     },
+                };
+
+                for (int i = 0; i < 3; i++)
+                {
+                    bool active = (m_GizmoMode == btns[i].mode);
+
+                    ImVec4 btnCol    = active
+                        ? ImVec4(0.18f, 0.50f, 0.82f, 1.0f)
+                        : ImVec4(0.20f, 0.26f, 0.32f, 0.92f);
+                    ImVec4 hoverCol  = ImVec4(0.28f, 0.58f, 0.90f, 1.0f);
+                    ImVec4 activeCol = ImVec4(0.14f, 0.42f, 0.72f, 1.0f);
+
+                    ImGui::PushStyleColor(ImGuiCol_Button,        btnCol);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverCol);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  activeCol);
+
+                    if (ImGui::Button(("##gtr" + std::to_string(i)).c_str(),
+                                      ImVec2(gizmoBtnSize, gizmoBtnSize)))
+                        m_GizmoMode = btns[i].mode;
+
+                    ImGui::PopStyleColor(3);
+
+                    // Custom icon drawn over the button area
+                    ImVec2 bMin = ImGui::GetItemRectMin();
+                    ImVec2 bMax = ImGui::GetItemRectMax();
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImVec2 ctr = ImVec2((bMin.x + bMax.x) * 0.5f, (bMin.y + bMax.y) * 0.5f);
+                    ImU32 iconCol = active
+                        ? IM_COL32(255, 255, 255, 255)
+                        : IM_COL32(160, 180, 200, 220);
+
+                    if (btns[i].mode == EGizmoMode::Translate)
+                    {
+                        // Move: cross arrows icon
+                        float arm = 7.0f, head = 3.0f;
+                        // horizontal arrow
+                        dl->AddLine(ImVec2(ctr.x - arm, ctr.y), ImVec2(ctr.x + arm, ctr.y), iconCol, 1.5f);
+                        dl->AddTriangleFilled(
+                            ImVec2(ctr.x + arm,       ctr.y),
+                            ImVec2(ctr.x + arm - head, ctr.y - head * 0.6f),
+                            ImVec2(ctr.x + arm - head, ctr.y + head * 0.6f), iconCol);
+                        dl->AddTriangleFilled(
+                            ImVec2(ctr.x - arm,       ctr.y),
+                            ImVec2(ctr.x - arm + head, ctr.y - head * 0.6f),
+                            ImVec2(ctr.x - arm + head, ctr.y + head * 0.6f), iconCol);
+                        // vertical arrow
+                        dl->AddLine(ImVec2(ctr.x, ctr.y - arm), ImVec2(ctr.x, ctr.y + arm), iconCol, 1.5f);
+                        dl->AddTriangleFilled(
+                            ImVec2(ctr.x,             ctr.y - arm),
+                            ImVec2(ctr.x - head*0.6f, ctr.y - arm + head),
+                            ImVec2(ctr.x + head*0.6f, ctr.y - arm + head), iconCol);
+                        dl->AddTriangleFilled(
+                            ImVec2(ctr.x,             ctr.y + arm),
+                            ImVec2(ctr.x - head*0.6f, ctr.y + arm - head),
+                            ImVec2(ctr.x + head*0.6f, ctr.y + arm - head), iconCol);
+                    }
+                    else if (btns[i].mode == EGizmoMode::Rotate)
+                    {
+                        // Rotate: circular arc with arrowhead
+                        float r = 7.0f;
+                        const int arcSegs = 20;
+                        float startAngle = 0.3f;
+                        float endAngle   = 2.0f * 3.14159f - 0.3f;
+                        for (int s = 0; s < arcSegs; s++)
+                        {
+                            float a0 = startAngle + (endAngle - startAngle) * s / arcSegs;
+                            float a1 = startAngle + (endAngle - startAngle) * (s + 1) / arcSegs;
+                            dl->AddLine(
+                                ImVec2(ctr.x + r * cosf(a0), ctr.y + r * sinf(a0)),
+                                ImVec2(ctr.x + r * cosf(a1), ctr.y + r * sinf(a1)),
+                                iconCol, 1.8f);
+                        }
+                        // Arrowhead at end
+                        float ae = endAngle;
+                        float tang = ae + 3.14159f * 0.5f;
+                        ImVec2 tip(ctr.x + r * cosf(ae), ctr.y + r * sinf(ae));
+                        float hs = 3.5f;
+                        dl->AddTriangleFilled(
+                            tip,
+                            ImVec2(tip.x + hs * cosf(tang - 2.4f), tip.y + hs * sinf(tang - 2.4f)),
+                            ImVec2(tip.x + hs * cosf(tang + 2.4f), tip.y + hs * sinf(tang + 2.4f)),
+                            iconCol);
+                    }
+                    else // Scale
+                    {
+                        // Scale: 3 axis stubs with square end caps
+                        float arm = 6.5f, sq = 2.2f;
+                        // X axis (right, red-ish but use iconCol)
+                        dl->AddLine(ImVec2(ctr.x, ctr.y), ImVec2(ctr.x + arm, ctr.y), iconCol, 1.5f);
+                        dl->AddRectFilled(
+                            ImVec2(ctr.x + arm - sq, ctr.y - sq),
+                            ImVec2(ctr.x + arm + sq, ctr.y + sq), iconCol);
+                        // Y axis (up)
+                        dl->AddLine(ImVec2(ctr.x, ctr.y), ImVec2(ctr.x, ctr.y - arm), iconCol, 1.5f);
+                        dl->AddRectFilled(
+                            ImVec2(ctr.x - sq, ctr.y - arm - sq),
+                            ImVec2(ctr.x + sq, ctr.y - arm + sq), iconCol);
+                        // Z axis (diagonal hint)
+                        float d = arm * 0.70f;
+                        dl->AddLine(ImVec2(ctr.x, ctr.y), ImVec2(ctr.x - d, ctr.y + d), iconCol, 1.5f);
+                        dl->AddRectFilled(
+                            ImVec2(ctr.x - d - sq, ctr.y + d - sq),
+                            ImVec2(ctr.x - d + sq, ctr.y + d + sq), iconCol);
+                    }
+
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted(btns[i].tip);
+                        ImGui::EndTooltip();
+                    }
+
+                    if (i < 2) ImGui::SameLine();
+                }
+            }
+            ImGui::End();
+            ImGui::PopStyleVar(4);
+        }
+    }
+
+    // ============================================================
     // UI
     // ============================================================
 
@@ -3321,6 +3764,20 @@ private:
                         }
                     }
 
+                    // Drag-drop source: texture files only
+                    bool isTexExt = (file.Extension == ".png" || file.Extension == ".jpg" || file.Extension == ".jpeg"
+                                  || file.Extension == ".bmp" || file.Extension == ".tga"
+                                  || file.Extension == ".PNG" || file.Extension == ".JPG"
+                                  || file.Extension == ".BMP" || file.Extension == ".TGA");
+                    if (isTexExt && ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
+                    {
+                        // payload = just the filename (relative to Textures/)
+                        const std::string& fname = file.Name;
+                        ImGui::SetDragDropPayload("KIWI_TEXTURE", fname.c_str(), fname.size() + 1);
+                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "[Tex] %s", stem.c_str());
+                        ImGui::EndDragDropSource();
+                    }
+
                     // Right-click context menu
                     if (ImGui::BeginPopupContextItem(("##ctx_" + file.Name).c_str()))
                     {
@@ -3458,6 +3915,328 @@ private:
         }
     }
 
+    // ============================================================
+    // Material Editor Window
+    // ============================================================
+
+    // ---- Texture Picker Popup ----
+    // Opens a modal listing all textures in Textures/ and lets the user pick one.
+    void DrawTexturePicker()
+    {
+        if (!m_ShowTexturePicker) return;
+
+        ImGui::OpenPopup("##KiwiTexPicker");
+        m_ShowTexturePicker = false;
+    }
+
+    void DrawTexturePickerModal()
+    {
+        if (!ImGui::BeginPopupModal("##KiwiTexPicker", nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+            return;
+
+        ImGui::TextColored(ImVec4(0.9f, 0.7f, 1.0f, 1.0f), "Select Texture");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // List textures from Textures/ folder
+        namespace fs = std::filesystem;
+        static const char* kTexExts[] = { ".png", ".jpg", ".jpeg", ".bmp", ".tga",
+                                           ".PNG", ".JPG", ".BMP", ".TGA", nullptr };
+        auto isTexFile = [&](const std::string& ext) {
+            for (int i = 0; kTexExts[i]; i++)
+                if (ext == kTexExts[i]) return true;
+            return false;
+        };
+
+        bool selected = false;
+        if (fs::exists(m_TexturesDir))
+        {
+            for (auto& entry : fs::directory_iterator(m_TexturesDir))
+            {
+                if (!entry.is_regular_file()) continue;
+                std::string ext = entry.path().extension().string();
+                if (!isTexFile(ext)) continue;
+
+                std::string fname = entry.path().filename().string();
+                std::string stem  = entry.path().stem().string();
+
+                // Color swatch placeholder
+                ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "[Tex]");
+                ImGui::SameLine();
+                if (ImGui::Selectable(fname.c_str(), false, 0, ImVec2(280, 0)))
+                {
+                    // Set the property
+                    Material* mat = m_MaterialLibrary.GetMaterial(m_TexturePickerMatTarget);
+                    if (mat)
+                        mat->SetTexture(m_TexturePickerPropKey, fname);
+                    m_TexturePickerMatTarget.clear();
+                    m_TexturePickerPropKey.clear();
+                    selected = true;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+        }
+
+        if (!selected)
+        {
+            ImGui::Spacing();
+            if (ImGui::Button("Cancel", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+
+    // Helper: draw a single texture slot row
+    // Returns true if value changed.
+    // slotLabel: display label (e.g. "Base Color")
+    // propKey: material property key (e.g. "_BaseColorTex")
+    // uniqueId: unique string for ImGui ID disambiguation
+    // mat: material to read/write
+    void DrawTextureSlotRow(const std::string& slotLabel, const std::string& propKey,
+                            const std::string& uniqueId, Material* mat)
+    {
+        std::string texPath = mat->GetTexture(propKey);
+
+        // Slot label column (fixed width)
+        ImGui::Text("%-11s", slotLabel.c_str());
+        ImGui::SameLine();
+
+        // Read-only display (grey input box)
+        float pickBtnW = 52.0f;
+        float clearBtnW = texPath.empty() ? 0.0f : 24.0f;
+        float inputW = ImGui::GetContentRegionAvail().x - pickBtnW - clearBtnW - 8.0f;
+        ImGui::SetNextItemWidth(inputW > 40 ? inputW : 40);
+
+        // Display filename only (strip path)
+        namespace fs = std::filesystem;
+        std::string displayName = texPath.empty() ? "" : fs::path(texPath).filename().string();
+        char buf[256] = {};
+        strncpy(buf, displayName.c_str(), sizeof(buf) - 1);
+
+        // Disabled read-only text field (acts as drop target display)
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+        ImGui::InputText(("##texslot_" + uniqueId).c_str(), buf, sizeof(buf),
+                         ImGuiInputTextFlags_ReadOnly);
+        ImGui::PopStyleColor();
+
+        // Accept DragDrop from Content Browser
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("KIWI_TEXTURE"))
+            {
+                const char* droppedFile = static_cast<const char*>(payload->Data);
+                mat->SetTexture(propKey, droppedFile);
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        // Pick button
+        ImGui::SameLine();
+        if (ImGui::Button(("Pick##pick_" + uniqueId).c_str(), ImVec2(pickBtnW, 0)))
+        {
+            m_TexturePickerMatTarget = mat->Name;
+            m_TexturePickerPropKey   = propKey;
+            m_ShowTexturePicker      = true;
+        }
+
+        // Clear (X) button
+        if (!texPath.empty())
+        {
+            ImGui::SameLine();
+            if (ImGui::SmallButton(("X##clr_" + uniqueId).c_str()))
+                mat->SetTexture(propKey, "");
+        }
+    }
+
+    void DrawMaterialEditor()
+    {
+        if (!m_ShowMaterialEditor) return;
+
+        Material* mat = m_MaterialLibrary.GetMaterial(m_MaterialEditorTarget);
+        if (!mat)
+        {
+            m_ShowMaterialEditor = false;
+            return;
+        }
+
+        // Trigger texture picker popup if requested
+        DrawTexturePicker();
+        DrawTexturePickerModal();
+
+        ImGuiIO& io = ImGui::GetIO();
+        ImVec2 vp = ImGui::GetMainViewport()->Pos;
+
+        // First-time position: center of main window
+        ImGui::SetNextWindowSize(ImVec2(460.0f, 580.0f), ImGuiCond_Once);
+        ImGui::SetNextWindowPos(
+            ImVec2(vp.x + io.DisplaySize.x * 0.5f - 230.0f,
+                   vp.y + io.DisplaySize.y * 0.5f - 290.0f),
+            ImGuiCond_Once);
+
+        std::string title = "Material Editor - " + mat->Name + "###KiwiMatEditor";
+        bool open = true;
+        if (ImGui::Begin(title.c_str(), &open,
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking))
+        {
+            // ---- Header: material name ----
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 1.0f, 1.0f));
+            ImGui::TextUnformatted(mat->Name.c_str());
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0, 8);
+            ImGui::TextDisabled("(.mat)");
+
+            ImGui::Separator();
+
+            // ---- Shader Selection ----
+            ImGui::Text("Shader");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1.0f);
+            const auto& shaderNames = m_ShaderLibrary.GetShaderNames();
+            if (ImGui::BeginCombo("##MatEdShader", mat->ShaderName.c_str()))
+            {
+                for (const auto& sn : shaderNames)
+                {
+                    bool sel2 = (sn == mat->ShaderName);
+                    if (ImGui::Selectable(sn.c_str(), sel2))
+                        mat->ShaderName = sn;
+                    if (sel2) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // ---- Properties ----
+            // Try to get @Properties from shader source for driven UI
+            CompiledShader* cs = m_ShaderLibrary.GetShader(mat->ShaderName);
+            std::vector<ShaderPropertyDef> propDefs;
+            if (cs)
+            {
+                std::string shaderPath = m_ShaderDir + "\\" + mat->ShaderName + ".hlsl";
+                std::ifstream sf(shaderPath);
+                if (sf.is_open())
+                {
+                    std::string src((std::istreambuf_iterator<char>(sf)),
+                                     std::istreambuf_iterator<char>());
+                    propDefs = ParseShaderProperties(src);
+                }
+            }
+
+            ImGui::Text("Properties");
+            ImGui::Spacing();
+
+            if (!propDefs.empty())
+            {
+                for (auto& def : propDefs)
+                {
+                    switch (def.Type)
+                    {
+                    case EShaderPropertyType::Float:
+                    {
+                        float v = mat->GetFloat(def.Name, def.DefaultFloat);
+                        if (ImGui::DragFloat((def.DisplayName + "##me_f").c_str(), &v, 0.01f))
+                            mat->SetFloat(def.Name, v);
+                        break;
+                    }
+                    case EShaderPropertyType::Range:
+                    {
+                        float v = mat->GetFloat(def.Name, def.DefaultFloat);
+                        if (ImGui::SliderFloat((def.DisplayName + "##me_r").c_str(), &v,
+                                               def.RangeMin, def.RangeMax))
+                            mat->SetFloat(def.Name, v);
+                        break;
+                    }
+                    case EShaderPropertyType::Color:
+                    {
+                        Vec4 c = mat->GetColor(def.Name, def.DefaultColor);
+                        if (ImGui::ColorEdit4((def.DisplayName + "##me_c").c_str(), &c.x))
+                            mat->SetColor(def.Name, c);
+                        break;
+                    }
+                    case EShaderPropertyType::Texture2D:
+                        DrawTextureSlotRow(def.DisplayName, def.Name,
+                                           "prop_" + def.Name, mat);
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: standard DefaultLit properties
+                // Color
+                {
+                    Vec4 c = mat->GetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
+                    if (ImGui::ColorEdit4("Color##me_color", &c.x))
+                        mat->SetColor("_Color", c);
+                }
+
+                // Roughness
+                {
+                    float v = mat->GetFloat("_Roughness", 0.5f);
+                    if (ImGui::SliderFloat("Roughness##me_r", &v, 0.0f, 1.0f))
+                        mat->SetFloat("_Roughness", v);
+                }
+
+                // Metallic
+                {
+                    float v = mat->GetFloat("_Metallic", 0.0f);
+                    if (ImGui::SliderFloat("Metallic##me_m", &v, 0.0f, 1.0f))
+                        mat->SetFloat("_Metallic", v);
+                }
+
+                ImGui::Spacing();
+                ImGui::Text("Textures");
+                ImGui::Spacing();
+
+                DrawTextureSlotRow("Base Color", "_BaseColorTex", "fb_bc", mat);
+                DrawTextureSlotRow("Normal Map", "_NormalTex",    "fb_nm", mat);
+                DrawTextureSlotRow("MR Map",     "_MetallicRoughnessTex", "fb_mr", mat);
+            }
+
+            // ---- Footer: Save + Close ----
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            bool saved = false;
+            if (ImGui::Button("Save##MatEdSave", ImVec2(120, 0)))
+            {
+                saved = m_MaterialLibrary.SaveMaterial(mat->Name);
+            }
+            if (saved)
+            {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Saved!");
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Close##MatEdClose", ImVec2(120, 0)))
+                open = false;
+
+            // Color preview swatch
+            ImGui::SameLine(0, 16);
+            Vec4 col = mat->GetColor("_Color", {0.8f, 0.8f, 0.8f, 1.0f});
+            ImVec2 swatchPos = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                swatchPos,
+                ImVec2(swatchPos.x + 24, swatchPos.y + 24),
+                IM_COL32((int)(col.x*255), (int)(col.y*255), (int)(col.z*255), 255),
+                4.0f);
+            ImGui::Dummy(ImVec2(24, 24));
+        }
+        ImGui::End();
+
+        if (!open)
+        {
+            m_ShowMaterialEditor = false;
+            m_MaterialEditorTarget.clear();
+        }
+    }
+
+
     void DrawDetailTab()
     {
         SceneObject* sel = m_Scene.GetSelectedObject();
@@ -3510,32 +4289,17 @@ private:
                             {
                                 bool isSelected = (name == mesh.MaterialName);
                                 if (ImGui::Selectable(name.c_str(), isSelected))
-                                {
                                     mesh.MaterialName = name;
-                                    // Sync legacy fields from material
-                                    Material* mat = m_MaterialLibrary.GetMaterial(name);
-                                    if (mat)
-                                    {
-                                        mesh.ShaderName = mat->ShaderName;
-                                        mesh.Color = mat->GetColor("_Color", mesh.Color);
-                                        mesh.Roughness = mat->GetFloat("_Roughness", mesh.Roughness);
-                                        mesh.Metallic = mat->GetFloat("_Metallic", mesh.Metallic);
-                                        mesh.BaseColorTexture = mat->GetTexture("_BaseColorTex");
-                                        mesh.NormalTexture = mat->GetTexture("_NormalTex");
-                                        mesh.MetallicRoughnessTexture = mat->GetTexture("_MetallicRoughnessTex");
-                                    }
-                                }
                                 if (isSelected) ImGui::SetItemDefaultFocus();
                             }
                             ImGui::EndCombo();
                         }
                     }
 
-                    // ---- Material Properties (editable, syncs back to Material + MeshComponent) ----
+                    // ---- Material Properties (direct, no double-write) ----
                     Material* activeMat = m_MaterialLibrary.GetMaterial(mesh.MaterialName);
                     if (activeMat)
                     {
-                        // Show which shader this material uses
                         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Shader: %s", activeMat->ShaderName.c_str());
 
                         ImGui::Separator();
@@ -3545,103 +4309,45 @@ private:
                         {
                             Vec4 color = activeMat->GetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
                             if (ImGui::ColorEdit4(("Color##mat" + std::to_string(ci)).c_str(), &color.x))
-                            {
                                 activeMat->SetColor("_Color", color);
-                                mesh.Color = color;
-                            }
                         }
 
                         // Roughness
                         {
                             float roughness = activeMat->GetFloat("_Roughness", 0.5f);
                             if (ImGui::SliderFloat(("Roughness##mat" + std::to_string(ci)).c_str(), &roughness, 0.0f, 1.0f))
-                            {
                                 activeMat->SetFloat("_Roughness", roughness);
-                                mesh.Roughness = roughness;
-                            }
                         }
 
                         // Metallic
                         {
                             float metallic = activeMat->GetFloat("_Metallic", 0.0f);
                             if (ImGui::SliderFloat(("Metallic##mat" + std::to_string(ci)).c_str(), &metallic, 0.0f, 1.0f))
-                            {
                                 activeMat->SetFloat("_Metallic", metallic);
-                                mesh.Metallic = metallic;
-                            }
                         }
 
                         ImGui::Spacing();
                         ImGui::Text("Textures");
+                        ImGui::Spacing();
 
-                        // BaseColor texture
-                        {
-                            std::string tex = activeMat->GetTexture("_BaseColorTex");
-                            char buf[256] = {};
-                            strncpy(buf, tex.c_str(), sizeof(buf) - 1);
-                            if (ImGui::InputText(("BaseColor##mat" + std::to_string(ci)).c_str(), buf, sizeof(buf)))
-                            {
-                                activeMat->SetTexture("_BaseColorTex", buf);
-                                mesh.BaseColorTexture = buf;
-                            }
-                            if (tex.size() > 0)
-                            {
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(("X##clrBC" + std::to_string(ci)).c_str()))
-                                {
-                                    activeMat->SetTexture("_BaseColorTex", "");
-                                    mesh.BaseColorTexture.clear();
-                                }
-                            }
-                        }
-
-                        // Normal map
-                        {
-                            std::string tex = activeMat->GetTexture("_NormalTex");
-                            char buf[256] = {};
-                            strncpy(buf, tex.c_str(), sizeof(buf) - 1);
-                            if (ImGui::InputText(("Normal##mat" + std::to_string(ci)).c_str(), buf, sizeof(buf)))
-                            {
-                                activeMat->SetTexture("_NormalTex", buf);
-                                mesh.NormalTexture = buf;
-                            }
-                            if (tex.size() > 0)
-                            {
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(("X##clrNM" + std::to_string(ci)).c_str()))
-                                {
-                                    activeMat->SetTexture("_NormalTex", "");
-                                    mesh.NormalTexture.clear();
-                                }
-                            }
-                        }
-
-                        // MetallicRoughness map
-                        {
-                            std::string tex = activeMat->GetTexture("_MetallicRoughnessTex");
-                            char buf[256] = {};
-                            strncpy(buf, tex.c_str(), sizeof(buf) - 1);
-                            if (ImGui::InputText(("MR##mat" + std::to_string(ci)).c_str(), buf, sizeof(buf)))
-                            {
-                                activeMat->SetTexture("_MetallicRoughnessTex", buf);
-                                mesh.MetallicRoughnessTexture = buf;
-                            }
-                            if (tex.size() > 0)
-                            {
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton(("X##clrMR" + std::to_string(ci)).c_str()))
-                                {
-                                    activeMat->SetTexture("_MetallicRoughnessTex", "");
-                                    mesh.MetallicRoughnessTexture.clear();
-                                }
-                            }
-                        }
+                        DrawTextureSlotRow("Base Color", "_BaseColorTex",
+                                           "ins_bc_" + std::to_string(ci), activeMat);
+                        DrawTextureSlotRow("Normal Map", "_NormalTex",
+                                           "ins_nm_" + std::to_string(ci), activeMat);
+                        DrawTextureSlotRow("MR Map",     "_MetallicRoughnessTex",
+                                           "ins_mr_" + std::to_string(ci), activeMat);
 
                         // Save material button
                         ImGui::Spacing();
                         if (ImGui::SmallButton(("Save Material##" + std::to_string(ci)).c_str()))
-                        {
                             m_MaterialLibrary.SaveMaterial(mesh.MaterialName);
+
+                        // Quick open material editor
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton(("Edit...##" + std::to_string(ci)).c_str()))
+                        {
+                            m_MaterialEditorTarget = mesh.MaterialName;
+                            m_ShowMaterialEditor   = true;
                         }
                     }
 
@@ -3988,6 +4694,16 @@ private:
         m_GizmoMeshData[1] = CreateGizmoArrow({ 0, 1, 0 }, { 0, 1, 0, 1 }); // Y - Green
         m_GizmoMeshData[2] = CreateGizmoArrow({ 0, 0, 1 }, { 0, 0, 1, 1 }); // Z - Blue
 
+        // Rotation rings: ring normal = axis (X ring rotates around X, etc.)
+        m_GizmoRingData[0] = CreateGizmoRing({ 1, 0, 0 }, { 1, 0.2f, 0.2f, 1 });
+        m_GizmoRingData[1] = CreateGizmoRing({ 0, 1, 0 }, { 0.2f, 1, 0.2f, 1 });
+        m_GizmoRingData[2] = CreateGizmoRing({ 0, 0, 1 }, { 0.2f, 0.4f, 1, 1 });
+
+        // Scale axes: shaft + cube end cap
+        m_GizmoScaleData[0] = CreateGizmoScaleAxis({ 1, 0, 0 }, { 1, 0.2f, 0.2f, 1 });
+        m_GizmoScaleData[1] = CreateGizmoScaleAxis({ 0, 1, 0 }, { 0.2f, 1, 0.2f, 1 });
+        m_GizmoScaleData[2] = CreateGizmoScaleAxis({ 0, 0, 1 }, { 0.2f, 0.4f, 1,   1 });
+
         // Direction indicator for directional lights (longer arrow, yellow)
         m_DirLightIndicator = CreateGizmoArrow({ 0, 0, 1 }, { 1, 1, 0, 1 }, 2.0f, 0.03f, 0.08f, 0.3f);
     }
@@ -4050,6 +4766,60 @@ private:
                 m_DirLightIndicatorIB = device->CreateBuffer(ibDesc, data.Indices.data());
             }
         }
+
+        // Build rotation ring GPU buffers
+        {
+            static const char* ringVBNames[] = { "GizmoRingVB_X", "GizmoRingVB_Y", "GizmoRingVB_Z" };
+            static const char* ringIBNames[] = { "GizmoRingIB_X", "GizmoRingIB_Y", "GizmoRingIB_Z" };
+            for (int i = 0; i < 3; i++)
+            {
+                auto& data = m_GizmoRingData[i];
+                m_GizmoRingVertexCount[i] = (uint32_t)data.Vertices.size();
+                m_GizmoRingIndexCount[i]  = (uint32_t)data.Indices.size();
+                if (m_GizmoRingVertexCount[i] == 0) continue;
+
+                BufferDesc vbDesc;
+                vbDesc.SizeInBytes = m_GizmoRingVertexCount[i] * sizeof(Vertex);
+                vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
+                vbDesc.Usage = EResourceUsage::Immutable;
+                vbDesc.DebugName = ringVBNames[i];
+                m_GizmoRingVB[i] = device->CreateBuffer(vbDesc, data.Vertices.data());
+
+                BufferDesc ibDesc;
+                ibDesc.SizeInBytes = m_GizmoRingIndexCount[i] * sizeof(uint32_t);
+                ibDesc.BindFlags = BUFFER_USAGE_INDEX;
+                ibDesc.Usage = EResourceUsage::Immutable;
+                ibDesc.DebugName = ringIBNames[i];
+                m_GizmoRingIB[i] = device->CreateBuffer(ibDesc, data.Indices.data());
+            }
+        }
+
+        // Build scale axis GPU buffers
+        {
+            static const char* scaleVBNames[] = { "GizmoScaleVB_X", "GizmoScaleVB_Y", "GizmoScaleVB_Z" };
+            static const char* scaleIBNames[] = { "GizmoScaleIB_X", "GizmoScaleIB_Y", "GizmoScaleIB_Z" };
+            for (int i = 0; i < 3; i++)
+            {
+                auto& data = m_GizmoScaleData[i];
+                m_GizmoScaleVertexCount[i] = (uint32_t)data.Vertices.size();
+                m_GizmoScaleIndexCount[i]  = (uint32_t)data.Indices.size();
+                if (m_GizmoScaleVertexCount[i] == 0) continue;
+
+                BufferDesc vbDesc;
+                vbDesc.SizeInBytes = m_GizmoScaleVertexCount[i] * sizeof(Vertex);
+                vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
+                vbDesc.Usage = EResourceUsage::Immutable;
+                vbDesc.DebugName = scaleVBNames[i];
+                m_GizmoScaleVB[i] = device->CreateBuffer(vbDesc, data.Vertices.data());
+
+                BufferDesc ibDesc;
+                ibDesc.SizeInBytes = m_GizmoScaleIndexCount[i] * sizeof(uint32_t);
+                ibDesc.BindFlags = BUFFER_USAGE_INDEX;
+                ibDesc.Usage = EResourceUsage::Immutable;
+                ibDesc.DebugName = scaleIBNames[i];
+                m_GizmoScaleIB[i] = device->CreateBuffer(ibDesc, data.Indices.data());
+            }
+        }
     }
 
     // Compute gizmo scale factor so it maintains constant screen size regardless of camera distance
@@ -4092,7 +4862,7 @@ private:
             { 0.2f, 0.4f, 1.0f, 1.0f }, // Z - Blue
         };
 
-        // Highlight the dragged axis
+        // Highlight the dragged/hovered axis
         if (m_IsDragging)
         {
             int axisIdx = (int)m_DragAxis - 1;
@@ -4100,114 +4870,92 @@ private:
                 colors[axisIdx] = { 1.0f, 1.0f, 0.3f, 1.0f }; // Yellow highlight
         }
 
-        for (int i = 0; i < 3; i++)
+        // Helper lambda: submit one piece of gizmo geometry
+        auto submitMesh = [&](RHIBuffer* vb, RHIBuffer* ib,
+                               uint32_t vtxCount, uint32_t idxCount,
+                               const Mat4& world, const Vec4& color)
         {
-            if (!m_GizmoVB[i] || !m_GizmoIB[i]) continue;
+            if (!vb || !ib || vtxCount == 0 || idxCount == 0) return;
 
             VertexBufferView vbView;
             vbView.BufferLocation = 0;
-            vbView.SizeInBytes = m_GizmoVertexCount[i] * sizeof(Vertex);
-            vbView.StrideInBytes = sizeof(Vertex);
-
-            RHIBuffer* vbPtr = m_GizmoVB[i].get();
+            vbView.SizeInBytes    = vtxCount * sizeof(Vertex);
+            vbView.StrideInBytes  = sizeof(Vertex);
+            RHIBuffer* vbPtr = vb;
             ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
 
             IndexBufferView ibView;
             ibView.BufferLocation = 0;
-            ibView.SizeInBytes = m_GizmoIndexCount[i] * sizeof(uint32_t);
-            ibView.Format = EFormat::R32_UINT;
-            ctx->SetIndexBuffer(m_GizmoIB[i].get(), &ibView);
-
-            // World matrix = scale * translation (screen-space constant size gizmo)
-            Mat4 scaleMat = Mat4::Scaling(gizmoScale, gizmoScale, gizmoScale);
-            Mat4 transMat = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
-            Mat4 worldMatrix = scaleMat * transMat;
+            ibView.SizeInBytes    = idxCount * sizeof(uint32_t);
+            ibView.Format         = EFormat::R32_UINT;
+            ctx->SetIndexBuffer(ib, &ibView);
 
             ConstantBufferData cbd = {};
-            memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-            memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+            memcpy(cbd.WorldMatrix,      world.m,            sizeof(world.m));
+            memcpy(cbd.ViewMatrix,       m_ViewMatrix.m,     sizeof(m_ViewMatrix.m));
             memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-            cbd.ObjectColor[0] = colors[i].x;
-            cbd.ObjectColor[1] = colors[i].y;
-            cbd.ObjectColor[2] = colors[i].z;
-            cbd.ObjectColor[3] = colors[i].w;
-            cbd.Selected = 2.0f; // > 1.5 => unlit/gizmo mode in pixel shader
-            cbd.NumLights = 0;   // Gizmo doesn't need lights
+            cbd.ObjectColor[0] = color.x;
+            cbd.ObjectColor[1] = color.y;
+            cbd.ObjectColor[2] = color.z;
+            cbd.ObjectColor[3] = color.w;
+            cbd.Selected    = 2.0f; // Unlit/gizmo mode
+            cbd.NumLights   = 0;
             cbd.CameraPos[0] = m_CameraPosition.x;
             cbd.CameraPos[1] = m_CameraPosition.y;
             cbd.CameraPos[2] = m_CameraPosition.z;
 
             void* mapped = m_ConstantBuffer->Map();
-            if (mapped)
-            {
-                memcpy(mapped, &cbd, sizeof(cbd));
-                m_ConstantBuffer->Unmap();
-            }
+            if (mapped) { memcpy(mapped, &cbd, sizeof(cbd)); m_ConstantBuffer->Unmap(); }
             ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+            ctx->DrawIndexed(idxCount, 0, 0);
+        };
 
-            ctx->DrawIndexed(m_GizmoIndexCount[i], 0, 0);
+        Mat4 scaleMat = Mat4::Scaling(gizmoScale, gizmoScale, gizmoScale);
+        Mat4 transMat = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
+        Mat4 baseWorld = scaleMat * transMat; // scale then translate
+
+        if (m_GizmoMode == EGizmoMode::Translate)
+        {
+            for (int i = 0; i < 3; i++)
+                submitMesh(m_GizmoVB[i].get(), m_GizmoIB[i].get(),
+                           m_GizmoVertexCount[i], m_GizmoIndexCount[i],
+                           baseWorld, colors[i]);
+        }
+        else if (m_GizmoMode == EGizmoMode::Rotate)
+        {
+            for (int i = 0; i < 3; i++)
+                submitMesh(m_GizmoRingVB[i].get(), m_GizmoRingIB[i].get(),
+                           m_GizmoRingVertexCount[i], m_GizmoRingIndexCount[i],
+                           baseWorld, colors[i]);
+        }
+        else if (m_GizmoMode == EGizmoMode::Scale)
+        {
+            for (int i = 0; i < 3; i++)
+                submitMesh(m_GizmoScaleVB[i].get(), m_GizmoScaleIB[i].get(),
+                           m_GizmoScaleVertexCount[i], m_GizmoScaleIndexCount[i],
+                           baseWorld, colors[i]);
         }
 
         // ---- Directional Light Direction Indicator ----
-        // Draw a yellow arrow showing the light's forward direction
         auto* dirLight = sel->GetComponent<DirectionalLightComponent>();
         if (dirLight && m_DirLightIndicatorVB && m_DirLightIndicatorIB)
         {
-            VertexBufferView vbView;
-            vbView.BufferLocation = 0;
-            vbView.SizeInBytes = m_DirLightIndicatorVertexCount * sizeof(Vertex);
-            vbView.StrideInBytes = sizeof(Vertex);
-
-            RHIBuffer* vbPtr = m_DirLightIndicatorVB.get();
-            ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
-
-            IndexBufferView ibView;
-            ibView.BufferLocation = 0;
-            ibView.SizeInBytes = m_DirLightIndicatorIndexCount * sizeof(uint32_t);
-            ibView.Format = EFormat::R32_UINT;
-            ctx->SetIndexBuffer(m_DirLightIndicatorIB.get(), &ibView);
-
-            // Build a rotation matrix that maps local +Z to the light's forward direction.
-            // The indicator mesh points along +Z, so we need to rotate it to match GetForward().
             Vec3 fwd = dirLight->GetForward();
-            Vec3 up = dirLight->GetUp();
+            Vec3 up2 = dirLight->GetUp();
             Vec3 right = dirLight->GetRight();
 
-            // Build rotation matrix from basis vectors (row-major, rows = right/up/forward)
             Mat4 rotMat = Mat4::Identity();
             rotMat.m[0][0] = right.x; rotMat.m[0][1] = right.y; rotMat.m[0][2] = right.z;
-            rotMat.m[1][0] = up.x;    rotMat.m[1][1] = up.y;    rotMat.m[1][2] = up.z;
+            rotMat.m[1][0] = up2.x;   rotMat.m[1][1] = up2.y;   rotMat.m[1][2] = up2.z;
             rotMat.m[2][0] = fwd.x;   rotMat.m[2][1] = fwd.y;   rotMat.m[2][2] = fwd.z;
+            Mat4 worldDL = scaleMat * rotMat * transMat;
 
-            Mat4 scaleMat = Mat4::Scaling(gizmoScale, gizmoScale, gizmoScale);
-            Mat4 transMat = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
-            Mat4 worldMatrix = scaleMat * rotMat * transMat;
-
-            ConstantBufferData cbd = {};
-            memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-            memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-            memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-            cbd.ObjectColor[0] = 1.0f; // Yellow
-            cbd.ObjectColor[1] = 0.9f;
-            cbd.ObjectColor[2] = 0.2f;
-            cbd.ObjectColor[3] = 1.0f;
-            cbd.Selected = 2.0f; // Unlit/gizmo mode
-            cbd.NumLights = 0;
-            cbd.CameraPos[0] = m_CameraPosition.x;
-            cbd.CameraPos[1] = m_CameraPosition.y;
-            cbd.CameraPos[2] = m_CameraPosition.z;
-
-            void* mapped = m_ConstantBuffer->Map();
-            if (mapped)
-            {
-                memcpy(mapped, &cbd, sizeof(cbd));
-                m_ConstantBuffer->Unmap();
-            }
-            ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
-
-            ctx->DrawIndexed(m_DirLightIndicatorIndexCount, 0, 0);
+            submitMesh(m_DirLightIndicatorVB.get(), m_DirLightIndicatorIB.get(),
+                       m_DirLightIndicatorVertexCount, m_DirLightIndicatorIndexCount,
+                       worldDL, { 1.0f, 0.9f, 0.2f, 1.0f });
         }
     }
+
 
     // Project a world-space point to screen-space pixel coordinates
     Vec2 WorldToScreen(const Vec3& worldPos, uint32_t screenW, uint32_t screenH,
@@ -4254,35 +5002,72 @@ private:
         Vec3 gizmoPos = sel->GetPosition();
         float gizmoScale = ComputeGizmoScale(gizmoPos);
         float gizmoLength = 1.2f * gizmoScale;
+        float ringRadius  = 1.0f * gizmoScale;
 
-        // Screen-space picking: project gizmo origin and axis tips, then measure pixel distance
         Vec2 originSS = WorldToScreen(gizmoPos, w, h, m_ViewMatrix, m_ProjectionMatrix);
-        if (originSS.x < 0) return EGizmoAxis::None; // behind camera
+        if (originSS.x < 0) return EGizmoAxis::None;
 
         Vec3 axisWorldDirs[3] = { {1,0,0}, {0,1,0}, {0,0,1} };
         EGizmoAxis axisTypes[3] = { EGizmoAxis::X, EGizmoAxis::Y, EGizmoAxis::Z };
 
         Vec2 mousePos = { (float)mouseX, (float)mouseY };
-        const float pickThresholdPixels = 12.0f; // generous pixel threshold
+        const float pickThresh = 14.0f;
 
         float closestDist = 1e30f;
         EGizmoAxis result = EGizmoAxis::None;
 
-        for (int i = 0; i < 3; i++)
+        if (m_GizmoMode == EGizmoMode::Translate || m_GizmoMode == EGizmoMode::Scale)
         {
-            Vec3 tipWorld = gizmoPos + axisWorldDirs[i] * gizmoLength;
-            Vec2 tipSS = WorldToScreen(tipWorld, w, h, m_ViewMatrix, m_ProjectionMatrix);
-            if (tipSS.x < 0) continue; // behind camera
-
-            float dist = PointToSegmentDist2D(mousePos, originSS, tipSS);
-            if (dist < pickThresholdPixels && dist < closestDist)
+            // Line segment distance (same for both)
+            for (int i = 0; i < 3; i++)
             {
-                closestDist = dist;
-                result = axisTypes[i];
+                Vec3 tipWorld = gizmoPos + axisWorldDirs[i] * gizmoLength;
+                Vec2 tipSS = WorldToScreen(tipWorld, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                if (tipSS.x < 0) continue;
+
+                float dist = PointToSegmentDist2D(mousePos, originSS, tipSS);
+                if (dist < pickThresh && dist < closestDist)
+                {
+                    closestDist = dist;
+                    result = axisTypes[i];
+                }
+            }
+        }
+        else if (m_GizmoMode == EGizmoMode::Rotate)
+        {
+            // Sample ring circumference: project ~32 points, find closest to mouse
+            for (int i = 0; i < 3; i++)
+            {
+                Vec3 N = axisWorldDirs[i];
+                // Build ring plane basis
+                Vec3 T;
+                if (std::abs(N.y) < 0.99f) T = Vec3(0,1,0).Cross(N).Normalize();
+                else                        T = Vec3(1,0,0).Cross(N).Normalize();
+                Vec3 B = N.Cross(T).Normalize();
+
+                const int kSamples = 40;
+                float minDist = 1e30f;
+                for (int s = 0; s < kSamples; s++)
+                {
+                    float phi = (float)s / kSamples * 2.0f * PI;
+                    Vec3 pt = gizmoPos + (T * cosf(phi) + B * sinf(phi)) * ringRadius;
+                    Vec2 ptSS = WorldToScreen(pt, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                    if (ptSS.x < 0) continue;
+                    Vec2 diff = { mousePos.x - ptSS.x, mousePos.y - ptSS.y };
+                    float d = sqrtf(diff.x*diff.x + diff.y*diff.y);
+                    if (d < minDist) minDist = d;
+                }
+                if (minDist < pickThresh && minDist < closestDist)
+                {
+                    closestDist = minDist;
+                    result = axisTypes[i];
+                }
             }
         }
         return result;
     }
+
+
 
     // ============================================================
     // Mouse Picking
@@ -4404,6 +5189,11 @@ private:
     bool m_ShowMaterialEditor = false;
     std::string m_MaterialEditorTarget;  // Name of material being edited
 
+    // Texture picker popup state (used by material editor and inspector)
+    bool m_ShowTexturePicker = false;
+    std::string m_TexturePickerPropKey;   // Which material property to set (e.g. "_BaseColorTex")
+    std::string m_TexturePickerMatTarget; // Which material to write to
+
     // Save Scene dialog state
     bool m_ShowSaveDialog = false;
     char m_SaveSceneName[128] = {};
@@ -4433,11 +5223,27 @@ private:
     bool m_ShowStats = false;
 
     // Gizmo state
-    GizmoMeshData m_GizmoMeshData[3];                    // CPU mesh data for 3 axes
+    EGizmoMode m_GizmoMode = EGizmoMode::Translate;     // Active gizmo mode
+
+    GizmoMeshData m_GizmoMeshData[3];                    // CPU mesh data for 3 axes (translate)
     std::unique_ptr<RHIBuffer> m_GizmoVB[3];             // GPU vertex buffers
     std::unique_ptr<RHIBuffer> m_GizmoIB[3];             // GPU index buffers
     uint32_t m_GizmoVertexCount[3] = {};
     uint32_t m_GizmoIndexCount[3] = {};
+
+    // Rotate gizmo rings (one per axis)
+    GizmoMeshData m_GizmoRingData[3];
+    std::unique_ptr<RHIBuffer> m_GizmoRingVB[3];
+    std::unique_ptr<RHIBuffer> m_GizmoRingIB[3];
+    uint32_t m_GizmoRingVertexCount[3] = {};
+    uint32_t m_GizmoRingIndexCount[3] = {};
+
+    // Scale gizmo axes
+    GizmoMeshData m_GizmoScaleData[3];
+    std::unique_ptr<RHIBuffer> m_GizmoScaleVB[3];
+    std::unique_ptr<RHIBuffer> m_GizmoScaleIB[3];
+    uint32_t m_GizmoScaleVertexCount[3] = {};
+    uint32_t m_GizmoScaleIndexCount[3] = {};
 
     // Directional light direction indicator
     GizmoMeshData m_DirLightIndicator;                   // CPU mesh data (yellow arrow)
@@ -4451,7 +5257,10 @@ private:
     EGizmoAxis m_DragAxis = EGizmoAxis::None;
     int m_DragStartMouseX = 0;
     int m_DragStartMouseY = 0;
-    Vec3 m_DragStartPos;
+    Vec3 m_DragStartPos;            // Translate: object position at drag start
+    Vec3 m_DragStartScale;          // Scale: object scale at drag start
+    Vec3 m_DragStartRotation;       // Rotate: object rotation (Euler) at drag start
+    float m_DragStartAngle = 0.0f;  // Rotate: projected angle at drag start (radians)
 
     // ---- Post-Process Resources ----
     PostProcessShaderLibrary m_PostProcessLibrary;

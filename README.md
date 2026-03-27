@@ -59,8 +59,8 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`.
 - **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reconstructs world position from depth, decodes octahedron normals, reads material properties from G-Buffer, and computes **UE5-style PBR lighting** with multi-light support. BRDF matches UE5's `DefaultLitBxDF`: **D_GGX** (Trowbridge-Reitz NDF), **Vis_SmithJointApprox** (joint Smith visibility with baked-in denominator), **F_Schlick** (with 2% reflectance shadow threshold), **Diffuse_Burley** (Disney diffuse, roughness-dependent), and **EnvBRDFApprox** (Lazarov 2013 analytical approximation, no LUT needed) for indirect specular. Applies cascaded shadow maps and Reinhard tone mapping.
 - **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades rendered into a **single shadow atlas** (2x2 layout). Each cascade occupies one quadrant of the atlas texture (`R32_TYPELESS`, `2*cascadeSize × 2*cascadeSize`). PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. Shader selects cascade by view-space distance and computes UV offset into the atlas. 5-tap PCF filtering with comparison sampler for soft shadow edges.
-- **Forward Gizmo Pass** — Translation gizmo is rendered on top of the deferred result using forward rendering with depth for correct occlusion.
-- **Material Properties** — Each `MeshComponent` has `Roughness` [0,1] and `Metallic` [0,1] properties, stored in G-Buffer and editable via Inspector UI.
+- **Forward Gizmo Pass** — Transform gizmo (translate/rotate/scale) rendered on top of the deferred result using forward rendering with depth for correct occlusion.
+- **Material Properties** — Material assets define Roughness [0,1], Metallic [0,1], base color, and textures. Properties are stored in G-Buffer and editable via Material Editor / Inspector UI.
 
 > **Note**: The deferred rendering pipeline (G-Buffer, CSM shadows, deferred lighting) is active for DX11 and DX12 backends. The OpenGL and Vulkan backends use a forward rendering path.
 
@@ -77,10 +77,38 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **Metallic** | Buffer Visualization | G-Buffer Metallic (GBufferA Blue, grayscale) |
 - **Buffer Visualization** — G-Buffer pass runs, then a dedicated `BufferVisualization` shader samples the specific G-Buffer channel and displays it as a fullscreen pass.
 
+### 🧱 Material System
+
+- **Material Assets** — `.mat` files (JSON) defining material properties independently from mesh data. Each material references a shader and defines property values (floats, colors, textures).
+- **MaterialLibrary** — Singleton material manager. Auto-creates `Default-Material.mat` on first run, scans `Materials/` folder at startup. Materials are referenced by name from `MeshComponent`.
+- **Shader Properties Metadata** — Shaders can declare a `// @Properties { }` block defining UI-exposed properties (Float, Range, Color, Texture2D). The material editor parses these to generate dynamic property UI.
+- **Material Editor** — Double-click `.mat` files in Content Browser to open a floating editor window. Features: shader selection dropdown, @Properties-driven dynamic UI with color preview swatches, texture slot rows with Pick button (modal popup) + DragDrop from Content Browser, Save/Close buttons.
+- **Property Migration** — All appearance properties (color, roughness, metallic, texture paths) live in Material, not MeshComponent. UploadObjectCB and texture binding read from the material at render time.
+
+### 🖼️ Texture System
+
+- **TextureManager** — Runtime texture loading via stb_image. Supports PNG, JPG, BMP, TGA formats. Path-based caching ensures each texture is loaded only once.
+- **Default Textures** — Always-available fallbacks: White (1×1), Black (1×1), Flat Normal (128,128,255 — neutral normal map).
+- **GPU Resource Lifecycle** — All textures properly release on RHI switch. DX11: corrected SysMemPitch; DX12: upload heap for initial data.
+- **Texture Picker** — Modal popup listing all files in `Textures/` directory for easy selection. Also supports DragDrop from Content Browser (`KIWI_TEXTURE` payload).
+
+### 📁 Content Browser
+
+- **Asset Browser Window** — Floating window opened from Window menu. Left panel: folder tree (Scenes/Shaders/GLShaders/PostProcessShaders/Textures/Materials). Right panel: file table grid.
+- **Context Menu** — Right-click → Show In Explorer (highlights in system file manager) + Open File (launches with default application).
+- **Double-Click Actions** — `.json` → loads scene; `.mat` → opens material editor; `.png/.jpg` → preloads texture into GPU cache.
+- **Drag & Drop** — Texture files can be dragged from Content Browser into material editor texture slots.
+
+### 🖼️ Multi-Viewport (ImGui Docking)
+
+- **ImGui Docking Branch** — Upgraded to ImGui docking branch supporting window docking and multi-viewport.
+- **Detachable Windows** — Any ImGui window can be dragged out of the main window to become a standalone OS window, each with its own swap chain.
+- **ViewportsEnabled** — Viewport dragging and multi-window support fully enabled.
+
 ### 🎬 Scene & Component System
 
 - **Entity-Component Architecture** — `SceneObject` holds a vector of `Component` via `unique_ptr`. Template methods for `AddComponent<T>`, `GetComponent<T>`, `RemoveComponent<T>`.
-- **MeshComponent** — Mesh data, color, shader name, sort order, primitive type, material properties (Roughness, Metallic).
+- **MeshComponent** — Mesh data, material name reference, sort order, primitive type. Appearance properties (color, roughness, metallic, textures) are defined in the Material asset.
 - **CameraComponent** — Perspective/orthographic projection, configurable FOV, near/far planes, Main Camera toggle with mutual exclusion. The active camera drives the engine's rendering viewpoint.
 - **DirectionalLightComponent** — Direction derived from rotation, configurable color and intensity. **Cascaded Shadow Mapping (CSM)** parameters: CastShadow, NumCascades (1-4), ShadowMapResolution, ShadowDistance, CascadeSplitLambda, ShadowBias, NormalBias, ShadowStrength.
 - **PointLightComponent** — Position-based lighting with configurable radius and quadratic falloff.
@@ -141,7 +169,8 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Camera Navigation** — Hold right mouse button + WASD/Arrow keys to fly the main camera (horizontal plane movement). Hold right mouse button + drag to rotate camera (Yaw/Pitch, sensitivity 0.15°/px, ±89° pitch clamp).
 - **Camera Settings** — 📷 button in top-right corner opens a popup with configurable Move Speed (0.5–50 units/s) and FOV (10–120°) sliders.
 - **Translation Gizmo** — 3-axis gizmo (X=red, Y=green, Z=blue) on selected objects. Drag to translate; active axis turns yellow. **Constant screen-space size** — gizmo auto-scales based on camera distance so it stays the same pixel size regardless of zoom level.
-- **Screen-Space Gizmo Picking** — Gizmo axis selection uses 2D screen-space distance (pixel threshold) instead of 3D ray casting, providing reliable and intuitive picking behavior regardless of camera angle or distance.
+- **Rotation & Scale Gizmo** — Full 3-mode transform gizmo (Translate/Rotate/Scale) switchable via W/E/R hotkeys or toolbar buttons. Rotation uses torus rings with screen-space angle-based picking; Scale uses shaft+cube handles with ray-axis projection. Mode indicator icons in the top-right corner.
+- **Screen-Space Gizmo Picking** — Gizmo axis selection uses 2D screen-space distance (pixel threshold) for translate/scale axes and ring point-cloud sampling (40 samples) for rotate rings, providing reliable and intuitive picking regardless of camera angle or distance.
 - **Model Import** — Load external `.obj` (Wavefront OBJ via tinyobjloader) and `.fbx` (Autodesk FBX via ufbx) model files. Each sub-mesh becomes a separate mesh object with per-material diffuse color. Automatic vertex deduplication, polygon triangulation, flat/smooth normals, and UV coordinate flipping.
 - **Ray Picking** — Click viewport to select objects. Gizmo axes have picking priority.
 - **Mesh Generation** — Procedural primitives: Cube, Sphere, Cylinder, Floor.
@@ -223,12 +252,15 @@ A 1280×720 window opens showing a 3D scene editor. You can:
 - **Add lights**: Placer tab → Directional Light / Point Light
 - **Add camera**: Placer tab → Camera
 - **Select objects**: Click in viewport or select from object list
-- **Move objects**: Drag gizmo axes (red=X, green=Y, blue=Z)
-- **Edit properties**: Detail tab → Position / Rotation / Scale / Color / Shader / FOV / Light settings
+- **Transform objects**: W (Translate) / E (Rotate) / R (Scale) — drag gizmo axes to transform; mode buttons in top-right corner
+- **Edit properties**: Detail tab → Transform / Material / Shader / FOV / Light settings
 - **Main Camera**: Detail tab → toggle Main Camera checkbox (mutual exclusion)
 - **Post-Processing**: Detail tab → Add materials, reorder, adjust intensity, enable/disable
+- **Material Editor**: Content Browser → double-click `.mat` file → edit shader, properties, textures; drag textures from browser to slots
+- **Content Browser**: Window menu → browse Scenes/Shaders/Textures/Materials; drag textures; right-click for Explorer
 - **Capture frames**: Click 🔵 button (top-right) — auto-opens in RenderDoc
 - **Scene management**: File menu → Create Scene / Open Scene (scans `Scenes/` folder) / Save Scene (naming dialog, JSON format)
+- **Multi-Viewport**: Drag any panel border to dock; drag a window's title bar out of the main window to create a standalone OS window
 
 ---
 
@@ -399,16 +431,19 @@ KiwiEngine/
 │   │   └── Math.h                    # Vec2/3/4, Mat4, projections, LookAt
 │   └── Scene/
 │       ├── Component.h               # Base Component class (Transform, EComponentType)
-│       ├── MeshComponent.h           # Mesh + Color + Shader + Material properties
+│       ├── MeshComponent.h           # Mesh + Material reference + SortOrder
+│       ├── Material.h                # Material asset + MaterialLibrary + ShaderProperties parser
+│       ├── TextureManager.h          # Texture loading (stb_image) + GPU texture cache + default textures
 │       ├── CameraComponent.h         # Camera (Perspective/Ortho, FOV, MainCamera)
 │       ├── LightComponent.h          # Directional & Point light components
 │       ├── PostProcessComponent.h    # Post-process materials container
 │       ├── SceneObject.h             # Entity with component list
 │       ├── PrimitiveType.h           # EPrimitiveType enum (breaks circular dependency)
 │       ├── Scene.h                   # Scene management & serialization
-│       ├── Mesh.h                    # Mesh data structure
+│       ├── Mesh.h                    # Mesh data structure (Vertex: Position/Normal/Tangent/Color/UV)
 │       ├── Shaders.h                 # Embedded HLSL & CB layouts
 │       ├── ShaderLibrary.h           # File-based shader scanning & compilation
+│       ├── GLShaders.h               # GLSL shader definitions for OpenGL backend
 │       ├── PostProcessShaders.h      # Post-process shader definitions (fullscreen VS)
 │       ├── PostProcessShaderLibrary.h # Post-process shader scanning & compilation
 │       ├── ModelImporter.h           # OBJ/FBX model import (tinyobjloader + ufbx)
@@ -422,6 +457,8 @@ KiwiEngine/
 ├── Shaders/                          # HLSL shaders (Default, Unlit, Wireframe, DefaultLit, GBufferPass, DeferredLighting, ShadowPass, BufferVisualization)
 ├── GLShaders/                        # GLSL shaders (DefaultLit, Unlit, Wireframe)
 ├── PostProcessShaders/               # Post-process HLSL shaders (Grayscale, Vignette)
+├── Textures/                         # User texture files (PNG, JPG, BMP, TGA)
+├── Materials/                        # Material asset files (.mat JSON)
 ├── Scenes/                           # Scene JSON files (Default.json, user scenes)
 ├── third_party/
 │   ├── imgui/                        # Dear ImGui v1.91.8
