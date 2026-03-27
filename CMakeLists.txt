@@ -43,6 +43,9 @@ set(SOURCES
     src/RHI/VulkanDevice.cpp
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
+    src/Scene/TextureManager.cpp
+    src/Scene/Material.cpp
+    src/Scene/stb_image_impl.cpp
     src/Debug/RenderDocIntegration.cpp
 )
 
@@ -78,6 +81,8 @@ set(HEADERS
     include/Scene/PostProcessComponent.h
     include/Scene/PostProcessShaders.h
     include/Scene/PostProcessShaderLibrary.h
+    include/Scene/TextureManager.h
+    include/Scene/Material.h
     include/Debug/RenderDocIntegration.h
 )
 
@@ -87,6 +92,7 @@ add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES} ${GLAD_SOU
 # ---- Include 路径 ----
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
     ${CMAKE_SOURCE_DIR}/third_party/renderdoc
     ${CMAKE_SOURCE_DIR}/third_party/vulkan-headers/include
     ${GLAD_DIR}/include
@@ -157,6 +163,22 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${CMAKE_SOURCE_DIR}/Config
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/Config
     COMMENT "Copying Config/ to output directory"
+)
+
+# ---- Copy Textures/ folder to output directory ----
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/Textures
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Textures
+    COMMENT "Copying Textures/ to output directory"
+)
+
+# ---- Copy Materials/ folder to output directory ----
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/Materials
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Materials
+    COMMENT "Copying Materials/ to output directory"
 )
 
 # ---- Copy DXC runtime DLLs to output directory (for runtime shader compilation) ----

@@ -15,7 +15,9 @@ layout(std140, binding = 0) uniform Constants
     vec3 g_CameraPos;
     float g_Roughness;
     float g_Metallic;
-    vec3 g_MaterialPadding;
+    float g_HasBaseColorTex;
+    float g_HasNormalTex;
+    float g_MaterialPadding;
 };
 
 layout(location = 0) in vec3 aPosition;
@@ -51,7 +53,9 @@ layout(std140, binding = 0) uniform Constants
     vec3 g_CameraPos;
     float g_Roughness;
     float g_Metallic;
-    vec3 g_MaterialPadding;
+    float g_HasBaseColorTex;
+    float g_HasNormalTex;
+    float g_MaterialPadding;
 };
 
 in vec3 vPositionWS;

@@ -15,6 +15,8 @@
 #include "Scene/PostProcessShaders.h"
 #include "Scene/PostProcessShaderLibrary.h"
 #include "Scene/ViewMode.h"
+#include "Scene/TextureManager.h"
+#include "Scene/Material.h"
 #include "Math/Math.h"
 #include "RHI/RHI.h"
 #include "Debug/RenderDocIntegration.h"
@@ -34,6 +36,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <shellapi.h>
 
 using namespace Kiwi;
 
@@ -449,6 +452,43 @@ protected:
                 }
             }
             std::cout << "[Kiwi] Scenes directory: " << m_ScenesDir << std::endl;
+
+            // Textures directory
+            m_TexturesDir = exeDir + "\\Textures";
+            if (!fs::exists(m_TexturesDir))
+            {
+                std::string fallback = exeDir + "\\..\\..\\Textures";
+                if (fs::exists(fallback))
+                    m_TexturesDir = fallback;
+                else
+                {
+                    m_TexturesDir = fallback;
+                    fs::create_directories(m_TexturesDir);
+                }
+            }
+
+            // GLShaders directory
+            m_GLShaderDir = exeDir + "\\GLShaders";
+            if (!fs::exists(m_GLShaderDir))
+            {
+                std::string fallback = exeDir + "\\..\\..\\GLShaders";
+                if (fs::exists(fallback))
+                    m_GLShaderDir = fallback;
+            }
+
+            // Materials directory
+            m_MaterialsDir = exeDir + "\\Materials";
+            if (!fs::exists(m_MaterialsDir))
+            {
+                std::string fallback = exeDir + "\\..\\..\\Materials";
+                if (fs::exists(fallback))
+                    m_MaterialsDir = fallback;
+                else
+                {
+                    m_MaterialsDir = fallback;
+                    fs::create_directories(m_MaterialsDir);
+                }
+            }
         }
 
         // ---- Init ImGui context (once) ----
@@ -456,6 +496,8 @@ protected:
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Docking support
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Multi-viewport: drag windows outside main window
         ImGui::StyleColorsDark();
 
         // ---- Init RHI-specific resources ----
@@ -514,6 +556,12 @@ protected:
         // ---- Init Gizmo ----
         InitGizmoMeshes();
         BuildGizmoGPUBuffers();
+
+        // ---- Init Texture Manager ----
+        m_TextureManager.Initialize(GetDevice(), GetContext());
+
+        // ---- Init Material Library ----
+        m_MaterialLibrary.Initialize(m_MaterialsDir);
 
         // ---- Init Editor Input ----
         m_EditorInput.Init(GetWindow(), &m_Scene);
@@ -918,9 +966,18 @@ protected:
         DrawViewModeButton();
         DrawCameraButton();
         DrawUI();
+        DrawContentBrowser();
 
         ImGui::Render();
         device->ImGuiRenderDrawData(ctx);
+
+        // Multi-viewport: render windows that have been dragged outside the main window
+        if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+        {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+        }
+
         m_PassTimer.End();
         ctx->EndEvent();
 
@@ -956,6 +1013,14 @@ protected:
         cbd.CameraPos[2] = m_CameraPosition.z;
         cbd.Roughness = meshComp->Roughness;
         cbd.Metallic = meshComp->Metallic;
+
+        // Texture flags
+        bool hasBaseColorTex = !meshComp->BaseColorTexture.empty();
+        bool hasNormalTex = !meshComp->NormalTexture.empty();
+        cbd.HasBaseColorTex = hasBaseColorTex ? 1.0f : 0.0f;
+        cbd.HasNormalTex = hasNormalTex ? 1.0f : 0.0f;
+        cbd.MaterialPadding = 0.0f;
+
         memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
 
         void* mapped = m_ConstantBuffer->Map();
@@ -965,6 +1030,43 @@ protected:
             m_ConstantBuffer->Unmap();
         }
         ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+    }
+
+    // Helper: Bind material textures for the current object
+    void BindMaterialTextures(RHICommandContext* ctx, MeshComponent* meshComp)
+    {
+        // t4 = BaseColor texture
+        if (!meshComp->BaseColorTexture.empty())
+        {
+            GPUTexture* tex = m_TextureManager.GetTexture(meshComp->BaseColorTexture);
+            if (!tex) tex = m_TextureManager.LoadTexture(meshComp->BaseColorTexture);
+            if (tex && tex->SRV)
+                ctx->SetShaderResourceView(4, tex->SRV.get());
+            else
+                ctx->SetShaderResourceView(4, m_TextureManager.GetWhiteTexture()->SRV.get());
+        }
+        else
+        {
+            // Bind white texture as default (no texture)
+            if (m_TextureManager.GetWhiteTexture())
+                ctx->SetShaderResourceView(4, m_TextureManager.GetWhiteTexture()->SRV.get());
+        }
+
+        // t5 = Normal map texture
+        if (!meshComp->NormalTexture.empty())
+        {
+            GPUTexture* tex = m_TextureManager.GetTexture(meshComp->NormalTexture);
+            if (!tex) tex = m_TextureManager.LoadTexture(meshComp->NormalTexture);
+            if (tex && tex->SRV)
+                ctx->SetShaderResourceView(5, tex->SRV.get());
+            else
+                ctx->SetShaderResourceView(5, m_TextureManager.GetDefaultNormalTexture()->SRV.get());
+        }
+        else
+        {
+            if (m_TextureManager.GetDefaultNormalTexture())
+                ctx->SetShaderResourceView(5, m_TextureManager.GetDefaultNormalTexture()->SRV.get());
+        }
     }
 
     // Deferred path: All objects rendered with G-Buffer shader (PSO already set)
@@ -996,6 +1098,10 @@ protected:
             ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
 
             UploadObjectCB(ctx, meshComp);
+
+            // Bind material textures (t4 = BaseColor, t5 = NormalMap)
+            BindMaterialTextures(ctx, meshComp);
+
             ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
         }
     }
@@ -1049,6 +1155,7 @@ protected:
             ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
 
             UploadObjectCB(ctx, meshComp);
+            BindMaterialTextures(ctx, meshComp);
             ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
         }
     }
@@ -1422,6 +1529,7 @@ protected:
 
         // Release all shaders via ShaderLibrary
         m_ShaderLibrary.ReleaseAll();
+        m_TextureManager.ReleaseAll();
 
         // Release post-process resources
         ReleasePostProcessResources();
@@ -1458,6 +1566,9 @@ protected:
 
         // Rebuild Gizmo GPU buffers
         BuildGizmoGPUBuffers();
+
+        // Reinitialize texture manager
+        m_TextureManager.Initialize(GetDevice(), GetContext());
     }
 
     
@@ -2339,6 +2450,15 @@ private:
                 ImGui::EndMenu();
             }
 
+            if (ImGui::BeginMenu("Window"))
+            {
+                if (ImGui::MenuItem("Content Browser", "Ctrl+Space", m_ShowContentBrowser))
+                {
+                    m_ShowContentBrowser = !m_ShowContentBrowser;
+                }
+                ImGui::EndMenu();
+            }
+
             ImGui::EndMainMenuBar();
         }
 
@@ -2395,11 +2515,15 @@ private:
         float menuBarHeight = ImGui::GetFrameHeight();
         float windowWidth = (float)GetWindow()->GetWidth();
 
+        // Main viewport position for Multi-Viewport offset
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        float vpX = vp->Pos.x, vpY = vp->Pos.y;
+
         // Compact button size - just an icon button
         float btnSize = 32.0f;
 
         ImGui::SetNextWindowPos(
-            ImVec2(windowWidth - btnSize - 12.0f, menuBarHeight + 6.0f),
+            ImVec2(vpX + windowWidth - btnSize - 12.0f, vpY + menuBarHeight + 6.0f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.0f);  // transparent background
@@ -2504,12 +2628,15 @@ private:
         float btnSize = 32.0f;
         float btnGap = 6.0f;
 
+        ImGuiViewport* mvp = ImGui::GetMainViewport();
+        float vpX = mvp->Pos.x, vpY = mvp->Pos.y;
+
         // Right-to-left layout: RenderDoc | Stats | ViewMode
         float rdocBtnX = windowWidth - btnSize - 12.0f;
         float statsBtnX = rdocBtnX - btnSize - btnGap;
 
         ImGui::SetNextWindowPos(
-            ImVec2(statsBtnX, menuBarHeight + 6.0f),
+            ImVec2(vpX + statsBtnX, vpY + menuBarHeight + 6.0f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.0f);
@@ -2601,8 +2728,11 @@ private:
         float windowWidth = (float)GetWindow()->GetWidth();
         float panelWidth = 240.0f;
 
+        ImGuiViewport* mvp = ImGui::GetMainViewport();
+        float vpX = mvp->Pos.x, vpY = mvp->Pos.y;
+
         ImGui::SetNextWindowPos(
-            ImVec2(windowWidth - panelWidth - 8.0f, menuBarHeight + 44.0f),
+            ImVec2(vpX + windowWidth - panelWidth - 8.0f, vpY + menuBarHeight + 44.0f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(panelWidth, 0), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.85f);
@@ -2719,13 +2849,16 @@ private:
         float btnSize = 32.0f;
         float btnGap = 6.0f;
 
+        ImGuiViewport* mvp = ImGui::GetMainViewport();
+        float vpX = mvp->Pos.x, vpY = mvp->Pos.y;
+
         // Right-to-left layout: RenderDoc | Stats | ViewMode | Camera
         float rdocBtnX = windowWidth - btnSize - 12.0f;
         float statsBtnX = rdocBtnX - btnSize - btnGap;
         float viewModeBtnX = statsBtnX - btnSize - btnGap;
 
         ImGui::SetNextWindowPos(
-            ImVec2(viewModeBtnX, menuBarHeight + 6.0f),
+            ImVec2(vpX + viewModeBtnX, vpY + menuBarHeight + 6.0f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.0f);
@@ -2834,6 +2967,9 @@ private:
         float btnSize = 32.0f;
         float btnGap = 6.0f;
 
+        ImGuiViewport* mvp = ImGui::GetMainViewport();
+        float vpX = mvp->Pos.x, vpY = mvp->Pos.y;
+
         // Right-to-left layout: RenderDoc | Stats | ViewMode | Camera
         float rdocBtnX = windowWidth - btnSize - 12.0f;
         float statsBtnX = rdocBtnX - btnSize - btnGap;
@@ -2841,7 +2977,7 @@ private:
         float cameraBtnX = viewModeBtnX - btnSize - btnGap;
 
         ImGui::SetNextWindowPos(
-            ImVec2(cameraBtnX, menuBarHeight + 6.0f),
+            ImVec2(vpX + cameraBtnX, vpY + menuBarHeight + 6.0f),
             ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.0f);
@@ -2959,9 +3095,14 @@ private:
     {
         float menuBarHeight = ImGui::GetFrameHeight();
 
-        // Side panel below menu bar
-        ImGui::SetNextWindowPos(ImVec2(0, menuBarHeight), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(320, (float)GetWindow()->GetHeight() - menuBarHeight), ImGuiCond_Always);
+        // Get main viewport position (for Multi-Viewport mode, this is the main window's screen position)
+        ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+        ImVec2 vpPos = mainViewport->Pos;
+        ImVec2 vpSize = mainViewport->Size;
+
+        // Side panel below menu bar — anchored to main window, not screen
+        ImGui::SetNextWindowPos(ImVec2(vpPos.x, vpPos.y + menuBarHeight), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320, vpSize.y - menuBarHeight), ImGuiCond_Always);
 
         ImGui::Begin("Scene Panel", nullptr,
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
@@ -3030,6 +3171,293 @@ private:
         ImGui::End();
     }
 
+    // ============================================================
+    // Content Browser — floating window showing all engine resources
+    // ============================================================
+
+    void DrawContentBrowser()
+    {
+        if (!m_ShowContentBrowser) return;
+
+        namespace fs = std::filesystem;
+
+        ImGui::SetNextWindowSize(ImVec2(720, 450), ImGuiCond_FirstUseEver);
+
+        if (!ImGui::Begin("Content Browser", &m_ShowContentBrowser))
+        {
+            ImGui::End();
+            return;
+        }
+
+        // ---- Resource folders ----
+        struct ContentFolder
+        {
+            const char* Name;
+            const char* Icon;
+            std::string Path;
+        };
+
+        ContentFolder folders[] = {
+            { "Scenes",             "[S] ",  m_ScenesDir },
+            { "Shaders",            "[SH] ", m_ShaderDir },
+            { "GLShaders",          "[GL] ", m_GLShaderDir },
+            { "PostProcessShaders", "[PP] ", m_PostProcessShaderDir },
+            { "Textures",           "[TX] ", m_TexturesDir },
+            { "Materials",          "[MT] ", m_MaterialsDir },
+        };
+        int folderCount = sizeof(folders) / sizeof(folders[0]);
+
+        // If no folder selected, default to first
+        if (m_ContentBrowserSelectedDir.empty())
+            m_ContentBrowserSelectedDir = folders[0].Path;
+
+        // ---- Left panel: folder tree ----
+        ImGui::BeginChild("CB_FolderTree", ImVec2(180, 0), true);
+
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Folders");
+        ImGui::Separator();
+
+        for (int i = 0; i < folderCount; i++)
+        {
+            auto& f = folders[i];
+            if (f.Path.empty()) continue;
+
+            bool selected = (m_ContentBrowserSelectedDir == f.Path);
+            std::string label = std::string(f.Icon) + f.Name;
+            if (ImGui::Selectable(label.c_str(), selected))
+            {
+                m_ContentBrowserSelectedDir = f.Path;
+            }
+        }
+
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // ---- Right panel: file list ----
+        ImGui::BeginChild("CB_FileList", ImVec2(0, 0), true);
+
+        // Find current folder name for display
+        std::string currentFolderName = "Content";
+        for (int i = 0; i < folderCount; i++)
+        {
+            if (folders[i].Path == m_ContentBrowserSelectedDir)
+            {
+                currentFolderName = folders[i].Name;
+                break;
+            }
+        }
+
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "%s", currentFolderName.c_str());
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Path:");
+        ImGui::Separator();
+
+        // Small path display
+        ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "%s", m_ContentBrowserSelectedDir.c_str());
+        ImGui::Separator();
+
+        // Enumerate files
+        std::error_code ec;
+        if (fs::exists(m_ContentBrowserSelectedDir, ec) && fs::is_directory(m_ContentBrowserSelectedDir, ec))
+        {
+            // Collect files first for sorting
+            struct FileEntry
+            {
+                std::string Name;
+                std::string Extension;
+                std::string FullPath;
+                uintmax_t Size;
+            };
+            std::vector<FileEntry> files;
+
+            for (const auto& entry : fs::directory_iterator(m_ContentBrowserSelectedDir, ec))
+            {
+                if (!entry.is_regular_file()) continue;
+                std::string name = entry.path().filename().string();
+                std::string ext = entry.path().extension().string();
+                // Skip README files
+                if (name == "README.txt" || name == "README.md") continue;
+
+                uintmax_t size = 0;
+                std::error_code szEc;
+                size = fs::file_size(entry.path(), szEc);
+
+                files.push_back({ name, ext, entry.path().string(), size });
+            }
+
+            // Sort alphabetically
+            std::sort(files.begin(), files.end(), [](const FileEntry& a, const FileEntry& b) {
+                return a.Name < b.Name;
+            });
+
+            // Table display
+            if (ImGui::BeginTable("ContentFiles", 3,
+                ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY))
+            {
+                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableHeadersRow();
+
+                for (const auto& file : files)
+                {
+                    ImGui::TableNextRow();
+
+                    // Name column (with icon)
+                    ImGui::TableSetColumnIndex(0);
+                    const char* icon = GetContentIcon(file.Extension);
+                    ImVec4 iconColor = GetContentIconColor(file.Extension);
+                    ImGui::TextColored(iconColor, "%s", icon);
+                    ImGui::SameLine();
+
+                    // Selectable filename
+                    std::string stem = fs::path(file.Name).stem().string();
+                    if (ImGui::Selectable(stem.c_str(), false, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
+                    {
+                        if (ImGui::IsMouseDoubleClicked(0))
+                        {
+                            OnContentDoubleClick(file.FullPath, file.Extension);
+                        }
+                    }
+
+                    // Right-click context menu
+                    if (ImGui::BeginPopupContextItem(("##ctx_" + file.Name).c_str()))
+                    {
+                        if (ImGui::MenuItem("Show In Explorer"))
+                        {
+                            // Open Explorer with file selected
+                            std::string cmd = "explorer /select,\"" + file.FullPath + "\"";
+                            system(cmd.c_str());
+                        }
+                        if (ImGui::MenuItem("Open File"))
+                        {
+                            // Open with default associated application
+                            ShellExecuteA(nullptr, "open", file.FullPath.c_str(), nullptr, nullptr, SW_SHOW);
+                        }
+                        ImGui::EndPopup();
+                    }
+
+                    // Tooltip with full path
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImGui::BeginTooltip();
+                        ImGui::Text("%s", file.FullPath.c_str());
+                        ImGui::EndTooltip();
+                    }
+
+                    // Type column
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", GetContentTypeName(file.Extension));
+
+                    // Size column
+                    ImGui::TableSetColumnIndex(2);
+                    if (file.Size < 1024)
+                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%llu B", (unsigned long long)file.Size);
+                    else if (file.Size < 1024 * 1024)
+                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%.1f KB", (float)file.Size / 1024.0f);
+                    else
+                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%.1f MB", (float)file.Size / (1024.0f * 1024.0f));
+                }
+
+                ImGui::EndTable();
+            }
+
+            if (files.empty())
+            {
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(empty folder)");
+            }
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Folder not found: %s", m_ContentBrowserSelectedDir.c_str());
+        }
+
+        ImGui::EndChild();
+        ImGui::End();
+    }
+
+    // ---- Content Browser helpers ----
+
+    static const char* GetContentIcon(const std::string& ext)
+    {
+        if (ext == ".json") return "[Scene]";
+        if (ext == ".hlsl" || ext == ".HLSL") return "[HLSL]";
+        if (ext == ".glsl" || ext == ".GLSL") return "[GLSL]";
+        if (ext == ".mat") return "[Mat]";
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".bmp" || ext == ".tga" || ext == ".PNG" ||
+            ext == ".JPG" || ext == ".BMP" || ext == ".TGA") return "[Tex]";
+        return "[?]";
+    }
+
+    static ImVec4 GetContentIconColor(const std::string& ext)
+    {
+        if (ext == ".json") return ImVec4(0.3f, 0.9f, 0.5f, 1.0f); // green
+        if (ext == ".hlsl" || ext == ".HLSL") return ImVec4(0.4f, 0.6f, 1.0f, 1.0f); // blue
+        if (ext == ".glsl" || ext == ".GLSL") return ImVec4(0.6f, 0.4f, 1.0f, 1.0f); // purple
+        if (ext == ".mat") return ImVec4(0.9f, 0.5f, 0.7f, 1.0f); // pink
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".bmp" || ext == ".tga" || ext == ".PNG" ||
+            ext == ".JPG" || ext == ".BMP" || ext == ".TGA") return ImVec4(1.0f, 0.7f, 0.3f, 1.0f); // orange
+        return ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+    }
+
+    static const char* GetContentTypeName(const std::string& ext)
+    {
+        if (ext == ".json") return "Scene";
+        if (ext == ".hlsl" || ext == ".HLSL") return "Shader";
+        if (ext == ".glsl" || ext == ".GLSL") return "GL Shader";
+        if (ext == ".mat") return "Material";
+        if (ext == ".png") return "PNG";
+        if (ext == ".jpg" || ext == ".jpeg") return "JPEG";
+        if (ext == ".bmp") return "BMP";
+        if (ext == ".tga") return "TGA";
+        return "File";
+    }
+
+    void OnContentDoubleClick(const std::string& fullPath, const std::string& ext)
+    {
+        if (ext == ".json")
+        {
+            // Load scene
+            if (m_Scene.LoadFromFile(fullPath))
+            {
+                RebuildAllGPUBuffers();
+                std::cout << "[Kiwi] Content Browser: Loaded scene: " << fullPath << std::endl;
+            }
+        }
+        else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga")
+        {
+            // Pre-load texture into TextureManager
+            GPUTexture* tex = m_TextureManager.LoadTexture(fullPath);
+            if (tex)
+            {
+                std::cout << "[Kiwi] Content Browser: Loaded texture: " << fullPath
+                          << " (" << tex->Width << "x" << tex->Height << ")" << std::endl;
+            }
+        }
+        else if (ext == ".mat")
+        {
+            // Open material editor
+            namespace fs = std::filesystem;
+            std::string matName = fs::path(fullPath).stem().string();
+            // Ensure it's loaded in MaterialLibrary
+            Material* mat = m_MaterialLibrary.GetMaterial(matName);
+            if (!mat)
+            {
+                auto newMat = std::make_unique<Material>();
+                if (newMat->LoadFromFile(fullPath))
+                {
+                    matName = newMat->Name.empty() ? matName : newMat->Name;
+                    m_MaterialLibrary.AddMaterial(std::move(newMat));
+                }
+            }
+            m_MaterialEditorTarget = matName;
+            m_ShowMaterialEditor = true;
+        }
+    }
+
     void DrawDetailTab()
     {
         SceneObject* sel = m_Scene.GetSelectedObject();
@@ -3071,49 +3499,157 @@ private:
                 {
                     auto& mesh = static_cast<MeshComponent&>(comp);
 
-                    ImGui::Separator();
-                    ImGui::Text("Appearance");
-                    ImGui::ColorEdit4(("Color##" + std::to_string(ci)).c_str(), &mesh.Color.x);
-
+                    // ---- Material Selection ----
                     ImGui::Separator();
                     ImGui::Text("Material");
-                    ImGui::SliderFloat(("Roughness##" + std::to_string(ci)).c_str(), &mesh.Roughness, 0.0f, 1.0f);
-                    ImGui::SliderFloat(("Metallic##" + std::to_string(ci)).c_str(), &mesh.Metallic, 0.0f, 1.0f);
+                    {
+                        auto matNames = m_MaterialLibrary.GetMaterialNames();
+                        if (ImGui::BeginCombo(("##MaterialCombo" + std::to_string(ci)).c_str(), mesh.MaterialName.c_str()))
+                        {
+                            for (const auto& name : matNames)
+                            {
+                                bool isSelected = (name == mesh.MaterialName);
+                                if (ImGui::Selectable(name.c_str(), isSelected))
+                                {
+                                    mesh.MaterialName = name;
+                                    // Sync legacy fields from material
+                                    Material* mat = m_MaterialLibrary.GetMaterial(name);
+                                    if (mat)
+                                    {
+                                        mesh.ShaderName = mat->ShaderName;
+                                        mesh.Color = mat->GetColor("_Color", mesh.Color);
+                                        mesh.Roughness = mat->GetFloat("_Roughness", mesh.Roughness);
+                                        mesh.Metallic = mat->GetFloat("_Metallic", mesh.Metallic);
+                                        mesh.BaseColorTexture = mat->GetTexture("_BaseColorTex");
+                                        mesh.NormalTexture = mat->GetTexture("_NormalTex");
+                                        mesh.MetallicRoughnessTexture = mat->GetTexture("_MetallicRoughnessTex");
+                                    }
+                                }
+                                if (isSelected) ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    }
+
+                    // ---- Material Properties (editable, syncs back to Material + MeshComponent) ----
+                    Material* activeMat = m_MaterialLibrary.GetMaterial(mesh.MaterialName);
+                    if (activeMat)
+                    {
+                        // Show which shader this material uses
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Shader: %s", activeMat->ShaderName.c_str());
+
+                        ImGui::Separator();
+                        ImGui::Text("Properties");
+
+                        // Color
+                        {
+                            Vec4 color = activeMat->GetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
+                            if (ImGui::ColorEdit4(("Color##mat" + std::to_string(ci)).c_str(), &color.x))
+                            {
+                                activeMat->SetColor("_Color", color);
+                                mesh.Color = color;
+                            }
+                        }
+
+                        // Roughness
+                        {
+                            float roughness = activeMat->GetFloat("_Roughness", 0.5f);
+                            if (ImGui::SliderFloat(("Roughness##mat" + std::to_string(ci)).c_str(), &roughness, 0.0f, 1.0f))
+                            {
+                                activeMat->SetFloat("_Roughness", roughness);
+                                mesh.Roughness = roughness;
+                            }
+                        }
+
+                        // Metallic
+                        {
+                            float metallic = activeMat->GetFloat("_Metallic", 0.0f);
+                            if (ImGui::SliderFloat(("Metallic##mat" + std::to_string(ci)).c_str(), &metallic, 0.0f, 1.0f))
+                            {
+                                activeMat->SetFloat("_Metallic", metallic);
+                                mesh.Metallic = metallic;
+                            }
+                        }
+
+                        ImGui::Spacing();
+                        ImGui::Text("Textures");
+
+                        // BaseColor texture
+                        {
+                            std::string tex = activeMat->GetTexture("_BaseColorTex");
+                            char buf[256] = {};
+                            strncpy(buf, tex.c_str(), sizeof(buf) - 1);
+                            if (ImGui::InputText(("BaseColor##mat" + std::to_string(ci)).c_str(), buf, sizeof(buf)))
+                            {
+                                activeMat->SetTexture("_BaseColorTex", buf);
+                                mesh.BaseColorTexture = buf;
+                            }
+                            if (tex.size() > 0)
+                            {
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(("X##clrBC" + std::to_string(ci)).c_str()))
+                                {
+                                    activeMat->SetTexture("_BaseColorTex", "");
+                                    mesh.BaseColorTexture.clear();
+                                }
+                            }
+                        }
+
+                        // Normal map
+                        {
+                            std::string tex = activeMat->GetTexture("_NormalTex");
+                            char buf[256] = {};
+                            strncpy(buf, tex.c_str(), sizeof(buf) - 1);
+                            if (ImGui::InputText(("Normal##mat" + std::to_string(ci)).c_str(), buf, sizeof(buf)))
+                            {
+                                activeMat->SetTexture("_NormalTex", buf);
+                                mesh.NormalTexture = buf;
+                            }
+                            if (tex.size() > 0)
+                            {
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(("X##clrNM" + std::to_string(ci)).c_str()))
+                                {
+                                    activeMat->SetTexture("_NormalTex", "");
+                                    mesh.NormalTexture.clear();
+                                }
+                            }
+                        }
+
+                        // MetallicRoughness map
+                        {
+                            std::string tex = activeMat->GetTexture("_MetallicRoughnessTex");
+                            char buf[256] = {};
+                            strncpy(buf, tex.c_str(), sizeof(buf) - 1);
+                            if (ImGui::InputText(("MR##mat" + std::to_string(ci)).c_str(), buf, sizeof(buf)))
+                            {
+                                activeMat->SetTexture("_MetallicRoughnessTex", buf);
+                                mesh.MetallicRoughnessTexture = buf;
+                            }
+                            if (tex.size() > 0)
+                            {
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(("X##clrMR" + std::to_string(ci)).c_str()))
+                                {
+                                    activeMat->SetTexture("_MetallicRoughnessTex", "");
+                                    mesh.MetallicRoughnessTexture.clear();
+                                }
+                            }
+                        }
+
+                        // Save material button
+                        ImGui::Spacing();
+                        if (ImGui::SmallButton(("Save Material##" + std::to_string(ci)).c_str()))
+                        {
+                            m_MaterialLibrary.SaveMaterial(mesh.MaterialName);
+                        }
+                    }
 
                     ImGui::Separator();
                     ImGui::Text("Rendering");
                     ImGui::DragInt(("Sort Order##" + std::to_string(ci)).c_str(), &mesh.SortOrder, 0.5f, -1000, 1000);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Higher values are rendered first.\nObjects with same order are sorted back-to-front.");
-
-                    ImGui::Separator();
-                    ImGui::Text("Shader");
-                    {
-                        const auto& shaderNames = m_ShaderLibrary.GetShaderNames();
-                        int currentIdx = 0;
-                        for (int si = 0; si < (int)shaderNames.size(); si++)
-                        {
-                            if (shaderNames[si] == mesh.ShaderName)
-                            {
-                                currentIdx = si;
-                                break;
-                            }
-                        }
-                        if (ImGui::BeginCombo(("##ShaderCombo" + std::to_string(ci)).c_str(), mesh.ShaderName.c_str()))
-                        {
-                            for (int si = 0; si < (int)shaderNames.size(); si++)
-                            {
-                                bool isSelected = (si == currentIdx);
-                                if (ImGui::Selectable(shaderNames[si].c_str(), isSelected))
-                                {
-                                    mesh.ShaderName = shaderNames[si];
-                                }
-                                if (isSelected)
-                                    ImGui::SetItemDefaultFocus();
-                            }
-                            ImGui::EndCombo();
-                        }
-                    }
 
                     ImGui::Separator();
                     ImGui::Text("Mesh Info");
@@ -3851,8 +4387,22 @@ private:
 
     // Shader Library — manages all loaded shaders
     ShaderLibrary m_ShaderLibrary;
+    TextureManager m_TextureManager;
+    MaterialLibrary m_MaterialLibrary;
     std::string m_ShaderDir; // Path to Shaders/ folder
     std::string m_ScenesDir; // Path to Scenes/ folder
+    std::string m_TexturesDir; // Path to Textures/ folder
+    std::string m_MaterialsDir; // Path to Materials/ folder
+    std::string m_PostProcessShaderDir;
+    std::string m_GLShaderDir;
+
+    // Content Browser state
+    bool m_ShowContentBrowser = false;
+    std::string m_ContentBrowserSelectedDir; // Currently selected folder in tree
+
+    // Material Editor state
+    bool m_ShowMaterialEditor = false;
+    std::string m_MaterialEditorTarget;  // Name of material being edited
 
     // Save Scene dialog state
     bool m_ShowSaveDialog = false;
@@ -3905,7 +4455,6 @@ private:
 
     // ---- Post-Process Resources ----
     PostProcessShaderLibrary m_PostProcessLibrary;
-    std::string m_PostProcessShaderDir;
 
     // Offscreen render targets (ping-pong buffers)
     std::unique_ptr<RHITexture>     m_OffscreenRT[2];

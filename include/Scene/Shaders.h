@@ -34,7 +34,9 @@ namespace Kiwi
         float CameraPos[3];          // Camera position in world space
         float Roughness;             // Material roughness [0, 1]
         float Metallic;              // Material metallic [0, 1]
-        float MaterialPadding[3];    // Pad to 16-byte alignment
+        float HasBaseColorTex;       // 1.0 if base color texture bound, 0.0 otherwise
+        float HasNormalTex;          // 1.0 if normal map bound, 0.0 otherwise
+        float MaterialPadding;       // Pad to 16-byte alignment
         GPULightData Lights[MAX_LIGHTS]; // Light array
     };
 
@@ -79,7 +81,9 @@ namespace Kiwi
         float3 g_CameraPos;
         float  g_Roughness;
         float  g_Metallic;
-        float3 g_MaterialPadding;
+        float  g_HasBaseColorTex;
+        float  g_HasNormalTex;
+        float  g_MaterialPadding;
         LightData g_Lights[MAX_LIGHTS];
     };
 
@@ -143,7 +147,9 @@ namespace Kiwi
         float3 g_CameraPos;
         float  g_Roughness;
         float  g_Metallic;
-        float3 g_MaterialPadding;
+        float  g_HasBaseColorTex;
+        float  g_HasNormalTex;
+        float  g_MaterialPadding;
         LightData g_Lights[MAX_LIGHTS];
     };
 

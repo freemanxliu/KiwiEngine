@@ -29,9 +29,16 @@ cbuffer Constants : register(b0)
     float3 g_CameraPos;
     float  g_Roughness;
     float  g_Metallic;
-    float3 g_MaterialPadding;
+    float  g_HasBaseColorTex;
+    float  g_HasNormalTex;
+    float  g_MaterialPadding;
     LightData g_Lights[MAX_LIGHTS];
 };
+
+// Material textures (bound per-object)
+Texture2D    g_BaseColorTex : register(t4);  // BaseColor/Albedo texture
+Texture2D    g_NormalTex    : register(t5);  // Normal map texture
+SamplerState g_LinearWrap   : register(s1);  // Linear wrap sampler (from root sig)
 
 struct VSInput
 {
@@ -44,9 +51,12 @@ struct VSInput
 struct VSOutput
 {
     float4 PositionCS : SV_POSITION;
-    float3 NormalWS   : TEXCOORD0;
+    float3 PositionWS : TEXCOORD0;
+    float3 NormalWS   : TEXCOORD1;
+    float3 TangentWS  : TEXCOORD2;
+    float3 BitangentWS: TEXCOORD3;
     float4 Color      : COLOR;
-    float2 TexCoord   : TEXCOORD1;
+    float2 TexCoord   : TEXCOORD4;
 };
 
 // G-Buffer MRT output (UE5-inspired)
@@ -88,9 +98,22 @@ VSOutput VSMain(VSInput input)
     float4 projPos = mul(viewPos, g_Projection);
 
     output.PositionCS = projPos;
+    output.PositionWS = worldPos.xyz;
     output.NormalWS = normalize(mul(input.Normal, (float3x3)g_World));
     output.Color = input.Color * g_ObjectColor;
     output.TexCoord = input.TexCoord;
+
+    // Generate tangent/bitangent from normal for normal mapping
+    // (Approximation when no explicit tangent data is available)
+    float3 N = output.NormalWS;
+    float3 T;
+    if (abs(N.y) < 0.99)
+        T = normalize(cross(float3(0, 1, 0), N));
+    else
+        T = normalize(cross(float3(1, 0, 0), N));
+    float3 B = normalize(cross(N, T));
+    output.TangentWS = T;
+    output.BitangentWS = B;
 
     return output;
 }
@@ -100,7 +123,28 @@ GBufferOutput PSMain(VSOutput input)
 {
     GBufferOutput output;
 
+    // BaseColor: sample texture if available, otherwise use vertex color
+    float3 baseColor = input.Color.rgb;
+    if (g_HasBaseColorTex > 0.5)
+    {
+        float4 texColor = g_BaseColorTex.Sample(g_LinearWrap, input.TexCoord);
+        baseColor = texColor.rgb * input.Color.rgb;
+    }
+
+    // Normal: use normal map if available
     float3 normal = normalize(input.NormalWS);
+    if (g_HasNormalTex > 0.5)
+    {
+        float3 tangentNormal = g_NormalTex.Sample(g_LinearWrap, input.TexCoord).rgb;
+        tangentNormal = tangentNormal * 2.0 - 1.0; // [0,1] -> [-1,1]
+
+        float3 T = normalize(input.TangentWS);
+        float3 B = normalize(input.BitangentWS);
+        float3 N = normalize(input.NormalWS);
+        float3x3 TBN = float3x3(T, B, N);
+        normal = normalize(mul(tangentNormal, TBN));
+    }
+
     float2 octNormal = OctahedronEncode(normal);
 
     // Default specular = 0.5 (dielectric Fresnel reflectance ~4%)
@@ -109,7 +153,7 @@ GBufferOutput PSMain(VSOutput input)
     float shadingModelID = 1.0 / 255.0; // ID=1
 
     output.GBufferA = float4(octNormal.x, octNormal.y, g_Metallic, shadingModelID);
-    output.GBufferB = float4(input.Color.rgb, g_Roughness);
+    output.GBufferB = float4(baseColor, g_Roughness);
     output.GBufferC = float4(0.0, 0.0, 0.0, specular); // No emissive for now
 
     return output;

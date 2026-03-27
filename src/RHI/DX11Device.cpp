@@ -370,6 +370,18 @@ namespace Kiwi
         if (initialData)
         {
             initData.pSysMem = initialData;
+            // Calculate row pitch based on format and width
+            uint32_t bytesPerPixel = 4; // R8G8B8A8_UNORM default
+            switch (desc.Format)
+            {
+            case EFormat::R16G16B16A16_FLOAT: bytesPerPixel = 8; break;
+            case EFormat::R32G32B32A32_FLOAT: bytesPerPixel = 16; break;
+            case EFormat::R32_FLOAT:          bytesPerPixel = 4; break;
+            case EFormat::R16G16_FLOAT:       bytesPerPixel = 4; break;
+            default:                          bytesPerPixel = 4; break;
+            }
+            initData.SysMemPitch = desc.Width * bytesPerPixel;
+            initData.SysMemSlicePitch = initData.SysMemPitch * desc.Height;
             initDataPtr = &initData;
         }
 

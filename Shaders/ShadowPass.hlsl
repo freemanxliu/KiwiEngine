@@ -27,7 +27,9 @@ cbuffer Constants : register(b0)
     float3 g_CameraPos;
     float  g_Roughness;
     float  g_Metallic;
-    float3 g_MaterialPadding;
+    float  g_HasBaseColorTex;
+    float  g_HasNormalTex;
+    float  g_MaterialPadding;
     LightData g_Lights[MAX_LIGHTS];
 };
 

@@ -512,6 +512,100 @@ namespace Kiwi
             resource->SetName(wname);
         }
 
+        // Upload initial data via upload heap if provided
+        bool isDepthFormat = (desc.Format == EFormat::D24_UNORM_S8_UINT ||
+                              desc.Format == EFormat::D32_FLOAT ||
+                              desc.Format == EFormat::R32_TYPELESS);
+        if (initialData && !isDepthFormat)
+        {
+            // Calculate row pitch (bytes per pixel * width, aligned to 256 bytes for DX12)
+            uint32_t bytesPerPixel = 4;
+            switch (desc.Format)
+            {
+            case EFormat::R16G16B16A16_FLOAT: bytesPerPixel = 8; break;
+            case EFormat::R32G32B32A32_FLOAT: bytesPerPixel = 16; break;
+            case EFormat::R32_FLOAT:          bytesPerPixel = 4; break;
+            case EFormat::R16G16_FLOAT:       bytesPerPixel = 4; break;
+            default:                          bytesPerPixel = 4; break;
+            }
+            uint32_t srcRowPitch = desc.Width * bytesPerPixel;
+            uint32_t alignedRowPitch = (srcRowPitch + 255) & ~255u; // D3D12_TEXTURE_DATA_PITCH_ALIGNMENT
+            uint64_t uploadSize = (uint64_t)alignedRowPitch * desc.Height;
+
+            // Create upload buffer
+            D3D12_HEAP_PROPERTIES uploadHeapProps = {};
+            uploadHeapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+            D3D12_RESOURCE_DESC uploadBufferDesc = {};
+            uploadBufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            uploadBufferDesc.Width = uploadSize;
+            uploadBufferDesc.Height = 1;
+            uploadBufferDesc.DepthOrArraySize = 1;
+            uploadBufferDesc.MipLevels = 1;
+            uploadBufferDesc.SampleDesc.Count = 1;
+            uploadBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+            ComPtr<ID3D12Resource> uploadBuffer;
+            hr = m_Device->CreateCommittedResource(
+                &uploadHeapProps, D3D12_HEAP_FLAG_NONE, &uploadBufferDesc,
+                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer));
+            if (SUCCEEDED(hr))
+            {
+                // Map and copy data with proper pitch alignment
+                uint8_t* mapped = nullptr;
+                D3D12_RANGE readRange = { 0, 0 };
+                uploadBuffer->Map(0, &readRange, (void**)&mapped);
+                const uint8_t* src = (const uint8_t*)initialData;
+                for (uint32_t row = 0; row < desc.Height; row++)
+                {
+                    memcpy(mapped + row * alignedRowPitch, src + row * srcRowPitch, srcRowPitch);
+                }
+                uploadBuffer->Unmap(0, nullptr);
+
+                // Create a temporary command list for the copy
+                ComPtr<ID3D12CommandAllocator> tmpAllocator;
+                m_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAllocator));
+                ComPtr<ID3D12GraphicsCommandList> tmpCmdList;
+                m_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAllocator.Get(), nullptr, IID_PPV_ARGS(&tmpCmdList));
+
+                // Transition to copy dest
+                D3D12_RESOURCE_BARRIER barrier = {};
+                barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                barrier.Transition.pResource = resource.Get();
+                barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+                barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+                barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                tmpCmdList->ResourceBarrier(1, &barrier);
+
+                // Copy texture
+                D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+                dstLoc.pResource = resource.Get();
+                dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                dstLoc.SubresourceIndex = 0;
+
+                D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+                srcLoc.pResource = uploadBuffer.Get();
+                srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                srcLoc.PlacedFootprint.Offset = 0;
+                srcLoc.PlacedFootprint.Footprint.Format = dxgiFormat;
+                srcLoc.PlacedFootprint.Footprint.Width = desc.Width;
+                srcLoc.PlacedFootprint.Footprint.Height = desc.Height;
+                srcLoc.PlacedFootprint.Footprint.Depth = 1;
+                srcLoc.PlacedFootprint.Footprint.RowPitch = alignedRowPitch;
+
+                tmpCmdList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+
+                // Transition to shader resource
+                barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+                barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+                tmpCmdList->ResourceBarrier(1, &barrier);
+
+                tmpCmdList->Close();
+                ID3D12CommandList* lists[] = { tmpCmdList.Get() };
+                m_CommandQueue->ExecuteCommandLists(1, lists);
+                WaitForGPU(); // Wait for upload to complete
+            }
+        }
+
         return std::make_unique<DX12Texture>(resource.Get(), desc);
     }
 

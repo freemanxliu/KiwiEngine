@@ -30,13 +30,19 @@ namespace Kiwi
         EPrimitiveType PrimitiveType = EPrimitiveType::Cube;
 
         // Rendering properties
-        Vec4        Color      = { 0.8f, 0.8f, 0.8f, 1.0f }; // Object color
-        std::string ShaderName = "DefaultLit";                  // Shader to use
+        Vec4        Color      = { 0.8f, 0.8f, 0.8f, 1.0f }; // Object color (fallback if no material)
+        std::string ShaderName = "DefaultLit";                  // Shader to use (legacy, overridden by Material)
+        std::string MaterialName = "Default-Material";          // Material asset reference
         int32_t     SortOrder  = 0;                             // Render sort priority (higher = rendered first)
 
         // Material properties (PBR-lite)
         float       Roughness  = 0.5f;                          // Surface roughness [0, 1]
         float       Metallic   = 0.0f;                          // Metallic factor [0, 1]
+
+        // Texture paths (empty = use default solid color)
+        std::string BaseColorTexture;                             // Albedo/diffuse texture path
+        std::string NormalTexture;                                // Normal map texture path
+        std::string MetallicRoughnessTexture;                     // Combined metallic(B) + roughness(G) map
     };
 
 } // namespace Kiwi

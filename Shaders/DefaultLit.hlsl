@@ -4,6 +4,15 @@
 // Supports multiple lights (Directional + Point)
 // This is the default material for new mesh objects.
 // ============================================================
+//
+// @Properties {
+//   _Color ("Base Color", Color) = (0.8, 0.8, 0.8, 1.0)
+//   _Roughness ("Roughness", Range(0, 1)) = 0.5
+//   _Metallic ("Metallic", Range(0, 1)) = 0.0
+//   _BaseColorTex ("Albedo", Texture2D) = "white"
+//   _NormalTex ("Normal Map", Texture2D) = "normal"
+//   _MetallicRoughnessTex ("Metallic/Roughness", Texture2D) = "white"
+// }
 
 #define MAX_LIGHTS 8
 
@@ -30,7 +39,9 @@ cbuffer Constants : register(b0)
     float3 g_CameraPos;
     float  g_Roughness;
     float  g_Metallic;
-    float3 g_MaterialPadding;
+    float  g_HasBaseColorTex;
+    float  g_HasNormalTex;
+    float  g_MaterialPadding;
     LightData g_Lights[MAX_LIGHTS];
 };
 

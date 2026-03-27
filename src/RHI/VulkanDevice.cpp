@@ -1446,18 +1446,19 @@ namespace Kiwi
         ImGui_ImplWin32_Init(hwnd);
 
         ImGui_ImplVulkan_InitInfo initInfo = {};
+        initInfo.ApiVersion = VK_API_VERSION_1_2;
         initInfo.Instance = m_Instance;
         initInfo.PhysicalDevice = m_PhysicalDevice;
         initInfo.Device = m_Device;
         initInfo.QueueFamily = m_GraphicsQueueFamily;
         initInfo.Queue = m_GraphicsQueue;
         initInfo.DescriptorPool = m_DescriptorPool;
-        initInfo.RenderPass = m_MainRenderPass;
+        initInfo.PipelineInfoMain.RenderPass = m_MainRenderPass;
+        initInfo.PipelineInfoMain.Subpass = 0;
+        initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         initInfo.MinImageCount = 2;
         initInfo.ImageCount = 2;
-        initInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
         initInfo.PipelineCache = VK_NULL_HANDLE;
-        initInfo.Subpass = 0;
 
         ImGui_ImplVulkan_Init(&initInfo);
 

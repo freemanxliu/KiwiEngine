@@ -296,7 +296,28 @@ namespace Kiwi
                     file << "          \"primitiveType\": \"" << PrimitiveTypeToString(mesh.PrimitiveType) << "\",\n";
                     file << "          \"sortOrder\": " << mesh.SortOrder << ",\n";
                     file << "          \"roughness\": " << mesh.Roughness << ",\n";
-                    file << "          \"metallic\": " << mesh.Metallic << "\n";
+                    file << "          \"metallic\": " << mesh.Metallic;
+                    if (!mesh.BaseColorTexture.empty() || !mesh.NormalTexture.empty() || !mesh.MetallicRoughnessTexture.empty())
+                    {
+                        file << ",\n";
+                        if (!mesh.BaseColorTexture.empty())
+                            file << "          \"baseColorTexture\": \"" << EscapeString(mesh.BaseColorTexture) << "\"";
+                        if (!mesh.NormalTexture.empty())
+                        {
+                            if (!mesh.BaseColorTexture.empty()) file << ",\n";
+                            file << "          \"normalTexture\": \"" << EscapeString(mesh.NormalTexture) << "\"";
+                        }
+                        if (!mesh.MetallicRoughnessTexture.empty())
+                        {
+                            if (!mesh.BaseColorTexture.empty() || !mesh.NormalTexture.empty()) file << ",\n";
+                            file << "          \"metallicRoughnessTexture\": \"" << EscapeString(mesh.MetallicRoughnessTexture) << "\"";
+                        }
+                        file << "\n";
+                    }
+                    else
+                    {
+                        file << "\n";
+                    }
                 }
                 else if (comp.GetType() == EComponentType::Camera)
                 {
@@ -585,6 +606,14 @@ namespace Kiwi
                         float metallic = 0.0f;
                         if (ReadFloat(compStr, "metallic", metallic)) mesh->Metallic = metallic;
 
+                        // Texture paths
+                        std::string baseColorTex = ReadQuotedString(compStr, "baseColorTexture");
+                        if (!baseColorTex.empty()) mesh->BaseColorTexture = baseColorTex;
+                        std::string normalTex = ReadQuotedString(compStr, "normalTexture");
+                        if (!normalTex.empty()) mesh->NormalTexture = normalTex;
+                        std::string mrTex = ReadQuotedString(compStr, "metallicRoughnessTexture");
+                        if (!mrTex.empty()) mesh->MetallicRoughnessTexture = mrTex;
+
                         // Read primitive type and rebuild mesh geometry
                         std::string primTypeStr = ReadQuotedString(compStr, "primitiveType");
                         EPrimitiveType primType = primTypeStr.empty()
@@ -733,6 +762,14 @@ namespace Kiwi
 
                     float metallic = 0.0f;
                     if (ReadFloat(objStr, "metallic", metallic)) mesh->Metallic = metallic;
+
+                    // Texture paths (backward compat)
+                    std::string baseColorTex = ReadQuotedString(objStr, "baseColorTexture");
+                    if (!baseColorTex.empty()) mesh->BaseColorTexture = baseColorTex;
+                    std::string normalTex = ReadQuotedString(objStr, "normalTexture");
+                    if (!normalTex.empty()) mesh->NormalTexture = normalTex;
+                    std::string mrTex = ReadQuotedString(objStr, "metallicRoughnessTexture");
+                    if (!mrTex.empty()) mesh->MetallicRoughnessTexture = mrTex;
                 }
             }
         }
