@@ -52,7 +52,7 @@ struct VSInput
 {
     float3 Position : POSITION;
     float3 Normal   : NORMAL;
-    float3 Tangent  : TANGENT;
+    float4 Tangent  : TANGENT;
     float4 Color    : COLOR;
     float2 TexCoord : TEXCOORD;
 };

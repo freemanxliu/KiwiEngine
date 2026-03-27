@@ -237,6 +237,69 @@ namespace Kiwi
                 }
             }
 
+            // Compute tangents from UV (per-triangle accumulation + Gram-Schmidt)
+            if (indices.size() >= 3)
+            {
+                for (auto& v : vertices) v.Tangent = { 0, 0, 0, 1 };
+
+                for (size_t i = 0; i + 2 < indices.size(); i += 3)
+                {
+                    Vertex& v0 = vertices[indices[i + 0]];
+                    Vertex& v1 = vertices[indices[i + 1]];
+                    Vertex& v2 = vertices[indices[i + 2]];
+
+                    Vec3 e1 = { v1.Position.x - v0.Position.x, v1.Position.y - v0.Position.y, v1.Position.z - v0.Position.z };
+                    Vec3 e2 = { v2.Position.x - v0.Position.x, v2.Position.y - v0.Position.y, v2.Position.z - v0.Position.z };
+                    float du1 = v1.TexCoord.x - v0.TexCoord.x;
+                    float dv1 = v1.TexCoord.y - v0.TexCoord.y;
+                    float du2 = v2.TexCoord.x - v0.TexCoord.x;
+                    float dv2 = v2.TexCoord.y - v0.TexCoord.y;
+
+                    float det = du1 * dv2 - du2 * dv1;
+                    if (std::abs(det) < 1e-8f) continue;
+                    float invDet = 1.0f / det;
+
+                    Vec3 t = {
+                        invDet * (dv2 * e1.x - dv1 * e2.x),
+                        invDet * (dv2 * e1.y - dv1 * e2.y),
+                        invDet * (dv2 * e1.z - dv1 * e2.z)
+                    };
+
+                    Vec3 b = {
+                        invDet * (-du2 * e1.x + du1 * e2.x),
+                        invDet * (-du2 * e1.y + du1 * e2.y),
+                        invDet * (-du2 * e1.z + du1 * e2.z)
+                    };
+
+                    for (int k = 0; k < 3; k++)
+                    {
+                        vertices[indices[i + k]].Tangent.x += t.x;
+                        vertices[indices[i + k]].Tangent.y += t.y;
+                        vertices[indices[i + k]].Tangent.z += t.z;
+                    }
+                }
+
+                // Gram-Schmidt orthogonalize, normalize, and compute handedness
+                for (auto& v : vertices)
+                {
+                    Vec3 n = v.Normal;
+                    Vec3 t = { v.Tangent.x, v.Tangent.y, v.Tangent.z };
+                    float d = n.x * t.x + n.y * t.y + n.z * t.z;
+                    t.x -= n.x * d; t.y -= n.y * d; t.z -= n.z * d;
+                    float len = std::sqrt(t.x * t.x + t.y * t.y + t.z * t.z);
+                    if (len > 1e-6f)
+                    {
+                        t.x /= len; t.y /= len; t.z /= len;
+                        // Handedness: +1 (right-handed TBN assumed for standard UV layouts)
+                        v.Tangent = { t.x, t.y, t.z, 1.0f };
+                    }
+                    else
+                    {
+                        v.Tangent = { 0, 0, 0, 1 };
+                    }
+                }
+            }
+
             // Build the Mesh using the friend access pattern
             // Mesh::m_Vertices and m_Indices are private, so we use SetData
             subMesh.MeshData.SetData(std::move(vertices), std::move(indices));
@@ -367,6 +430,13 @@ namespace Kiwi
                                 key ^= ((uint64_t)(*(uint32_t*)&vert.TexCoord.x)) << 16;
                             }
 
+                            // Tangent
+                            if (mesh->vertex_tangent.exists)
+                            {
+                                ufbx_vec3 t = ufbx_get_vertex_vec3(&mesh->vertex_tangent, vertIdx);
+                                vert.Tangent = { (float)t.x, (float)t.y, (float)t.z, 1.0f };
+                            }
+
                             // Color
                             vert.Color = matColor;
 
@@ -417,6 +487,13 @@ namespace Kiwi
                                 vert.TexCoord = { (float)uv.x, 1.0f - (float)uv.y };
                             }
 
+                            // Tangent
+                            if (mesh->vertex_tangent.exists)
+                            {
+                                ufbx_vec3 t = ufbx_get_vertex_vec3(&mesh->vertex_tangent, vertIdx);
+                                vert.Tangent = { (float)t.x, (float)t.y, (float)t.z, 1.0f };
+                            }
+
                             vert.Color = matColor;
 
                             // No dedup for simplicity in this path
@@ -459,6 +536,69 @@ namespace Kiwi
                     for (auto& v : vertices)
                     {
                         v.Normal = v.Normal.Normalize();
+                    }
+                }
+
+                // Compute tangents from UV if ufbx didn't provide them
+                bool hasTangents = mesh->vertex_tangent.exists;
+                if (!hasTangents && indices.size() >= 3)
+                {
+                    for (auto& v : vertices) v.Tangent = { 0, 0, 0, 1 };
+
+                    for (size_t i = 0; i + 2 < indices.size(); i += 3)
+                    {
+                        Vertex& va = vertices[indices[i + 0]];
+                        Vertex& vb = vertices[indices[i + 1]];
+                        Vertex& vc = vertices[indices[i + 2]];
+
+                        Vec3 e1 = { vb.Position.x - va.Position.x, vb.Position.y - va.Position.y, vb.Position.z - va.Position.z };
+                        Vec3 e2 = { vc.Position.x - va.Position.x, vc.Position.y - va.Position.y, vc.Position.z - va.Position.z };
+                        float du1 = vb.TexCoord.x - va.TexCoord.x;
+                        float dv1 = vb.TexCoord.y - va.TexCoord.y;
+                        float du2 = vc.TexCoord.x - va.TexCoord.x;
+                        float dv2 = vc.TexCoord.y - va.TexCoord.y;
+
+                        float det = du1 * dv2 - du2 * dv1;
+                        if (std::abs(det) < 1e-8f) continue;
+                        float invDet = 1.0f / det;
+
+                        Vec3 t = {
+                            invDet * (dv2 * e1.x - dv1 * e2.x),
+                            invDet * (dv2 * e1.y - dv1 * e2.y),
+                            invDet * (dv2 * e1.z - dv1 * e2.z)
+                        };
+
+                        Vec3 b = {
+                            invDet * (-du2 * e1.x + du1 * e2.x),
+                            invDet * (-du2 * e1.y + du1 * e2.y),
+                            invDet * (-du2 * e1.z + du1 * e2.z)
+                        };
+
+                        for (int k = 0; k < 3; k++)
+                        {
+                            vertices[indices[i + k]].Tangent.x += t.x;
+                            vertices[indices[i + k]].Tangent.y += t.y;
+                            vertices[indices[i + k]].Tangent.z += t.z;
+                        }
+                    }
+
+                    for (auto& v : vertices)
+                    {
+                        Vec3 n = v.Normal;
+                        Vec3 t = { v.Tangent.x, v.Tangent.y, v.Tangent.z };
+                        float d = n.x * t.x + n.y * t.y + n.z * t.z;
+                        t.x -= n.x * d; t.y -= n.y * d; t.z -= n.z * d;
+                        float len = std::sqrt(t.x * t.x + t.y * t.y + t.z * t.z);
+                        if (len > 1e-6f)
+                        {
+                            t.x /= len; t.y /= len; t.z /= len;
+                            float handedness = 1.0f;
+                            v.Tangent = { t.x, t.y, t.z, handedness };
+                        }
+                        else
+                        {
+                            v.Tangent = { 0, 0, 0, 1 };
+                        }
                     }
                 }
 

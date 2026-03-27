@@ -33,15 +33,16 @@ namespace Kiwi
         {
             int indices[4];
             Vec3 normal;
+            Vec3 tangent; // Tangent aligned with U texture direction
         };
 
         Face faces[6] = {
-            { { 4, 5, 6, 7 }, {  0,  0,  1 } }, // Front  (Z+)
-            { { 1, 0, 3, 2 }, {  0,  0, -1 } }, // Back   (Z-)
-            { { 7, 6, 2, 3 }, {  0,  1,  0 } }, // Top    (Y+)
-            { { 4, 0, 1, 5 }, {  0, -1,  0 } }, // Bottom (Y-)
-            { { 5, 1, 2, 6 }, {  1,  0,  0 } }, // Right  (X+)
-            { { 0, 4, 7, 3 }, { -1,  0,  0 } }, // Left   (X-)
+            { { 4, 5, 6, 7 }, {  0,  0,  1 }, {  1,  0,  0 } }, // Front  (Z+)
+            { { 1, 0, 3, 2 }, {  0,  0, -1 }, { -1,  0,  0 } }, // Back   (Z-)
+            { { 7, 6, 2, 3 }, {  0,  1,  0 }, {  1,  0,  0 } }, // Top    (Y+)
+            { { 4, 0, 1, 5 }, {  0, -1,  0 }, {  1,  0,  0 } }, // Bottom (Y-)
+            { { 5, 1, 2, 6 }, {  1,  0,  0 }, {  0,  0, -1 } }, // Right  (X+)
+            { { 0, 4, 7, 3 }, { -1,  0,  0 }, {  0,  0,  1 } }, // Left   (X-)
         };
 
         // UV corners for each face quad
@@ -56,12 +57,14 @@ namespace Kiwi
         {
             Vec4 color = faceColors[f];
             Vec3 normal = faces[f].normal;
+            Vec3 tangent = faces[f].tangent;
 
             for (int i = 0; i < 4; i++)
             {
                 Vertex v;
                 v.Position = positions[faces[f].indices[i]];
                 v.Normal = normal;
+                v.Tangent = { tangent.x, tangent.y, tangent.z, 1.0f };
                 v.Color = color;
                 v.TexCoord = faceUVs[i];
                 mesh.m_Vertices.push_back(v);
@@ -97,6 +100,10 @@ namespace Kiwi
                 v.Position.z = radius * sinf(phi) * sinf(theta);
 
                 v.Normal = v.Position.Normalize();
+
+                // Tangent: direction of increasing theta (U direction on sphere)
+                Vec3 sphereTan = Vec3(-sinf(theta), 0.0f, cosf(theta)).Normalize();
+                v.Tangent = { sphereTan.x, sphereTan.y, sphereTan.z, 1.0f };
 
                 v.Color = Vec4(
                     0.5f + 0.5f * v.Normal.x,
@@ -149,11 +156,13 @@ namespace Kiwi
             float u = (float)i / (float)segments;
 
             Vec3 normal = { cosT, 0.0f, sinT };
+            Vec3 tangent = { -sinT, 0.0f, cosT }; // Tangent along theta direction (U)
 
             // Bottom vertex
             Vertex vBot;
             vBot.Position = { radius * cosT, -halfH, radius * sinT };
             vBot.Normal = normal;
+            vBot.Tangent = { tangent.x, tangent.y, tangent.z, 1.0f };
             vBot.Color = { 0.5f + 0.5f * cosT, 0.7f, 0.5f + 0.5f * sinT, 1.0f };
             vBot.TexCoord = { u, 1.0f };
             mesh.m_Vertices.push_back(vBot);
@@ -162,6 +171,7 @@ namespace Kiwi
             Vertex vTop;
             vTop.Position = { radius * cosT, halfH, radius * sinT };
             vTop.Normal = normal;
+            vTop.Tangent = { tangent.x, tangent.y, tangent.z, 1.0f };
             vTop.Color = vBot.Color;
             vTop.TexCoord = { u, 0.0f };
             mesh.m_Vertices.push_back(vTop);
@@ -186,6 +196,7 @@ namespace Kiwi
             Vertex vc;
             vc.Position = { 0, halfH, 0 };
             vc.Normal = { 0, 1, 0 };
+            vc.Tangent = { 1, 0, 0, 1 };
             vc.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
             vc.TexCoord = { 0.5f, 0.5f };
             mesh.m_Vertices.push_back(vc);
@@ -199,6 +210,7 @@ namespace Kiwi
             Vertex v;
             v.Position = { radius * ct, halfH, radius * st };
             v.Normal = { 0, 1, 0 };
+            v.Tangent = { 1, 0, 0, 1 };
             v.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
             v.TexCoord = { 0.5f + 0.5f * ct, 0.5f + 0.5f * st };
             mesh.m_Vertices.push_back(v);
@@ -217,6 +229,7 @@ namespace Kiwi
             Vertex vc;
             vc.Position = { 0, -halfH, 0 };
             vc.Normal = { 0, -1, 0 };
+            vc.Tangent = { 1, 0, 0, 1 };
             vc.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
             vc.TexCoord = { 0.5f, 0.5f };
             mesh.m_Vertices.push_back(vc);
@@ -230,6 +243,7 @@ namespace Kiwi
             Vertex v;
             v.Position = { radius * ct, -halfH, radius * st };
             v.Normal = { 0, -1, 0 };
+            v.Tangent = { 1, 0, 0, 1 };
             v.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
             v.TexCoord = { 0.5f + 0.5f * ct, 0.5f - 0.5f * st };
             mesh.m_Vertices.push_back(v);
@@ -252,10 +266,11 @@ namespace Kiwi
         float hw = width * 0.5f;
         float hh = height * 0.5f;
 
-        Vertex v0 = { { -hw, 0, -hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 0, 0 } };
-        Vertex v1 = { {  hw, 0, -hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 1, 0 } };
-        Vertex v2 = { {  hw, 0,  hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 1, 1 } };
-        Vertex v3 = { { -hw, 0,  hh }, { 0, 1, 0 }, { 1, 1, 1, 1 }, { 0, 1 } };
+        // Plane: Normal = Y+, Tangent = X+ (aligned with U direction)
+        Vertex v0; v0.Position = { -hw, 0, -hh }; v0.Normal = { 0, 1, 0 }; v0.Tangent = { 1, 0, 0, 1 }; v0.Color = { 1, 1, 1, 1 }; v0.TexCoord = { 0, 0 };
+        Vertex v1; v1.Position = {  hw, 0, -hh }; v1.Normal = { 0, 1, 0 }; v1.Tangent = { 1, 0, 0, 1 }; v1.Color = { 1, 1, 1, 1 }; v1.TexCoord = { 1, 0 };
+        Vertex v2; v2.Position = {  hw, 0,  hh }; v2.Normal = { 0, 1, 0 }; v2.Tangent = { 1, 0, 0, 1 }; v2.Color = { 1, 1, 1, 1 }; v2.TexCoord = { 1, 1 };
+        Vertex v3; v3.Position = { -hw, 0,  hh }; v3.Normal = { 0, 1, 0 }; v3.Tangent = { 1, 0, 0, 1 }; v3.Color = { 1, 1, 1, 1 }; v3.TexCoord = { 0, 1 };
 
         mesh.m_Vertices.push_back(v0);
         mesh.m_Vertices.push_back(v1);

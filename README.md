@@ -60,7 +60,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reconstructs world position from depth, decodes octahedron normals, reads material properties from G-Buffer, and computes **UE5-style PBR lighting** with multi-light support. BRDF matches UE5's `DefaultLitBxDF`: **D_GGX** (Trowbridge-Reitz NDF), **Vis_SmithJointApprox** (joint Smith visibility with baked-in denominator), **F_Schlick** (with 2% reflectance shadow threshold), **Diffuse_Burley** (Disney diffuse, roughness-dependent), and **EnvBRDFApprox** (Lazarov 2013 analytical approximation, no LUT needed) for indirect specular. Applies cascaded shadow maps and Reinhard tone mapping.
 - **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades rendered into a **single shadow atlas** (2x2 layout). Each cascade occupies one quadrant of the atlas texture (`R32_TYPELESS`, `2*cascadeSize × 2*cascadeSize`). PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. Shader selects cascade by view-space distance and computes UV offset into the atlas. 5-tap PCF filtering with comparison sampler for soft shadow edges.
 - **Forward Gizmo Pass** — Transform gizmo (translate/rotate/scale) rendered on top of the deferred result using forward rendering with depth for correct occlusion.
-- **Material Properties** — Material assets define Roughness [0,1], Metallic [0,1], base color, and textures. Properties are stored in G-Buffer and editable via Material Editor / Inspector UI.
+- **Material Properties** — Material assets define Roughness [0,1], Metallic [0,1], base color, and textures (base color, **normal map**, metallic/roughness). Normal maps are applied via TBN matrix with per-vertex tangent vectors (Vec4 with handedness). Properties are stored in G-Buffer and editable via Material Editor / Inspector UI.
 
 > **Note**: The deferred rendering pipeline (G-Buffer, CSM shadows, deferred lighting) is active for DX11 and DX12 backends. The OpenGL and Vulkan backends use a forward rendering path.
 
@@ -127,7 +127,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **DefaultLit** | Standard PBR-style material — responds to Roughness and Metallic properties, default shader for new objects |
   | **Unlit** | Pure color output, no lighting |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
-  | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, outputs Normal+Metallic, BaseColor+Roughness, Emissive+Specular to 3 MRT |
+  | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, **TBN normal mapping** (tangent-space normal map → world-space via Gram-Schmidt TBN with handedness), outputs Normal+Metallic, BaseColor+Roughness, Emissive+Specular to 3 MRT |
   | **DeferredLighting** | Fullscreen PBR deferred lighting (UE5 DefaultLitBxDF) — D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox, CSM shadow atlas, Reinhard tone mapping |
   | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader) |
   | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels |
@@ -440,7 +440,7 @@ KiwiEngine/
 │       ├── SceneObject.h             # Entity with component list
 │       ├── PrimitiveType.h           # EPrimitiveType enum (breaks circular dependency)
 │       ├── Scene.h                   # Scene management & serialization
-│       ├── Mesh.h                    # Mesh data structure (Vertex: Position/Normal/Tangent/Color/UV)
+│       ├── Mesh.h                    # Mesh data structure (Vertex: Position/Normal/Tangent4/Color/UV)
 │       ├── Shaders.h                 # Embedded HLSL & CB layouts
 │       ├── ShaderLibrary.h           # File-based shader scanning & compilation
 │       ├── GLShaders.h               # GLSL shader definitions for OpenGL backend

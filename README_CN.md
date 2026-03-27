@@ -127,7 +127,7 @@
   | **DefaultLit** | 标准 PBR 风格材质 — 响应粗糙度和金属度属性，新物体默认着色器 |
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
-  | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，输出法线+金属度、BaseColor+粗糙度、自发光+Specular 到 3 个 MRT |
+  | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，**TBN 法线贴图**（切线空间法线→世界空间，Gram-Schmidt 正交化 + handedness），输出法线+金属度、BaseColor+粗糙度、自发光+Specular 到 3 个 MRT |
   | **DeferredLighting** | 全屏 PBR 延迟光照（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样、Reinhard 色调映射 |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |

@@ -44,7 +44,7 @@ struct VSInput
 {
     float3 Position : POSITION;
     float3 Normal   : NORMAL;
-    float3 Tangent  : TANGENT;
+    float4 Tangent  : TANGENT;
     float4 Color    : COLOR;
     float2 TexCoord : TEXCOORD;
 };
@@ -104,15 +104,22 @@ VSOutput VSMain(VSInput input)
     output.Color = input.Color * g_ObjectColor;
     output.TexCoord = input.TexCoord;
 
-    // Generate tangent/bitangent from normal for normal mapping
-    // (Approximation when no explicit tangent data is available)
+    // Compute TBN from vertex tangent (Gram-Schmidt orthogonalization)
     float3 N = output.NormalWS;
-    float3 T;
-    if (abs(N.y) < 0.99)
-        T = normalize(cross(float3(0, 1, 0), N));
-    else
-        T = normalize(cross(float3(1, 0, 0), N));
-    float3 B = normalize(cross(N, T));
+    float3 T = normalize(mul(input.Tangent.xyz, (float3x3)g_World));
+
+    // Fallback: if tangent is zero (missing data), approximate from normal
+    if (dot(T, T) < 0.001)
+    {
+        if (abs(N.y) < 0.99)
+            T = normalize(cross(float3(0, 1, 0), N));
+        else
+            T = normalize(cross(float3(1, 0, 0), N));
+    }
+
+    // Gram-Schmidt re-orthogonalize T w.r.t. N
+    T = normalize(T - N * dot(N, T));
+    float3 B = cross(N, T) * input.Tangent.w; // handedness from w
     output.TangentWS = T;
     output.BitangentWS = B;
 

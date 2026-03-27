@@ -15,9 +15,15 @@ namespace Kiwi
     {
         Vec3 Position;
         Vec3 Normal;
-        Vec3 Tangent;     // Tangent vector for TBN normal mapping
+        Vec4 Tangent;     // Tangent vector (xyz) + handedness (w) for TBN normal mapping
         Vec4 Color;
         Vec2 TexCoord;    // UV coordinates for texture sampling
+
+        Vertex() : Position{}, Normal{}, Tangent{}, Color{}, TexCoord{} {}
+        Vertex(Vec3 pos, Vec3 norm, Vec4 col)
+            : Position(pos), Normal(norm), Tangent{0,0,0,1}, Color(col), TexCoord{0,0} {}
+        Vertex(Vec3 pos, Vec3 norm, Vec3 tan, Vec4 col, Vec2 uv)
+            : Position(pos), Normal(norm), Tangent{tan.x, tan.y, tan.z, 1.0f}, Color(col), TexCoord(uv) {}
     };
 
     // ============================================================
