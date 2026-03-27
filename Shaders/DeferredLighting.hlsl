@@ -74,6 +74,9 @@ Texture2D g_ShadowAtlas : register(t3);
 // Depth buffer for position reconstruction
 Texture2D g_DepthBuffer : register(t7);
 
+// IBL: Equirectangular environment map (optional, for sky ambient)
+Texture2D g_EnvMap : register(t4);
+
 SamplerState g_GBufferSampler        : register(s0); // Linear clamp
 SamplerComparisonState g_ShadowSampler : register(s2); // Comparison sampler for PCF
 
@@ -182,6 +185,16 @@ float ComputeShadow(float3 worldPos, float viewZ)
     float shadow = SampleShadowAtlas(atlasUV, shadowCoord.z, g_ShadowBias);
 
     return lerp(1.0, shadow, g_ShadowStrength);
+}
+
+// ---- Equirectangular UV from direction (for IBL sampling) ----
+float2 DirectionToEquirectangular(float3 dir)
+{
+    float phi = asin(clamp(dir.y, -1.0, 1.0));
+    float theta = atan2(dir.z, dir.x);
+    float u = theta / (2.0 * PI) + 0.5;
+    float v = phi / PI + 0.5;
+    return float2(u, 1.0 - v);
 }
 
 // ============================================================
@@ -370,13 +383,24 @@ float4 PSMain(VSOutput input) : SV_TARGET
         directSpecular = specBRDF * radiance;
     }
 
-    // ---- Indirect / Ambient Lighting (UE5 EnvBRDFApprox) ----
-    // Diffuse ambient: simple hemisphere approximation
-    float3 ambientDiffuse = diffuseColor * float3(0.03, 0.03, 0.03);
+    // ---- Indirect / Ambient Lighting (IBL with equirectangular env map) ----
+    // Sample environment map for diffuse irradiance (rough approximation using normal direction)
+    float2 envUV_diffuse = DirectionToEquirectangular(N);
+    float3 envDiffuse = g_EnvMap.SampleLevel(g_GBufferSampler, envUV_diffuse, 6.0).rgb; // High mip for diffuse blur
+    // Fallback to constant if env map returns zero (no env map bound)
+    float envLuma = dot(envDiffuse, float3(0.299, 0.587, 0.114));
+    if (envLuma < 0.001) envDiffuse = float3(0.03, 0.03, 0.03);
+    float3 ambientDiffuse = diffuseColor * envDiffuse * 0.3;
 
-    // Specular ambient: UE5 EnvBRDFApprox (approximates split-sum IBL without LUT)
-    float3 ambientSpecular = EnvBRDFApprox(specularColor, roughness, NoV)
-                           * float3(0.05, 0.05, 0.05); // Approximate sky irradiance
+    // Sample environment map for specular reflection (using reflection vector, lower mip for rough surfaces)
+    float3 R = reflect(-V, N);
+    float2 envUV_specular = DirectionToEquirectangular(R);
+    float specMip = roughness * 6.0; // Rough = blurry, smooth = sharp
+    float3 envSpecular = g_EnvMap.SampleLevel(g_GBufferSampler, envUV_specular, specMip).rgb;
+    if (dot(envSpecular, float3(0.299, 0.587, 0.114)) < 0.001) envSpecular = float3(0.05, 0.05, 0.05);
+
+    // UE5 EnvBRDFApprox for specular ambient
+    float3 ambientSpecular = EnvBRDFApprox(specularColor, roughness, NoV) * envSpecular * 0.5;
 
     // ---- Final Composition ----
     float3 finalColor = directDiffuse + directSpecular + ambientDiffuse + ambientSpecular + emissive;

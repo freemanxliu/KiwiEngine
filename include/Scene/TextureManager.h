@@ -50,6 +50,10 @@ namespace Kiwi
         // Returns cached version if already loaded.
         GPUTexture* LoadTexture(const std::string& filePath);
 
+        // Load an HDR texture from file (.hdr equirectangular)
+        // Stores as R16G16B16A16_FLOAT for PBR IBL.
+        GPUTexture* LoadHDRTexture(const std::string& filePath);
+
         // Get a loaded texture by path. Returns nullptr if not loaded.
         GPUTexture* GetTexture(const std::string& filePath) const
         {
@@ -78,6 +82,10 @@ namespace Kiwi
         // Create a GPU texture from raw RGBA8 pixel data
         GPUTexture* CreateFromRGBA(const std::string& name, const uint8_t* data,
                                     uint32_t width, uint32_t height);
+
+        // Create a GPU texture from raw RGBA16F (half-float) pixel data
+        GPUTexture* CreateFromFloat16(const std::string& name, const uint16_t* data,
+                                       uint32_t width, uint32_t height);
 
         RHIDevice* m_Device = nullptr;
         RHICommandContext* m_Context = nullptr;

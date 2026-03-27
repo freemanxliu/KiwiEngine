@@ -131,6 +131,7 @@
   | **DeferredLighting** | 全屏 PBR 延迟光照（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样、Reinhard 色调映射 |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
+  | **Skybox** | 全屏 Pass — 在 depth==1 像素上采样 HDR Equirectangular 环境贴图，逆 ViewProj 方向重建 |
 - **GLSL 着色器** — OpenGL 版本的 DefaultLit、Unlit 和 Wireframe 存放在 `GLShaders/` 目录，使用 `//!VERTEX` / `//!FRAGMENT` 标记分割着色器阶段。
 - **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
 - **自定义着色器** — 创建包含 `VSMain`/`PSMain` 入口点的 `.hlsl` 文件，使用共享的 CB 布局，放入 `Shaders/` 即可在运行时使用。
