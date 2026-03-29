@@ -698,6 +698,11 @@ protected:
         std::cout << "[Kiwi] Scene Editor initialized!" << std::endl;
     }
 
+    void PreUpdate(float deltaTime) override
+    {
+        // WIP ...
+    }
+
     void OnUpdate(float deltaTime) override
     {
         m_TotalTime += deltaTime;
@@ -712,6 +717,9 @@ protected:
 
         // Collect light data from scene each frame
         CollectLightsFromScene();
+
+        // Update View UniformBuffer (b0) — shared by all shaders, once per frame
+        UpdateViewBuffer();
 
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantCaptureMouse)
@@ -823,10 +831,18 @@ protected:
         }
     }
 
-    void OnRender() override
+    void PostUpdate(float deltaTime) override
+    {
+        // WIP ...
+    }
+    
+    void PreRender() override
     {
         InitView();
+    }
 
+    void OnRender() override
+    {
         auto ctx = GetContext();
         auto swapChain = GetSwapChain();
         auto device = GetDevice();
@@ -939,6 +955,9 @@ protected:
             ctx->SetInputLayout(m_InputLayout.get());
             ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
+            // Bind View UniformBuffer (b0) for all objects in this pass
+            ctx->SetConstantBuffer(0, m_ViewBuffer.get());
+
             // Draw all mesh components with G-Buffer shader
             DrawSceneMeshesDeferred(ctx);
 
@@ -995,9 +1014,10 @@ protected:
                 // Update CB with lighting data
                 UpdateDeferredLightingCB();
 
-                // Upload and bind shadow constant buffer at b1
+
+                // Upload and bind shadow constant buffer at b2
                 UploadShadowCB();
-                ctx->SetConstantBuffer(1, m_ShadowCB.get());
+                ctx->SetConstantBuffer(2, m_ShadowCB.get());
 
                 // Draw fullscreen triangle
                 ctx->Draw(3, 0);
@@ -1094,6 +1114,9 @@ protected:
             ctx->SetInputLayout(m_InputLayout.get());
             ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
+            // ---- Bind View UniformBuffer (b0) ----
+            ctx->SetConstantBuffer(0, m_ViewBuffer.get());
+
             // ---- Draw with Unlit shader ----
             ctx->BeginEvent("Forward Unlit Pass");
             m_PassTimer.Begin("Forward Unlit Pass");
@@ -1162,11 +1185,18 @@ protected:
         ctx->Flush();
     }
 
+    void PostRender() override
+    {
+		// WIP ...
+    }
+
+
     // ============================================================
     // Scene Mesh Drawing
     // ============================================================
 
-    // Helper: Fill and upload per-object constant buffer
+    // Helper: Fill and upload per-object constant buffer (Object UB at b1)
+    // Note: View UB (b0) is uploaded once per frame via UpdateViewBuffer() and bound separately.
     void UploadObjectCB(RHICommandContext* ctx, MeshComponent* meshComp)
     {
         Mat4 worldMatrix = meshComp->GetWorldMatrix();
@@ -1179,36 +1209,25 @@ protected:
         std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
         std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
 
-        ConstantBufferData cbd = {};
-        memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-        cbd.ObjectColor[0] = color.x;
-        cbd.ObjectColor[1] = color.y;
-        cbd.ObjectColor[2] = color.z;
-        cbd.ObjectColor[3] = color.w;
-        cbd.Selected = 0.0f;
-        cbd.NumLights = m_NumActiveLights;
-        cbd.CameraPos[0] = m_CameraPosition.x;
-        cbd.CameraPos[1] = m_CameraPosition.y;
-        cbd.CameraPos[2] = m_CameraPosition.z;
-        cbd.Roughness = roughness;
-        cbd.Metallic  = metallic;
+        ObjectBufferData obd = {};
+        memcpy(obd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+        obd.ObjectColor[0] = color.x;
+        obd.ObjectColor[1] = color.y;
+        obd.ObjectColor[2] = color.z;
+        obd.ObjectColor[3] = color.w;
+        obd.Selected = 0.0f;
+        obd.Roughness = roughness;
+        obd.Metallic  = metallic;
+        obd.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
+        obd.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
 
-        // Texture flags
-        cbd.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
-        cbd.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
-        cbd.MaterialPadding = 0.0f;
-
-        memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
-
-        void* mapped = m_ConstantBuffer->Map();
+        void* mapped = m_ObjectBuffer->Map();
         if (mapped)
         {
-            memcpy(mapped, &cbd, sizeof(cbd));
-            m_ConstantBuffer->Unmap();
+            memcpy(mapped, &obd, sizeof(obd));
+            m_ObjectBuffer->Unmap();
         }
-        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+        ctx->SetConstantBuffer(1, m_ObjectBuffer.get());
     }
 
     // Helper: Bind material textures for the current object
@@ -1358,68 +1377,61 @@ protected:
         }
     }
 
-    // Update CB for deferred lighting fullscreen pass
+    // Update CB for deferred lighting fullscreen pass (uses View UB at b0)
     void UpdateDeferredLightingCB()
     {
-        ConstantBufferData cbd = {};
-        // Pass InvViewProj via g_World slot for depth-based position reconstruction
-        Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
-        Mat4 invViewProj = viewProj.Inverse();
-        memcpy(cbd.WorldMatrix, invViewProj.m, sizeof(invViewProj.m));
-        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-        cbd.Selected = 0.0f;
-        cbd.NumLights = m_NumActiveLights;
-        cbd.CameraPos[0] = m_CameraPosition.x;
-        cbd.CameraPos[1] = m_CameraPosition.y;
-        cbd.CameraPos[2] = m_CameraPosition.z;
-        cbd.Roughness = 0.0f;
-        cbd.Metallic = 0.0f;
-        memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
+        if (!m_ViewBuffer) return;
 
-        void* mapped = m_ConstantBuffer->Map();
-        if (mapped)
-        {
-            memcpy(mapped, &cbd, sizeof(cbd));
-            m_ConstantBuffer->Unmap();
-        }
+        // View UB is already updated with InvViewProj, CameraPos, Lights etc. by UpdateViewBuffer()
+        // Just bind it — no need to re-upload
         auto ctx = GetContext();
-        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+        ctx->SetConstantBuffer(0, m_ViewBuffer.get());
     }
 
-    // Update CB for buffer visualization fullscreen pass
+    // Update CB for buffer visualization fullscreen pass (uses View UB at b0)
     void UpdateBufferVisualizationCB()
     {
-        ConstantBufferData cbd = {};
-        // Pass InvViewProj via g_World slot (consistent with deferred lighting)
+        if (!m_ViewBuffer) return;
+
+        // For buffer visualization, we need to pass the mode via g_Time slot in View UB.
+        // Since UpdateViewBuffer() already filled most data, we create a local copy
+        // and override just the g_Time field with the visualization mode.
+        ViewBufferData vbd = {};
+        memcpy(vbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(vbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+
         Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
         Mat4 invViewProj = viewProj.Inverse();
-        memcpy(cbd.WorldMatrix, invViewProj.m, sizeof(invViewProj.m));
-        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+        memcpy(vbd.InvViewProjMatrix, invViewProj.m, sizeof(invViewProj.m));
 
-        // Use g_Selected to pass the visualization mode
+        vbd.CameraPos[0] = m_CameraPosition.x;
+        vbd.CameraPos[1] = m_CameraPosition.y;
+        vbd.CameraPos[2] = m_CameraPosition.z;
+
+        // Use g_Time to pass the visualization mode
         switch (m_ViewMode)
         {
-        case EViewMode::BaseColor: cbd.Selected = 0.0f; break;
-        case EViewMode::Roughness: cbd.Selected = 1.0f; break;
-        case EViewMode::Metallic:  cbd.Selected = 2.0f; break;
-        default:                   cbd.Selected = 0.0f; break;
+        case EViewMode::BaseColor: vbd.Time = 0.0f; break;
+        case EViewMode::Roughness: vbd.Time = 1.0f; break;
+        case EViewMode::Metallic:  vbd.Time = 2.0f; break;
+        default:                   vbd.Time = 0.0f; break;
         }
 
-        cbd.NumLights = 0;
-        cbd.CameraPos[0] = m_CameraPosition.x;
-        cbd.CameraPos[1] = m_CameraPosition.y;
-        cbd.CameraPos[2] = m_CameraPosition.z;
+        vbd.NumLights = 0;
 
-        void* mapped = m_ConstantBuffer->Map();
+        vbd.ScreenSize[0] = (float)GetWindow()->GetWidth();
+        vbd.ScreenSize[1] = (float)GetWindow()->GetHeight();
+        vbd.InvScreenSize[0] = 1.0f / vbd.ScreenSize[0];
+        vbd.InvScreenSize[1] = 1.0f / vbd.ScreenSize[1];
+
+        void* mapped = m_ViewBuffer->Map();
         if (mapped)
         {
-            memcpy(mapped, &cbd, sizeof(cbd));
-            m_ConstantBuffer->Unmap();
+            memcpy(mapped, &vbd, sizeof(vbd));
+            m_ViewBuffer->Unmap();
         }
         auto ctx = GetContext();
-        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+        ctx->SetConstantBuffer(0, m_ViewBuffer.get());
     }
 
     // ============================================================
@@ -1663,6 +1675,53 @@ protected:
         }
     }
 
+    // ============================================================
+    // View UniformBuffer Update — called once per frame
+    // All shaders share this buffer automatically (register b0)
+    // ============================================================
+    void UpdateViewBuffer()
+    {
+        if (!m_ViewBuffer) return;
+
+        ViewBufferData vbd = {};
+        memcpy(vbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(vbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+
+        Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
+        Mat4 invViewProj = viewProj.Inverse();
+        memcpy(vbd.InvViewProjMatrix, invViewProj.m, sizeof(invViewProj.m));
+
+        vbd.CameraPos[0] = m_CameraPosition.x;
+        vbd.CameraPos[1] = m_CameraPosition.y;
+        vbd.CameraPos[2] = m_CameraPosition.z;
+        vbd.Time = m_TotalTime;
+        vbd.NumLights = m_NumActiveLights;
+
+        // Default override parameters (w=0 means no override)
+        vbd.DiffuseOverride[0] = 0.0f;
+        vbd.DiffuseOverride[1] = 0.0f;
+        vbd.DiffuseOverride[2] = 0.0f;
+        vbd.DiffuseOverride[3] = 0.0f;  // weight = 0 (disabled)
+        vbd.SpecularOverride[0] = 0.0f;
+        vbd.SpecularOverride[1] = 0.0f;
+        vbd.SpecularOverride[2] = 0.0f;
+        vbd.SpecularOverride[3] = 0.0f; // weight = 0 (disabled)
+
+        vbd.ScreenSize[0] = (float)GetWindow()->GetWidth();
+        vbd.ScreenSize[1] = (float)GetWindow()->GetHeight();
+        vbd.InvScreenSize[0] = 1.0f / vbd.ScreenSize[0];
+        vbd.InvScreenSize[1] = 1.0f / vbd.ScreenSize[1];
+
+        memcpy(vbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
+
+        void* mapped = m_ViewBuffer->Map();
+        if (mapped)
+        {
+            memcpy(mapped, &vbd, sizeof(vbd));
+            m_ViewBuffer->Unmap();
+        }
+    }
+
     // Collect all active light components from the scene into the GPU cache
     void CollectLightsFromScene()
     {
@@ -1721,7 +1780,8 @@ protected:
 
         // Release all GPU resources
         m_GPUMeshes.clear();
-        m_ConstantBuffer.reset();
+        m_ViewBuffer.reset();
+        m_ObjectBuffer.reset();
         m_InputLayout.reset();
         m_PipelineState.reset();
 
@@ -1812,13 +1872,21 @@ private:
         };
         m_InputLayout = device->CreateInputLayout(inputElements, 5, tempVS.get());
 
-        // Constant buffer
-        BufferDesc cbDesc;
-        cbDesc.SizeInBytes = sizeof(ConstantBufferData);
-        cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-        cbDesc.Usage = EResourceUsage::Dynamic;
-        cbDesc.DebugName = "MainConstantBuffer";
-        m_ConstantBuffer = device->CreateBuffer(cbDesc);
+        // View UniformBuffer (b0) — updated once per frame, shared by all materials
+        BufferDesc viewCbDesc;
+        viewCbDesc.SizeInBytes = sizeof(ViewBufferData);
+        viewCbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
+        viewCbDesc.Usage = EResourceUsage::Dynamic;
+        viewCbDesc.DebugName = "ViewUniformBuffer";
+        m_ViewBuffer = device->CreateBuffer(viewCbDesc);
+
+        // Object UniformBuffer (b1) — updated per object
+        BufferDesc objCbDesc;
+        objCbDesc.SizeInBytes = sizeof(ObjectBufferData);
+        objCbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
+        objCbDesc.Usage = EResourceUsage::Dynamic;
+        objCbDesc.DebugName = "ObjectUniformBuffer";
+        m_ObjectBuffer = device->CreateBuffer(objCbDesc);
 
         // Pipeline state (DX11: empty wrapper, DX12: managed per-shader)
         m_PipelineState = device->CreatePipelineState();
@@ -2512,21 +2580,37 @@ private:
 
                 // Upload CB with light VP for this cascade
                 Mat4 worldMatrix = meshComp->GetWorldMatrix();
-                ConstantBufferData cbd = {};
-                memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-                memcpy(cbd.ViewMatrix, m_LightViewProjMatrices[cascade].m, sizeof(float) * 16);
-                // For shadow pass, we bake View*Proj into the View slot
-                // and set Proj to identity (since light VP is already combined)
-                Mat4 identity = Mat4::Identity();
-                memcpy(cbd.ProjectionMatrix, identity.m, sizeof(identity.m));
 
-                void* mapped = m_ConstantBuffer->Map();
-                if (mapped)
+                // Shadow pass: fill View UB (b0) with light's VP as g_View, Identity as g_Projection
                 {
-                    memcpy(mapped, &cbd, sizeof(cbd));
-                    m_ConstantBuffer->Unmap();
+                    ViewBufferData svd = {};
+                    Mat4 identity = Mat4::Identity();
+                    memcpy(svd.ViewMatrix, m_LightViewProjMatrices[cascade].m, sizeof(float) * 16);
+                    memcpy(svd.ProjectionMatrix, identity.m, sizeof(identity.m));
+                    memcpy(svd.InvViewProjMatrix, identity.m, sizeof(identity.m));
+
+                    void* mapped = m_ViewBuffer->Map();
+                    if (mapped)
+                    {
+                        memcpy(mapped, &svd, sizeof(svd));
+                        m_ViewBuffer->Unmap();
+                    }
+                    ctx->SetConstantBuffer(0, m_ViewBuffer.get());
                 }
-                ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+
+                // Fill Object UB (b1) with world matrix
+                {
+                    ObjectBufferData obd = {};
+                    memcpy(obd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+
+                    void* mapped = m_ObjectBuffer->Map();
+                    if (mapped)
+                    {
+                        memcpy(mapped, &obd, sizeof(obd));
+                        m_ObjectBuffer->Unmap();
+                    }
+                    ctx->SetConstantBuffer(1, m_ObjectBuffer.get());
+                }
 
                 VertexBufferView vbView;
                 vbView.BufferLocation = 0;
@@ -4890,23 +4974,23 @@ private:
             ibView.Format         = EFormat::R32_UINT;
             ctx->SetIndexBuffer(ib, &ibView);
 
-            ConstantBufferData cbd = {};
-            memcpy(cbd.WorldMatrix,      world.m,            sizeof(world.m));
-            memcpy(cbd.ViewMatrix,       m_ViewMatrix.m,     sizeof(m_ViewMatrix.m));
-            memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-            cbd.ObjectColor[0] = color.x;
-            cbd.ObjectColor[1] = color.y;
-            cbd.ObjectColor[2] = color.z;
-            cbd.ObjectColor[3] = color.w;
-            cbd.Selected    = 2.0f; // Unlit/gizmo mode
-            cbd.NumLights   = 0;
-            cbd.CameraPos[0] = m_CameraPosition.x;
-            cbd.CameraPos[1] = m_CameraPosition.y;
-            cbd.CameraPos[2] = m_CameraPosition.z;
+            // Bind View UB (b0) — already updated by UpdateViewBuffer()
+            ctx->SetConstantBuffer(0, m_ViewBuffer.get());
 
-            void* mapped = m_ConstantBuffer->Map();
-            if (mapped) { memcpy(mapped, &cbd, sizeof(cbd)); m_ConstantBuffer->Unmap(); }
-            ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+            // Fill Object UB (b1) with gizmo-specific data
+            {
+                ObjectBufferData obd = {};
+                memcpy(obd.WorldMatrix, world.m, sizeof(world.m));
+                obd.ObjectColor[0] = color.x;
+                obd.ObjectColor[1] = color.y;
+                obd.ObjectColor[2] = color.z;
+                obd.ObjectColor[3] = color.w;
+                obd.Selected = 2.0f; // Unlit/gizmo mode (>1.5)
+
+                void* mapped = m_ObjectBuffer->Map();
+                if (mapped) { memcpy(mapped, &obd, sizeof(obd)); m_ObjectBuffer->Unmap(); }
+                ctx->SetConstantBuffer(1, m_ObjectBuffer.get());
+            }
             ctx->DrawIndexed(idxCount, 0, 0);
         };
 
@@ -5201,7 +5285,8 @@ private:
 
     // RHI resources (shared interface)
     std::unique_ptr<RHIInputLayout>   m_InputLayout;
-    std::unique_ptr<RHIBuffer>        m_ConstantBuffer;
+    std::unique_ptr<RHIBuffer>        m_ViewBuffer;       // View UniformBuffer (b0) — updated once per frame
+    std::unique_ptr<RHIBuffer>        m_ObjectBuffer;     // Object UniformBuffer (b1) — updated per object
     std::unique_ptr<RHIPipelineState> m_PipelineState;  // DX11
 
     // Camera (cached from scene CameraComponent each frame)

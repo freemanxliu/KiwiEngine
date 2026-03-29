@@ -33,11 +33,17 @@ namespace Kiwi
         void SwitchRHI(RHI_API_TYPE newType);
 
     protected:
-        // 子类覆写
+        // 生命周期函数
         virtual void OnInit() {}
         virtual void OnResize(uint32_t width, uint32_t height);
+
+        virtual void PreUpdate(float deltaTime) {}
         virtual void OnUpdate(float deltaTime) {}
+        virtual void PostUpdate(float deltaTime) {}
+
         virtual void OnRender() {}
+        virtual void PreRender() {}
+        virtual void PostRender() {}
 
         // RHI 切换前后的回调
         virtual void OnRHIShutdown() {}  // 在销毁旧 RHI 之前调用（释放 GPU 资源）

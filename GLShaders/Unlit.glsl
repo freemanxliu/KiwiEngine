@@ -2,12 +2,34 @@
 // Unlit — pure color output (GLSL version)
 
 //!VERTEX
-layout(std140, binding = 0) uniform Constants
+// View UniformBuffer — binding 0
+layout(std140, binding = 0) uniform ViewConstants
 {
-    mat4 g_World;
     mat4 g_View;
     mat4 g_Projection;
+    mat4 g_InvViewProj;
+    vec3 g_CameraPos;
+    float g_Time;
+    int g_NumLights;
+    vec3 g_ViewPad0;
+    vec4 g_DiffuseOverride;
+    vec4 g_SpecularOverride;
+    vec2 g_ScreenSize;
+    vec2 g_InvScreenSize;
+    vec4 g_ViewPad1;
+};
+
+// Object UniformBuffer — binding 1
+layout(std140, binding = 1) uniform ObjectConstants
+{
+    mat4 g_World;
     vec4 g_ObjectColor;
+    float g_Selected;
+    float g_Roughness;
+    float g_Metallic;
+    float g_HasBaseColorTex;
+    float g_HasNormalTex;
+    vec3 g_ObjPad;
 };
 
 layout(location = 0) in vec3 aPosition;

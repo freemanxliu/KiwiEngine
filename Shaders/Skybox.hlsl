@@ -4,17 +4,20 @@
 // Uses fullscreen triangle + inverse ViewProjection to compute view direction
 // ============================================================
 
-cbuffer Constants : register(b0)
+cbuffer ViewConstants : register(b0)
 {
-    row_major float4x4 g_InvViewProj; // Repurposed from g_World slot
     row_major float4x4 g_View;
     row_major float4x4 g_Projection;
-    float4 g_ObjectColor;
-    float  g_Selected;          // Repurposed: sky intensity multiplier
-    int    g_NumLights;
-    float2 g_Padding;
+    row_major float4x4 g_InvViewProj; // For sky direction reconstruction
     float3 g_CameraPos;
-    float  g_Roughness;
+    float  g_Time;              // Repurposed: sky intensity multiplier (when > 0.001)
+    int    g_NumLights;
+    float3 g_ViewPad0;
+    float4 g_DiffuseOverride;
+    float4 g_SpecularOverride;
+    float2 g_ScreenSize;
+    float2 g_InvScreenSize;
+    float4 g_ViewPad1;
 };
 
 Texture2D    g_DepthBuffer : register(t7);
@@ -69,8 +72,8 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float2 envUV = DirectionToEquirectangular(worldDir);
     float3 skyColor = g_EnvMap.Sample(g_Sampler, envUV).rgb;
 
-    // Apply intensity (stored in g_Selected for reuse of CB layout)
-    float intensity = max(g_Selected, 0.0);
+    // Apply intensity (stored in g_Time slot for reuse of View CB layout)
+    float intensity = max(g_Time, 0.0);
     if (intensity < 0.001) intensity = 1.0; // Default if not set
 
     skyColor *= intensity;

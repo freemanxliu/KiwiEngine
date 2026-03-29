@@ -24,22 +24,20 @@ struct LightData
     float  Radius;
 };
 
-cbuffer Constants : register(b0)
+cbuffer ViewConstants : register(b0)
 {
-    row_major float4x4 g_World;       // InvViewProj (repurposed)
     row_major float4x4 g_View;
     row_major float4x4 g_Projection;
-    float4 g_ObjectColor;
+    row_major float4x4 g_InvViewProj; // For depth reconstruction if needed
+    float3 g_CameraPos;
     float  g_Selected;         // Repurposed: 0=BaseColor, 1=Roughness, 2=Metallic
     int    g_NumLights;
-    float2 g_Padding;
-    float3 g_CameraPos;
-    float  g_Roughness;
-    float  g_Metallic;
-    float  g_HasBaseColorTex;
-    float  g_HasNormalTex;
-    float  g_MaterialPadding;
-    LightData g_Lights[MAX_LIGHTS];
+    float3 g_ViewPad0;
+    float4 g_DiffuseOverride;
+    float4 g_SpecularOverride;
+    float2 g_ScreenSize;
+    float2 g_InvScreenSize;
+    float4 g_ViewPad1;
 };
 
 // G-Buffer textures (UE5-inspired layout)

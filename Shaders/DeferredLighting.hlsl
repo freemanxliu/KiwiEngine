@@ -33,25 +33,24 @@ struct LightData
     float  Radius;
 };
 
-cbuffer Constants : register(b0)
+cbuffer ViewConstants : register(b0)
 {
-    row_major float4x4 g_InvViewProj; // Repurposed: inverse ViewProjection for depth reconstruction
     row_major float4x4 g_View;
     row_major float4x4 g_Projection;
-    float4 g_ObjectColor;
-    float  g_Selected;
-    int    g_NumLights;
-    float2 g_Padding;
+    row_major float4x4 g_InvViewProj; // For depth reconstruction
     float3 g_CameraPos;
-    float  g_Roughness;
-    float  g_Metallic;
-    float  g_HasBaseColorTex;
-    float  g_HasNormalTex;
-    float  g_MaterialPadding;
+    float  g_Time;
+    int    g_NumLights;
+    float3 g_ViewPad0;
+    float4 g_DiffuseOverride;
+    float4 g_SpecularOverride;
+    float2 g_ScreenSize;
+    float2 g_InvScreenSize;
+    float4 g_ViewPad1;
     LightData g_Lights[MAX_LIGHTS];
 };
 
-cbuffer ShadowConstants : register(b1)
+cbuffer ShadowConstants : register(b2)
 {
     row_major float4x4 g_LightViewProj[MAX_CSM_CASCADES];
     float4 g_CascadeSplits;       // Split distances in view-space Z

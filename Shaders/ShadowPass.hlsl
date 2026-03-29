@@ -3,8 +3,9 @@
 // Used for Cascaded Shadow Mapping (CSM)
 // ============================================================
 
-// We reuse the main CB (b0) for World matrix,
-// but View/Projection are the light's VP for this cascade
+// We reuse the View CB (b0) for View matrix,
+// and Object CB (b1) for World matrix.
+// For shadow pass, the View matrix is the light's VP (baked by C++ code).
 #define MAX_LIGHTS 8
 
 struct LightData
@@ -15,22 +16,33 @@ struct LightData
     float  Radius;
 };
 
-cbuffer Constants : register(b0)
+cbuffer ViewConstants : register(b0)
+{
+    row_major float4x4 g_View;       // Light's View*Projection (baked by C++)
+    row_major float4x4 g_Projection; // Identity (VP already combined in g_View)
+    row_major float4x4 g_InvViewProj;
+    float3 g_CameraPos;
+    float  g_Time;
+    int    g_NumLights;
+    float3 g_ViewPad0;
+    float4 g_DiffuseOverride;
+    float4 g_SpecularOverride;
+    float2 g_ScreenSize;
+    float2 g_InvScreenSize;
+    float4 g_ViewPad1;
+    LightData g_Lights[MAX_LIGHTS];
+};
+
+cbuffer ObjectConstants : register(b1)
 {
     row_major float4x4 g_World;
-    row_major float4x4 g_View;
-    row_major float4x4 g_Projection;
     float4 g_ObjectColor;
     float  g_Selected;
-    int    g_NumLights;
-    float2 g_Padding;
-    float3 g_CameraPos;
     float  g_Roughness;
     float  g_Metallic;
     float  g_HasBaseColorTex;
     float  g_HasNormalTex;
-    float  g_MaterialPadding;
-    LightData g_Lights[MAX_LIGHTS];
+    float3 g_ObjPad;
 };
 
 struct VSInput

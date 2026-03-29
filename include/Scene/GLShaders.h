@@ -5,26 +5,51 @@ namespace Kiwi
 
     // ============================================================
     // GLSL Vertex Shader (Default — used for InputLayout creation + fallback)
-    // Matches the HLSL CB layout via std140 UBO
+    // Matches the new split CB layout: ViewUBO (binding=0) + ObjectUBO (binding=1)
+    // ViewConstants UBO must match ViewBufferData (std140 layout, includes LightData[])
     // ============================================================
     inline const char* g_VertexShaderGLSL = R"glsl(
 #version 450 core
 
-// UBO must match ConstantBufferData (std140 layout)
-layout(std140, binding = 0) uniform Constants
+#define MAX_LIGHTS 8
+
+struct LightData
 {
-    mat4 g_World;
+    vec3 ColorIntensity;
+    int  Type;
+    vec3 DirectionOrPos;
+    float Radius;
+};
+
+// View UniformBuffer — binding 0
+layout(std140, binding = 0) uniform ViewConstants
+{
     mat4 g_View;
     mat4 g_Projection;
+    mat4 g_InvViewProj;
+    vec3 g_CameraPos;
+    float g_Time;
+    int g_NumLights;
+    vec3 g_ViewPad0;
+    vec4 g_DiffuseOverride;
+    vec4 g_SpecularOverride;
+    vec2 g_ScreenSize;
+    vec2 g_InvScreenSize;
+    vec4 g_ViewPad1;
+    LightData g_Lights[MAX_LIGHTS];
+};
+
+// Object UniformBuffer — binding 1
+layout(std140, binding = 1) uniform ObjectConstants
+{
+    mat4 g_World;
     vec4 g_ObjectColor;
     float g_Selected;
-    int g_NumLights;
-    vec2 g_Padding;
-    vec3 g_CameraPos;
     float g_Roughness;
     float g_Metallic;
-    vec3 g_MaterialPadding;
-    // LightData[8] follows but we skip for this minimal shader
+    float g_HasBaseColorTex;
+    float g_HasNormalTex;
+    vec3 g_ObjPad;
 };
 
 layout(location = 0) in vec3 aPosition;
@@ -53,23 +78,50 @@ void main()
 
     // ============================================================
     // GLSL Pixel Shader (Default — simple directional light)
+    // ViewConstants UBO must match ViewBufferData (std140 layout)
     // ============================================================
     inline const char* g_PixelShaderGLSL = R"glsl(
 #version 450 core
 
-layout(std140, binding = 0) uniform Constants
+#define MAX_LIGHTS 8
+
+struct LightData
 {
-    mat4 g_World;
+    vec3 ColorIntensity;
+    int  Type;
+    vec3 DirectionOrPos;
+    float Radius;
+};
+
+// View UniformBuffer — binding 0
+layout(std140, binding = 0) uniform ViewConstants
+{
     mat4 g_View;
     mat4 g_Projection;
+    mat4 g_InvViewProj;
+    vec3 g_CameraPos;
+    float g_Time;
+    int g_NumLights;
+    vec3 g_ViewPad0;
+    vec4 g_DiffuseOverride;
+    vec4 g_SpecularOverride;
+    vec2 g_ScreenSize;
+    vec2 g_InvScreenSize;
+    vec4 g_ViewPad1;
+    LightData g_Lights[MAX_LIGHTS];
+};
+
+// Object UniformBuffer — binding 1
+layout(std140, binding = 1) uniform ObjectConstants
+{
+    mat4 g_World;
     vec4 g_ObjectColor;
     float g_Selected;
-    int g_NumLights;
-    vec2 g_Padding;
-    vec3 g_CameraPos;
     float g_Roughness;
     float g_Metallic;
-    vec3 g_MaterialPadding;
+    float g_HasBaseColorTex;
+    float g_HasNormalTex;
+    vec3 g_ObjPad;
 };
 
 in vec3 vPositionWS;
