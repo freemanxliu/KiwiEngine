@@ -21,26 +21,71 @@ namespace Kiwi
         float Radius;             // Point light radius (0 for directional)
     };
 
-    // 常量缓冲区结构（必须与 HLSL 匹配）
-    struct ConstantBufferData
+    // ============================================================
+    // UE5-style View UniformBuffer (register b0, updated once per frame)
+    // Bound automatically to ALL materials — shared across all shaders.
+    // Contains camera, lighting, screen, and development override parameters.
+    // ============================================================
+    struct ViewBufferData
     {
-        float WorldMatrix[16];       // 4x4 matrix
-        float ViewMatrix[16];        // 4x4 matrix
-        float ProjectionMatrix[16];  // 4x4 matrix
-        float ObjectColor[4];        // Object color (RGBA)
-        float Selected;              // 1.0 if selected, 0.0 otherwise
-        int32_t NumLights;           // Number of active lights
-        float Padding[2];            // Pad to 16-byte alignment
-        float CameraPos[3];          // Camera position in world space
-        float Roughness;             // Material roughness [0, 1]
-        float Metallic;              // Material metallic [0, 1]
-        float HasBaseColorTex;       // 1.0 if base color texture bound, 0.0 otherwise
-        float HasNormalTex;          // 1.0 if normal map bound, 0.0 otherwise
-        float MaterialPadding;       // Pad to 16-byte alignment
-        GPULightData Lights[MAX_LIGHTS]; // Light array
+        float ViewMatrix[16];             // 4x4 View matrix
+        float ProjectionMatrix[16];       // 4x4 Projection matrix
+        float InvViewProjMatrix[16];      // 4x4 Inverse ViewProjection (for deferred/screen-space passes)
+        float CameraPos[3];               // Camera world-space position
+        float Time;                       // Elapsed time in seconds
+        int32_t NumLights;                // Active light count
+        float ViewPadding0[3];            // 16-byte alignment
+        // UE5-style development override parameters
+        float DiffuseOverride[4];         // xyz = override color, w = weight (0=none, 1=full)
+        float SpecularOverride[4];        // xyz = override color, w = weight (0=none, 1=full)
+        // Screen parameters
+        float ScreenSize[2];              // (Width, Height)
+        float InvScreenSize[2];           // (1/Width, 1/Height)
+        float ViewPadding1[4];            // 16-byte alignment
+        GPULightData Lights[MAX_LIGHTS];  // Light array
     };
 
-    // Shadow constant buffer (register b1) — CSM data for shadow mapping
+    // ============================================================
+    // Object UniformBuffer (register b1, updated per-object)
+    // Contains per-object transform and material parameters.
+    // ============================================================
+    struct ObjectBufferData
+    {
+        float WorldMatrix[16];        // 4x4 World matrix
+        float ObjectColor[4];         // Object/material tint (RGBA)
+        float Selected;               // 1.0 = selected, 0.0 = normal, >1.5 = unlit/gizmo
+        float Roughness;              // Material roughness [0, 1]
+        float Metallic;               // Material metallic [0, 1]
+        float HasBaseColorTex;        // 1.0 if base color texture bound
+        float HasNormalTex;           // 1.0 if normal map bound
+        float ObjectPadding[3];       // 16-byte alignment
+    };
+
+    // ============================================================
+    // Legacy alias — kept for backward compatibility during transition
+    // TODO: Remove once all call sites are migrated
+    // ============================================================
+    struct ConstantBufferData
+    {
+        float WorldMatrix[16];
+        float ViewMatrix[16];
+        float ProjectionMatrix[16];
+        float ObjectColor[4];
+        float Selected;
+        int32_t NumLights;
+        float Padding[2];
+        float CameraPos[3];
+        float Roughness;
+        float Metallic;
+        float HasBaseColorTex;
+        float HasNormalTex;
+        float MaterialPadding;
+        GPULightData Lights[MAX_LIGHTS];
+    };
+
+    // ============================================================
+    // Shadow constant buffer (register b2) — CSM data for shadow mapping
+    // ============================================================
     static constexpr int MAX_CSM_CASCADES = 4;
 
     struct ShadowCBData
@@ -69,22 +114,33 @@ namespace Kiwi
         float  Radius;
     };
 
-    cbuffer Constants : register(b0)
+    cbuffer ViewConstants : register(b0)
     {
-        row_major float4x4 g_World;
         row_major float4x4 g_View;
         row_major float4x4 g_Projection;
+        row_major float4x4 g_InvViewProj;
+        float3 g_CameraPos;
+        float  g_Time;
+        int    g_NumLights;
+        float3 g_ViewPad0;
+        float4 g_DiffuseOverride;
+        float4 g_SpecularOverride;
+        float2 g_ScreenSize;
+        float2 g_InvScreenSize;
+        float4 g_ViewPad1;
+        LightData g_Lights[MAX_LIGHTS];
+    };
+
+    cbuffer ObjectConstants : register(b1)
+    {
+        row_major float4x4 g_World;
         float4 g_ObjectColor;
         float  g_Selected;
-        int    g_NumLights;
-        float2 g_Padding;
-        float3 g_CameraPos;
         float  g_Roughness;
         float  g_Metallic;
         float  g_HasBaseColorTex;
         float  g_HasNormalTex;
-        float  g_MaterialPadding;
-        LightData g_Lights[MAX_LIGHTS];
+        float3 g_ObjPad;
     };
 
     struct VSInput
@@ -135,22 +191,33 @@ namespace Kiwi
         float  Radius;
     };
 
-    cbuffer Constants : register(b0)
+    cbuffer ViewConstants : register(b0)
     {
-        row_major float4x4 g_World;
         row_major float4x4 g_View;
         row_major float4x4 g_Projection;
+        row_major float4x4 g_InvViewProj;
+        float3 g_CameraPos;
+        float  g_Time;
+        int    g_NumLights;
+        float3 g_ViewPad0;
+        float4 g_DiffuseOverride;
+        float4 g_SpecularOverride;
+        float2 g_ScreenSize;
+        float2 g_InvScreenSize;
+        float4 g_ViewPad1;
+        LightData g_Lights[MAX_LIGHTS];
+    };
+
+    cbuffer ObjectConstants : register(b1)
+    {
+        row_major float4x4 g_World;
         float4 g_ObjectColor;
         float  g_Selected;
-        int    g_NumLights;
-        float2 g_Padding;
-        float3 g_CameraPos;
         float  g_Roughness;
         float  g_Metallic;
         float  g_HasBaseColorTex;
         float  g_HasNormalTex;
-        float  g_MaterialPadding;
-        LightData g_Lights[MAX_LIGHTS];
+        float3 g_ObjPad;
     };
 
     struct PSInput
