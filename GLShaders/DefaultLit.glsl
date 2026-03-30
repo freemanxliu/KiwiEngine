@@ -1,38 +1,25 @@
 #version 450 core
 // DefaultLit — Phong lighting (GLSL version)
-// VS and FS are separated by //!SPLIT marker
-
-#define MAX_LIGHTS 8
-
-struct LightData
-{
-    vec3 ColorIntensity;
-    int  Type;
-    vec3 DirectionOrPos;
-    float Radius;
-};
+// UE5-style split uniform buffers: ViewUB(0) + ObjectUB(1)
 
 //!VERTEX
-// View UniformBuffer — binding 0
-layout(std140, binding = 0) uniform ViewConstants
+layout(std140, binding = 0) uniform ViewUB
 {
     mat4 g_View;
     mat4 g_Projection;
+    mat4 g_ViewProjection;
     mat4 g_InvViewProj;
     vec3 g_CameraPos;
-    float g_Time;
+    float g_ViewPadding1;
+    float g_ScreenWidth;
+    float g_ScreenHeight;
+    float g_NearPlane;
+    float g_FarPlane;
     int g_NumLights;
-    vec3 g_ViewPad0;
-    vec4 g_DiffuseOverride;
-    vec4 g_SpecularOverride;
-    vec2 g_ScreenSize;
-    vec2 g_InvScreenSize;
-    vec4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
+    vec3 g_ViewPadding2;
 };
 
-// Object UniformBuffer — binding 1
-layout(std140, binding = 1) uniform ObjectConstants
+layout(std140, binding = 1) uniform ObjectUB
 {
     mat4 g_World;
     vec4 g_ObjectColor;
@@ -41,7 +28,8 @@ layout(std140, binding = 1) uniform ObjectConstants
     float g_Metallic;
     float g_HasBaseColorTex;
     float g_HasNormalTex;
-    vec3 g_ObjPad;
+    float g_VisualizeMode;
+    vec2 g_ObjectPadding;
 };
 
 layout(location = 0) in vec3 aPosition;
@@ -66,26 +54,23 @@ void main()
 }
 
 //!FRAGMENT
-// View UniformBuffer — binding 0
-layout(std140, binding = 0) uniform ViewConstants
+layout(std140, binding = 0) uniform ViewUB
 {
     mat4 g_View;
     mat4 g_Projection;
+    mat4 g_ViewProjection;
     mat4 g_InvViewProj;
     vec3 g_CameraPos;
-    float g_Time;
+    float g_ViewPadding1;
+    float g_ScreenWidth;
+    float g_ScreenHeight;
+    float g_NearPlane;
+    float g_FarPlane;
     int g_NumLights;
-    vec3 g_ViewPad0;
-    vec4 g_DiffuseOverride;
-    vec4 g_SpecularOverride;
-    vec2 g_ScreenSize;
-    vec2 g_InvScreenSize;
-    vec4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
+    vec3 g_ViewPadding2;
 };
 
-// Object UniformBuffer — binding 1
-layout(std140, binding = 1) uniform ObjectConstants
+layout(std140, binding = 1) uniform ObjectUB
 {
     mat4 g_World;
     vec4 g_ObjectColor;
@@ -94,7 +79,8 @@ layout(std140, binding = 1) uniform ObjectConstants
     float g_Metallic;
     float g_HasBaseColorTex;
     float g_HasNormalTex;
-    vec3 g_ObjPad;
+    float g_VisualizeMode;
+    vec2 g_ObjectPadding;
 };
 
 in vec3 vPositionWS;
@@ -120,7 +106,6 @@ void main()
     vec3 totalDiffuse = vec3(0.0);
     vec3 totalSpecular = vec3(0.0);
 
-    // Fallback single directional light
     vec3 lightDir = normalize(vec3(0.5, 0.7, 0.3));
     float NdotL = max(dot(normal, lightDir), 0.0);
     totalDiffuse = vec3(1.0) * NdotL * 0.85;

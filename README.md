@@ -134,8 +134,14 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels |
   | **Skybox** | Fullscreen pass — equirectangular HDR environment map sampling on depth==1 pixels, inverse ViewProj direction reconstruction |
 - **GLSL Shaders** — OpenGL versions of DefaultLit, Unlit, and Wireframe in `GLShaders/` directory, using `//!VERTEX` / `//!FRAGMENT` markers for stage separation.
-- **Unified Constant Buffer** — World/View/Projection matrices, object color, selection state, light count, camera position, material properties (Roughness, Metallic), and GPU light data (up to 8 lights).
-- **Custom Shaders** — Create a `.hlsl` with `VSMain`/`PSMain` entry points using the shared CB layout, drop into `Shaders/`, and it's available at runtime.
+- **Shared Shader Include** — `Common.hlsli` defines the split CB layout, included by all HLSL shaders via `#include "Common.hlsli"`. `ReadShaderFile()` and `ShaderLibrary` automatically resolve `#include` directives at compile time.
+- **UE5-Inspired Constant Buffer Layout** — Split into 3 buffers by update frequency:
+  | Register | Buffer | Update Frequency | Contents |
+  |---|---|---|---|
+  | **b0** | `ViewUniformBuffer` | Per-frame (1×) | View, Projection, ViewProjection, InvViewProj, CameraPos, ScreenSize, Near/Far, NumLights, Lights[8] |
+  | **b1** | `ObjectUniformBuffer` | Per-draw call | World matrix, ObjectColor, Selected, Roughness, Metallic, texture flags, VisualizeMode |
+  | **b2** | `ShadowUniformBuffer` | Per-frame (1×) | LightViewProj[4], CascadeSplits, ShadowBias/Strength, NumCascades |
+- **Custom Shaders** — Create a `.hlsl` with `VSMain`/`PSMain` entry points, `#include "Common.hlsli"` for the CB layout, drop into `Shaders/`, and it's available at runtime.
 
 ### 🌈 Post-Processing System
 

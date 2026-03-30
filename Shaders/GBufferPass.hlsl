@@ -7,49 +7,12 @@
 // World position reconstructed from hardware depth buffer in lighting pass
 // ============================================================
 
-#define MAX_LIGHTS 8
-
-struct LightData
-{
-    float3 ColorIntensity;
-    int    Type;
-    float3 DirectionOrPos;
-    float  Radius;
-};
-
-cbuffer ViewConstants : register(b0)
-{
-    row_major float4x4 g_View;
-    row_major float4x4 g_Projection;
-    row_major float4x4 g_InvViewProj;
-    float3 g_CameraPos;
-    float  g_Time;
-    int    g_NumLights;
-    float3 g_ViewPad0;
-    float4 g_DiffuseOverride;
-    float4 g_SpecularOverride;
-    float2 g_ScreenSize;
-    float2 g_InvScreenSize;
-    float4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
-};
-
-cbuffer ObjectConstants : register(b1)
-{
-    row_major float4x4 g_World;
-    float4 g_ObjectColor;
-    float  g_Selected;
-    float  g_Roughness;
-    float  g_Metallic;
-    float  g_HasBaseColorTex;
-    float  g_HasNormalTex;
-    float3 g_ObjPad;
-};
+#include "Common.hlsli"
 
 // Material textures (bound per-object)
 Texture2D    g_BaseColorTex : register(t4);  // BaseColor/Albedo texture
 Texture2D    g_NormalTex    : register(t5);  // Normal map texture
-SamplerState g_LinearWrap   : register(s1);  // Linear wrap sampler (from root sig)
+SamplerState g_LinearWrap   : register(s1);  // Linear wrap sampler
 
 struct VSInput
 {
@@ -80,23 +43,18 @@ struct GBufferOutput
 };
 
 // ---- Octahedron Normal Encoding ----
-// Encodes unit normal to 2D octahedron representation in [0,1] range
-// Reference: "Survey of Efficient Representations for Independent Unit Vectors" (Cigolle et al. 2014)
 float2 OctahedronEncode(float3 n)
 {
-    // Project onto octahedron
     float3 absN = abs(n);
     float sum = absN.x + absN.y + absN.z;
     float2 oct = n.xy / sum;
 
-    // Reflect bottom hemisphere
     if (n.z < 0.0)
     {
         float2 signNotZero = float2(oct.x >= 0.0 ? 1.0 : -1.0, oct.y >= 0.0 ? 1.0 : -1.0);
         oct = (1.0 - abs(oct.yx)) * signNotZero;
     }
 
-    // Map from [-1,1] to [0,1]
     return oct * 0.5 + 0.5;
 }
 
@@ -119,7 +77,6 @@ VSOutput VSMain(VSInput input)
     float3 N = output.NormalWS;
     float3 T = normalize(mul(input.Tangent.xyz, (float3x3)g_World));
 
-    // Fallback: if tangent is zero (missing data), approximate from normal
     if (dot(T, T) < 0.001)
     {
         if (abs(N.y) < 0.99)
@@ -128,9 +85,8 @@ VSOutput VSMain(VSInput input)
             T = normalize(cross(float3(1, 0, 0), N));
     }
 
-    // Gram-Schmidt re-orthogonalize T w.r.t. N
     T = normalize(T - N * dot(N, T));
-    float3 B = cross(N, T) * input.Tangent.w; // handedness from w
+    float3 B = cross(N, T) * input.Tangent.w;
     output.TangentWS = T;
     output.BitangentWS = B;
 
@@ -142,7 +98,7 @@ GBufferOutput PSMain(VSOutput input)
 {
     GBufferOutput output;
 
-    // BaseColor: sample texture if available, otherwise use vertex color
+    // BaseColor
     float3 baseColor = input.Color.rgb;
     if (g_HasBaseColorTex > 0.5)
     {
@@ -150,12 +106,12 @@ GBufferOutput PSMain(VSOutput input)
         baseColor = texColor.rgb * input.Color.rgb;
     }
 
-    // Normal: use normal map if available
+    // Normal
     float3 normal = normalize(input.NormalWS);
     if (g_HasNormalTex > 0.5)
     {
         float3 tangentNormal = g_NormalTex.Sample(g_LinearWrap, input.TexCoord).rgb;
-        tangentNormal = tangentNormal * 2.0 - 1.0; // [0,1] -> [-1,1]
+        tangentNormal = tangentNormal * 2.0 - 1.0;
 
         float3 T = normalize(input.TangentWS);
         float3 B = normalize(input.BitangentWS);
@@ -166,14 +122,12 @@ GBufferOutput PSMain(VSOutput input)
 
     float2 octNormal = OctahedronEncode(normal);
 
-    // Default specular = 0.5 (dielectric Fresnel reflectance ~4%)
     float specular = 0.5;
-    // ShadingModelID: 1.0 = DefaultLit (encoded as [0,1] for UNORM)
-    float shadingModelID = 1.0 / 255.0; // ID=1
+    float shadingModelID = 1.0 / 255.0;
 
     output.GBufferA = float4(octNormal.x, octNormal.y, g_Metallic, shadingModelID);
     output.GBufferB = float4(baseColor, g_Roughness);
-    output.GBufferC = float4(0.0, 0.0, 0.0, specular); // No emissive for now
+    output.GBufferC = float4(0.0, 0.0, 0.0, specular);
 
     return output;
 }

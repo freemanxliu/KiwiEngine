@@ -2,54 +2,14 @@
 // Default Phong Shader
 // Lambert Diffuse + Blinn-Phong Specular
 // Supports multiple lights (Directional + Point)
-// Supports optional texture sampling
 // ============================================================
 
-// Maximum number of lights supported
-#define MAX_LIGHTS 8
+#include "Common.hlsli"
 
-// Light types
 #define LIGHT_TYPE_DIRECTIONAL 0
 #define LIGHT_TYPE_POINT       1
 
-struct LightData
-{
-    float3 ColorIntensity;  // LightColor * Intensity
-    int    Type;            // 0 = Directional, 1 = Point
-    float3 DirectionOrPos;  // Direction (Directional) or Position (Point)
-    float  Radius;          // Point light radius (0 for directional)
-};
-
-cbuffer ViewConstants : register(b0)
-{
-    row_major float4x4 g_View;
-    row_major float4x4 g_Projection;
-    row_major float4x4 g_InvViewProj;
-    float3 g_CameraPos;
-    float  g_Time;
-    int    g_NumLights;
-    float3 g_ViewPad0;
-    float4 g_DiffuseOverride;
-    float4 g_SpecularOverride;
-    float2 g_ScreenSize;
-    float2 g_InvScreenSize;
-    float4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
-};
-
-cbuffer ObjectConstants : register(b1)
-{
-    row_major float4x4 g_World;
-    float4 g_ObjectColor;
-    float  g_Selected;
-    float  g_Roughness;
-    float  g_Metallic;
-    float  g_HasBaseColorTex;
-    float  g_HasNormalTex;
-    float3 g_ObjPad;
-};
-
-// Texture and sampler (optional — used when texture is bound)
+// Texture and sampler (optional)
 Texture2D g_AlbedoTexture : register(t0);
 SamplerState g_TextureSampler : register(s1);
 
@@ -92,7 +52,7 @@ VSOutput VSMain(VSInput input)
 // ---- Pixel Shader ----
 float4 PSMain(VSOutput input) : SV_TARGET
 {
-    // Gizmo / unlit mode: if g_Selected > 1.5 we treat it as unlit (pure vertex color)
+    // Gizmo / unlit mode
     if (g_Selected > 1.5)
     {
         return float4(input.Color.rgb * g_ObjectColor.rgb, input.Color.a);
@@ -101,15 +61,12 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float3 normal = normalize(input.NormalWS);
     float3 viewDir = normalize(g_CameraPos - input.PositionWS);
 
-    // Base color from vertex color (texture sampling can be added here)
     float3 albedo = input.Color.rgb;
 
-    // Ambient
     float3 ambient = float3(0.15, 0.15, 0.15);
     float3 totalDiffuse = float3(0, 0, 0);
     float3 totalSpecular = float3(0, 0, 0);
 
-    // Accumulate light contributions
     int numLights = min(g_NumLights, MAX_LIGHTS);
     for (int i = 0; i < numLights; i++)
     {
@@ -133,17 +90,14 @@ float4 PSMain(VSOutput input) : SV_TARGET
             attenuation *= attenuation;
         }
 
-        // Lambertian diffuse
         float NdotL = max(dot(normal, lightDir), 0.0);
         totalDiffuse += lightColor * NdotL * attenuation;
 
-        // Blinn-Phong specular
         float3 halfVec = normalize(lightDir + viewDir);
         float spec = pow(max(dot(normal, halfVec), 0.0), 32.0);
         totalSpecular += lightColor * spec * 0.3 * attenuation;
     }
 
-    // If no lights in scene, use a default directional light (fallback)
     if (numLights == 0)
     {
         float3 defaultLightDir = normalize(float3(0.5, 0.7, 0.3));

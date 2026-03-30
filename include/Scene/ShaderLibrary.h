@@ -137,7 +137,7 @@ namespace Kiwi
 
                 // Skip deferred rendering shaders — they are compiled separately
                 // with specialized PSO configurations (MRT, no input layout, etc.)
-                if (name == "GBufferPass" || name == "DeferredLighting" || name == "BufferVisualization" || name == "ShadowPass")
+                if (name == "GBufferPass" || name == "DeferredLighting" || name == "BufferVisualization" || name == "ShadowPass" || name == "Skybox" || name == "Common")
                     continue;
 
                 // Read file content
@@ -150,6 +150,9 @@ namespace Kiwi
                 std::string hlslSource((std::istreambuf_iterator<char>(file)),
                                         std::istreambuf_iterator<char>());
                 file.close();
+
+                // Resolve #include directives
+                hlslSource = ResolveIncludes(hlslSource, entry.path().parent_path().string());
 
                 // Compile
                 auto shader = std::make_unique<CompiledShader>();
@@ -198,6 +201,38 @@ namespace Kiwi
 
         std::unordered_map<std::string, std::unique_ptr<CompiledShader>> m_Shaders;
         std::vector<std::string> m_ShaderNames;
+
+        // Simple #include preprocessor for HLSL files
+        static std::string ResolveIncludes(const std::string& source, const std::string& parentDir)
+        {
+            std::string result;
+            std::istringstream stream(source);
+            std::string line;
+            while (std::getline(stream, line))
+            {
+                size_t pos = line.find("#include");
+                if (pos != std::string::npos)
+                {
+                    size_t q1 = line.find('"', pos);
+                    size_t q2 = line.find('"', q1 + 1);
+                    if (q1 != std::string::npos && q2 != std::string::npos)
+                    {
+                        std::string includeName = line.substr(q1 + 1, q2 - q1 - 1);
+                        std::string includePath = parentDir + "/" + includeName;
+                        std::ifstream incFile(includePath);
+                        if (incFile.is_open())
+                        {
+                            std::string incContent((std::istreambuf_iterator<char>(incFile)),
+                                                    std::istreambuf_iterator<char>());
+                            result += incContent + "\n";
+                            continue;
+                        }
+                    }
+                }
+                result += line + "\n";
+            }
+            return result;
+        }
     };
 
 } // namespace Kiwi

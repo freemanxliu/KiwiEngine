@@ -133,8 +133,14 @@
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
   | **Skybox** | 全屏 Pass — 在 depth==1 像素上采样 HDR Equirectangular 环境贴图，逆 ViewProj 方向重建 |
 - **GLSL 着色器** — OpenGL 版本的 DefaultLit、Unlit 和 Wireframe 存放在 `GLShaders/` 目录，使用 `//!VERTEX` / `//!FRAGMENT` 标记分割着色器阶段。
-- **统一常量缓冲区** — World/View/Projection 矩阵、物体颜色、选中状态、灯光数量、相机位置、材质属性（粗糙度、金属度）、GPU 灯光数据（最多 8 盏）。
-- **自定义着色器** — 创建包含 `VSMain`/`PSMain` 入口点的 `.hlsl` 文件，使用共享的 CB 布局，放入 `Shaders/` 即可在运行时使用。
+- **共享 Shader Include** — `Common.hlsli` 定义分层 CB 布局，所有 HLSL 着色器通过 `#include "Common.hlsli"` 引用。编译时自动展开 `#include`。
+- **UE5 风格常量缓冲区布局** — 按更新频率拆分为 3 个缓冲区：
+  | 寄存器 | 缓冲区 | 更新频率 | 内容 |
+  |---|---|---|---|
+  | **b0** | `ViewUniformBuffer` | 每帧 1 次 | View/Proj/ViewProj/InvViewProj 矩阵、CameraPos、屏幕尺寸、Near/Far、灯光数量 + 灯光数组[8] |
+  | **b1** | `ObjectUniformBuffer` | 每次绘制 | World 矩阵、物体颜色、选中状态、粗糙度、金属度、纹理标志、可视化模式 |
+  | **b2** | `ShadowUniformBuffer` | 每帧 1 次 | LightViewProj[4]、级联分割距离、阴影偏移/强度、级联数量 |
+- **自定义着色器** — 创建 `.hlsl` 文件，`#include "Common.hlsli"` 获取 CB 布局，定义 `VSMain`/`PSMain` 入口点，放入 `Shaders/` 即可运行。
 
 ### 🌈 后处理系统
 

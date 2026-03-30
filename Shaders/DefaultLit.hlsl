@@ -14,47 +14,10 @@
 //   _MetallicRoughnessTex ("Metallic/Roughness", Texture2D) = "white"
 // }
 
-#define MAX_LIGHTS 8
+#include "Common.hlsli"
 
 #define LIGHT_TYPE_DIRECTIONAL 0
 #define LIGHT_TYPE_POINT       1
-
-struct LightData
-{
-    float3 ColorIntensity;
-    int    Type;
-    float3 DirectionOrPos;
-    float  Radius;
-};
-
-cbuffer ViewConstants : register(b0)
-{
-    row_major float4x4 g_View;
-    row_major float4x4 g_Projection;
-    row_major float4x4 g_InvViewProj;
-    float3 g_CameraPos;
-    float  g_Time;
-    int    g_NumLights;
-    float3 g_ViewPad0;
-    float4 g_DiffuseOverride;
-    float4 g_SpecularOverride;
-    float2 g_ScreenSize;
-    float2 g_InvScreenSize;
-    float4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
-};
-
-cbuffer ObjectConstants : register(b1)
-{
-    row_major float4x4 g_World;
-    float4 g_ObjectColor;
-    float  g_Selected;
-    float  g_Roughness;
-    float  g_Metallic;
-    float  g_HasBaseColorTex;
-    float  g_HasNormalTex;
-    float3 g_ObjPad;
-};
 
 Texture2D g_AlbedoTexture : register(t0);
 SamplerState g_TextureSampler : register(s1);
@@ -109,7 +72,6 @@ float4 PSMain(VSOutput input) : SV_TARGET
 
     float3 albedo = input.Color.rgb;
 
-    // Ambient
     float3 ambient = float3(0.15, 0.15, 0.15);
     float3 totalDiffuse = float3(0, 0, 0);
     float3 totalSpecular = float3(0, 0, 0);
@@ -137,19 +99,16 @@ float4 PSMain(VSOutput input) : SV_TARGET
             attenuation *= attenuation;
         }
 
-        // Lambert diffuse
         float NdotL = max(dot(normal, lightDir), 0.0);
         totalDiffuse += lightColor * NdotL * attenuation;
 
-        // Blinn-Phong specular
         float3 halfVec = normalize(lightDir + viewDir);
-        float shininess = lerp(256.0, 8.0, g_Roughness); // Roughness controls shininess
+        float shininess = lerp(256.0, 8.0, g_Roughness);
         float spec = pow(max(dot(normal, halfVec), 0.0), shininess);
-        float specIntensity = lerp(0.04, 0.8, g_Metallic); // Metallic boosts specular
+        float specIntensity = lerp(0.04, 0.8, g_Metallic);
         totalSpecular += lightColor * spec * specIntensity * attenuation;
     }
 
-    // Fallback light if no lights
     if (numLights == 0)
     {
         float3 defaultLightDir = normalize(float3(0.5, 0.7, 0.3));

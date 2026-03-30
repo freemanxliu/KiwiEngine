@@ -3,44 +3,7 @@
 // Maps world-space normals to RGB colors
 // ============================================================
 
-#define MAX_LIGHTS 8
-
-struct LightData
-{
-    float3 ColorIntensity;
-    int    Type;
-    float3 DirectionOrPos;
-    float  Radius;
-};
-
-cbuffer ViewConstants : register(b0)
-{
-    row_major float4x4 g_View;
-    row_major float4x4 g_Projection;
-    row_major float4x4 g_InvViewProj;
-    float3 g_CameraPos;
-    float  g_Time;
-    int    g_NumLights;
-    float3 g_ViewPad0;
-    float4 g_DiffuseOverride;
-    float4 g_SpecularOverride;
-    float2 g_ScreenSize;
-    float2 g_InvScreenSize;
-    float4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
-};
-
-cbuffer ObjectConstants : register(b1)
-{
-    row_major float4x4 g_World;
-    float4 g_ObjectColor;
-    float  g_Selected;
-    float  g_Roughness;
-    float  g_Metallic;
-    float  g_HasBaseColorTex;
-    float  g_HasNormalTex;
-    float3 g_ObjPad;
-};
+#include "Common.hlsli"
 
 struct VSInput
 {
@@ -82,7 +45,6 @@ VSOutput VSMain(VSInput input)
 float4 PSMain(VSOutput input) : SV_TARGET
 {
     float3 normal = normalize(input.NormalWS);
-    // Map normal from [-1,1] to [0,1] for visualization
     float3 color = normal * 0.5 + 0.5;
 
     // Gizmo / unlit mode

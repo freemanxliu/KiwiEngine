@@ -214,10 +214,11 @@ namespace Kiwi
 
     void DX12Device::CreateRootSignature()
     {
-        // Root parameter 0: CBV at b0 (View UniformBuffer — camera, lights, screen, overrides)
-        // Root parameter 1: CBV at b1 (Object UniformBuffer — per-object world matrix, material params)
-        // Root parameter 2: Descriptor table with 8 SRVs at t0-t7 (G-Buffer + shadow maps + textures)
-        // Root parameter 3: CBV at b2 (Shadow UniformBuffer — CSM data)
+        // Root parameter layout (UE5-inspired split uniform buffers):
+        //   Slot 0: CBV b0 — ViewUniformBuffer (per-frame)
+        //   Slot 1: Descriptor table with 8 SRVs at t0-t7
+        //   Slot 2: CBV b1 — ObjectUniformBuffer (per-draw)
+        //   Slot 3: CBV b2 — ShadowUniformBuffer (per-frame)
         D3D12_DESCRIPTOR_RANGE srvRange = {};
         srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         srvRange.NumDescriptors = 8;
@@ -226,26 +227,26 @@ namespace Kiwi
         srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
         D3D12_ROOT_PARAMETER rootParams[4] = {};
-        // Root 0: CBV b0 (View)
+        // Slot 0: CBV b0 (ViewUB)
         rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParams[0].Descriptor.ShaderRegister = 0;
         rootParams[0].Descriptor.RegisterSpace = 0;
         rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-        // Root 1: CBV b1 (Object)
-        rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-        rootParams[1].Descriptor.ShaderRegister = 1;
-        rootParams[1].Descriptor.RegisterSpace = 0;
-        rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-        // Root 2: SRV descriptor table (8 descriptors: t0-t7)
-        rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        rootParams[2].DescriptorTable.NumDescriptorRanges = 1;
-        rootParams[2].DescriptorTable.pDescriptorRanges = &srvRange;
-        rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        // Root 3: CBV b2 (Shadow)
+        // Slot 1: SRV descriptor table (8 descriptors: t0-t7)
+        rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[1].DescriptorTable.pDescriptorRanges = &srvRange;
+        rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        // Slot 2: CBV b1 (ObjectUB)
+        rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        rootParams[2].Descriptor.ShaderRegister = 1;
+        rootParams[2].Descriptor.RegisterSpace = 0;
+        rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        // Slot 3: CBV b2 (ShadowUB)
         rootParams[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParams[3].Descriptor.ShaderRegister = 2;
         rootParams[3].Descriptor.RegisterSpace = 0;
-        rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
         // Three static samplers:
         // s0 = linear clamp (post-process, G-Buffer sampling)
@@ -1178,13 +1179,14 @@ namespace Kiwi
     {
         auto dxBuffer = static_cast<DX12Buffer*>(buffer);
         // Map HLSL constant buffer register to DX12 root parameter index:
-        // b0 -> root param 0 (View CB)
-        // b1 -> root param 1 (Object CB)
-        // b2 -> root param 3 (Shadow CB)
-        // (root param 2 is the SRV descriptor table, not a CBV)
+        // b0 -> root param 0 (ViewUB)
+        // b1 -> root param 2 (ObjectUB) — root param 1 is SRV table
+        // b2 -> root param 3 (ShadowUB)
         uint32_t rootParamIndex = slot;
-        if (slot == 2)
-            rootParamIndex = 3;  // b2 maps to root param 3 (root param 2 is SRV table)
+        if (slot == 1)
+            rootParamIndex = 2;  // b1 maps to root param 2
+        else if (slot == 2)
+            rootParamIndex = 3;  // b2 maps to root param 3
         m_CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, dxBuffer->GetGPUVirtualAddress());
     }
 

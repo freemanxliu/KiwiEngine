@@ -72,18 +72,10 @@ namespace Kiwi
         m_LastTime = now;
 
         // 更新
-        PreUpdate(m_DeltaTime);
-
         OnUpdate(m_DeltaTime);
 
-        PostUpdate(m_DeltaTime);
-        
         // 渲染
-        PreRender();
-
         OnRender();
-
-        PostRender();
 
         // 呈现
         m_SwapChain->Present(1); // VSync ON

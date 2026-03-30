@@ -5,42 +5,30 @@ namespace Kiwi
 
     // ============================================================
     // GLSL Vertex Shader (Default — used for InputLayout creation + fallback)
-    // Matches the new split CB layout: ViewUBO (binding=0) + ObjectUBO (binding=1)
-    // ViewConstants UBO must match ViewBufferData (std140 layout, includes LightData[])
+    // UE5-style split uniform buffers: ViewUB(0) + ObjectUB(1)
     // ============================================================
     inline const char* g_VertexShaderGLSL = R"glsl(
 #version 450 core
 
-#define MAX_LIGHTS 8
-
-struct LightData
-{
-    vec3 ColorIntensity;
-    int  Type;
-    vec3 DirectionOrPos;
-    float Radius;
-};
-
-// View UniformBuffer — binding 0
-layout(std140, binding = 0) uniform ViewConstants
+// View Uniform Buffer (binding 0) — per-frame
+layout(std140, binding = 0) uniform ViewUB
 {
     mat4 g_View;
     mat4 g_Projection;
+    mat4 g_ViewProjection;
     mat4 g_InvViewProj;
     vec3 g_CameraPos;
-    float g_Time;
+    float g_ViewPadding1;
+    float g_ScreenWidth;
+    float g_ScreenHeight;
+    float g_NearPlane;
+    float g_FarPlane;
     int g_NumLights;
-    vec3 g_ViewPad0;
-    vec4 g_DiffuseOverride;
-    vec4 g_SpecularOverride;
-    vec2 g_ScreenSize;
-    vec2 g_InvScreenSize;
-    vec4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
+    vec3 g_ViewPadding2;
 };
 
-// Object UniformBuffer — binding 1
-layout(std140, binding = 1) uniform ObjectConstants
+// Object Uniform Buffer (binding 1) — per-draw
+layout(std140, binding = 1) uniform ObjectUB
 {
     mat4 g_World;
     vec4 g_ObjectColor;
@@ -49,7 +37,8 @@ layout(std140, binding = 1) uniform ObjectConstants
     float g_Metallic;
     float g_HasBaseColorTex;
     float g_HasNormalTex;
-    vec3 g_ObjPad;
+    float g_VisualizeMode;
+    vec2 g_ObjectPadding;
 };
 
 layout(location = 0) in vec3 aPosition;
@@ -78,41 +67,27 @@ void main()
 
     // ============================================================
     // GLSL Pixel Shader (Default — simple directional light)
-    // ViewConstants UBO must match ViewBufferData (std140 layout)
     // ============================================================
     inline const char* g_PixelShaderGLSL = R"glsl(
 #version 450 core
 
-#define MAX_LIGHTS 8
-
-struct LightData
-{
-    vec3 ColorIntensity;
-    int  Type;
-    vec3 DirectionOrPos;
-    float Radius;
-};
-
-// View UniformBuffer — binding 0
-layout(std140, binding = 0) uniform ViewConstants
+layout(std140, binding = 0) uniform ViewUB
 {
     mat4 g_View;
     mat4 g_Projection;
+    mat4 g_ViewProjection;
     mat4 g_InvViewProj;
     vec3 g_CameraPos;
-    float g_Time;
+    float g_ViewPadding1;
+    float g_ScreenWidth;
+    float g_ScreenHeight;
+    float g_NearPlane;
+    float g_FarPlane;
     int g_NumLights;
-    vec3 g_ViewPad0;
-    vec4 g_DiffuseOverride;
-    vec4 g_SpecularOverride;
-    vec2 g_ScreenSize;
-    vec2 g_InvScreenSize;
-    vec4 g_ViewPad1;
-    LightData g_Lights[MAX_LIGHTS];
+    vec3 g_ViewPadding2;
 };
 
-// Object UniformBuffer — binding 1
-layout(std140, binding = 1) uniform ObjectConstants
+layout(std140, binding = 1) uniform ObjectUB
 {
     mat4 g_World;
     vec4 g_ObjectColor;
@@ -121,7 +96,8 @@ layout(std140, binding = 1) uniform ObjectConstants
     float g_Metallic;
     float g_HasBaseColorTex;
     float g_HasNormalTex;
-    vec3 g_ObjPad;
+    float g_VisualizeMode;
+    vec2 g_ObjectPadding;
 };
 
 in vec3 vPositionWS;

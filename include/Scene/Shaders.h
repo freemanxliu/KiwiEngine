@@ -6,11 +6,20 @@ namespace Kiwi
 {
 
     // ============================================================
-    // 内嵌 HLSL 着色器源码（运行时编译）
+    // Constant Buffer Structures (UE5-inspired layered design)
+    //
+    // b0 = ViewUniformBuffer   — per-frame view/camera/lights data
+    // b1 = ObjectUniformBuffer — per-draw object/material data
+    // b2 = ShadowUniformBuffer — per-frame CSM shadow data
+    //
+    // This separation minimizes GPU uploads:
+    //   - View CB uploaded once per frame
+    //   - Object CB uploaded once per draw call (small, ~112 bytes)
+    //   - Shadow CB uploaded once per frame
     // ============================================================
 
-    // Maximum number of lights supported
     static constexpr int MAX_LIGHTS = 8;
+    static constexpr int MAX_CSM_CASCADES = 4;
 
     // GPU light data (must match HLSL LightData struct)
     struct GPULightData
@@ -21,74 +30,44 @@ namespace Kiwi
         float Radius;             // Point light radius (0 for directional)
     };
 
-    // ============================================================
-    // UE5-style View UniformBuffer (register b0, updated once per frame)
-    // Bound automatically to ALL materials — shared across all shaders.
-    // Contains camera, lighting, screen, and development override parameters.
-    // ============================================================
-    struct ViewBufferData
+    // ---- View Uniform Buffer (b0) — per-frame, uploaded once ----
+    // Reference: UE5 FViewUniformShaderParameters
+    struct ViewUniformBuffer
     {
-        float ViewMatrix[16];             // 4x4 View matrix
-        float ProjectionMatrix[16];       // 4x4 Projection matrix
-        float InvViewProjMatrix[16];      // 4x4 Inverse ViewProjection (for deferred/screen-space passes)
-        float CameraPos[3];               // Camera world-space position
-        float Time;                       // Elapsed time in seconds
-        int32_t NumLights;                // Active light count
-        float ViewPadding0[3];            // 16-byte alignment
-        // UE5-style development override parameters
-        float DiffuseOverride[4];         // xyz = override color, w = weight (0=none, 1=full)
-        float SpecularOverride[4];        // xyz = override color, w = weight (0=none, 1=full)
-        // Screen parameters
-        float ScreenSize[2];              // (Width, Height)
-        float InvScreenSize[2];           // (1/Width, 1/Height)
-        float ViewPadding1[4];            // 16-byte alignment
-        GPULightData Lights[MAX_LIGHTS];  // Light array
+        float ViewMatrix[16];           // g_View           — camera view matrix
+        float ProjectionMatrix[16];     // g_Projection     — camera projection matrix
+        float ViewProjectionMatrix[16]; // g_ViewProjection — View * Projection
+        float InvViewProjectionMatrix[16]; // g_InvViewProj — inverse of ViewProjection
+        float CameraPos[3];             // g_CameraPos      — world-space camera position
+        float ViewPadding1;             // pad to 16-byte
+        float ScreenWidth;              // g_ScreenWidth
+        float ScreenHeight;             // g_ScreenHeight
+        float NearPlane;                // g_NearPlane
+        float FarPlane;                 // g_FarPlane
+        int32_t NumLights;              // g_NumLights
+        float ViewPadding2[3];          // pad to 16-byte
+        GPULightData Lights[MAX_LIGHTS]; // g_Lights[8]
     };
+    // Size: 4*64 + 16 + 16 + 16 + 8*32 = 560 bytes
 
-    // ============================================================
-    // Object UniformBuffer (register b1, updated per-object)
-    // Contains per-object transform and material parameters.
-    // ============================================================
-    struct ObjectBufferData
+    // ---- Object Uniform Buffer (b1) — per-draw call ----
+    // Reference: UE5 FPrimitiveUniformShaderData
+    struct ObjectUniformBuffer
     {
-        float WorldMatrix[16];        // 4x4 World matrix
-        float ObjectColor[4];         // Object/material tint (RGBA)
-        float Selected;               // 1.0 = selected, 0.0 = normal, >1.5 = unlit/gizmo
-        float Roughness;              // Material roughness [0, 1]
-        float Metallic;               // Material metallic [0, 1]
-        float HasBaseColorTex;        // 1.0 if base color texture bound
-        float HasNormalTex;           // 1.0 if normal map bound
-        float ObjectPadding[3];       // 16-byte alignment
+        float WorldMatrix[16];       // g_World         — object world transform
+        float ObjectColor[4];        // g_ObjectColor   — object tint color (RGBA)
+        float Selected;              // g_Selected      — 0.0=normal, 1.0=selected, 2.0=unlit/gizmo
+        float Roughness;             // g_Roughness     — PBR roughness [0,1]
+        float Metallic;              // g_Metallic      — PBR metallic [0,1]
+        float HasBaseColorTex;       // g_HasBaseColorTex — 1.0 if texture bound
+        float HasNormalTex;          // g_HasNormalTex    — 1.0 if normal map bound
+        float VisualizeMode;         // g_VisualizeMode   — buffer vis mode (0=BaseColor,1=Roughness,2=Metallic)
+        float ObjectPadding[2];      // pad to 16-byte alignment
     };
+    // Size: 64 + 16 + 16 + 16 = 112 bytes
 
-    // ============================================================
-    // Legacy alias — kept for backward compatibility during transition
-    // TODO: Remove once all call sites are migrated
-    // ============================================================
-    struct ConstantBufferData
-    {
-        float WorldMatrix[16];
-        float ViewMatrix[16];
-        float ProjectionMatrix[16];
-        float ObjectColor[4];
-        float Selected;
-        int32_t NumLights;
-        float Padding[2];
-        float CameraPos[3];
-        float Roughness;
-        float Metallic;
-        float HasBaseColorTex;
-        float HasNormalTex;
-        float MaterialPadding;
-        GPULightData Lights[MAX_LIGHTS];
-    };
-
-    // ============================================================
-    // Shadow constant buffer (register b2) — CSM data for shadow mapping
-    // ============================================================
-    static constexpr int MAX_CSM_CASCADES = 4;
-
-    struct ShadowCBData
+    // ---- Shadow Uniform Buffer (b2) — per-frame CSM data ----
+    struct ShadowUniformBuffer
     {
         float LightViewProj[MAX_CSM_CASCADES][16];  // 4x Light VP matrices (row-major)
         float CascadeSplits[4];                       // Split distances in view space (z)
@@ -100,9 +79,15 @@ namespace Kiwi
         float ShadowPadding[3];                       // Pad to 16-byte alignment
     };
 
-    // ---- 顶点着色器 ----
-    // This minimal VS is used only to create the shared InputLayout.
-    // Actual rendering uses file-based shaders from ShaderLibrary.
+    // ---- Legacy aliases (keep old name working during transition) ----
+    using ConstantBufferData = ViewUniformBuffer;  // TODO: remove after full migration
+    using ShadowCBData = ShadowUniformBuffer;
+
+    // ============================================================
+    // Inline HLSL shader source (for InputLayout creation only)
+    // Uses the new split CB layout
+    // ============================================================
+
     inline const char* g_VertexShaderHLSL = R"hlsl(
     #define MAX_LIGHTS 8
 
@@ -114,24 +99,26 @@ namespace Kiwi
         float  Radius;
     };
 
-    cbuffer ViewConstants : register(b0)
+    // View Uniform Buffer (b0) — per-frame
+    cbuffer ViewUB : register(b0)
     {
         row_major float4x4 g_View;
         row_major float4x4 g_Projection;
+        row_major float4x4 g_ViewProjection;
         row_major float4x4 g_InvViewProj;
         float3 g_CameraPos;
-        float  g_Time;
+        float  g_ViewPadding1;
+        float  g_ScreenWidth;
+        float  g_ScreenHeight;
+        float  g_NearPlane;
+        float  g_FarPlane;
         int    g_NumLights;
-        float3 g_ViewPad0;
-        float4 g_DiffuseOverride;
-        float4 g_SpecularOverride;
-        float2 g_ScreenSize;
-        float2 g_InvScreenSize;
-        float4 g_ViewPad1;
+        float3 g_ViewPadding2;
         LightData g_Lights[MAX_LIGHTS];
     };
 
-    cbuffer ObjectConstants : register(b1)
+    // Object Uniform Buffer (b1) — per-draw
+    cbuffer ObjectUB : register(b1)
     {
         row_major float4x4 g_World;
         float4 g_ObjectColor;
@@ -140,7 +127,8 @@ namespace Kiwi
         float  g_Metallic;
         float  g_HasBaseColorTex;
         float  g_HasNormalTex;
-        float3 g_ObjPad;
+        float  g_VisualizeMode;
+        float2 g_ObjectPadding;
     };
 
     struct VSInput
@@ -178,8 +166,6 @@ namespace Kiwi
     }
     )hlsl";
 
-    // ---- 像素着色器 ----
-    // This minimal PS matches the CB layout but is not used for rendering.
     inline const char* g_PixelShaderHLSL = R"hlsl(
     #define MAX_LIGHTS 8
 
@@ -191,24 +177,24 @@ namespace Kiwi
         float  Radius;
     };
 
-    cbuffer ViewConstants : register(b0)
+    cbuffer ViewUB : register(b0)
     {
         row_major float4x4 g_View;
         row_major float4x4 g_Projection;
+        row_major float4x4 g_ViewProjection;
         row_major float4x4 g_InvViewProj;
         float3 g_CameraPos;
-        float  g_Time;
+        float  g_ViewPadding1;
+        float  g_ScreenWidth;
+        float  g_ScreenHeight;
+        float  g_NearPlane;
+        float  g_FarPlane;
         int    g_NumLights;
-        float3 g_ViewPad0;
-        float4 g_DiffuseOverride;
-        float4 g_SpecularOverride;
-        float2 g_ScreenSize;
-        float2 g_InvScreenSize;
-        float4 g_ViewPad1;
+        float3 g_ViewPadding2;
         LightData g_Lights[MAX_LIGHTS];
     };
 
-    cbuffer ObjectConstants : register(b1)
+    cbuffer ObjectUB : register(b1)
     {
         row_major float4x4 g_World;
         float4 g_ObjectColor;
@@ -217,7 +203,8 @@ namespace Kiwi
         float  g_Metallic;
         float  g_HasBaseColorTex;
         float  g_HasNormalTex;
-        float3 g_ObjPad;
+        float  g_VisualizeMode;
+        float2 g_ObjectPadding;
     };
 
     struct PSInput
