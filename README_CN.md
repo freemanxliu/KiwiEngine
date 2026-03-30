@@ -30,7 +30,7 @@
 - **帧生命周期抽象** — `RHICommandContext::BeginFrame()` / `EndFrame()` 封装 DX12 的 Reset/RootSig/DescriptorHeaps/ResourceBarrier 流程（DX11/GL 为空操作）。
 - **SRV 绑定抽象** — `RHICommandContext::SetShaderResourceView()` 实现后端无关的纹理绑定。
 - **资源状态管理** — `EResourceState` 枚举和 `ResourceBarrier()` 用于 DX12 资源状态转换（DX11/GL 为空操作）。
-- **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
+- **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（G-Buffer、Deferred Lighting、Skybox、Buffer Visualization、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
 - **GPU 资源调试命名** — 所有 GPU 资源（纹理、缓冲区）都携带描述性调试名称，在 RenderDoc 和 PIX 中可见。`TextureDesc::DebugName` 和 `BufferDesc::DebugName` 通过 `SetPrivateData`（DX11）和 `SetName`（DX12）自动应用。
 
 ### 🔧 着色器编译管线
@@ -376,7 +376,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **一键截帧**：右上角 🔵 按钮
 - **视觉反馈**：捕获时按钮变橙色，悬停显示捕获次数
 - **零配置**：直接运行即可，自动检测 RenderDoc
-- **GPU Pass 标签**：所有渲染阶段（Shadow Pass、G-Buffer、Deferred Lighting、Buffer Visualization、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
+- **GPU Pass 标签**：所有渲染阶段（Shadow Pass、G-Buffer、Deferred Lighting、Skybox、Buffer Visualization、Gizmo、Post-Process、ImGui）均使用 `BeginEvent`/`EndEvent` 标注，在 RenderDoc 事件浏览器中以层级分组形式显示
 - **GPU 资源名称**：所有纹理和缓冲区都有描述性名称（如 `GBufferA_NormalMetallic`、`ShadowAtlas_CSM`、`MeshVB_Cube`），在 RenderDoc 的 Resource Inspector 和 Texture Viewer 中可见
 
 **自定义 DLL 路径**（`Config/DefaultEngine.ini`）：

@@ -377,7 +377,7 @@ float4 PSMain(float2 uv : TEXCOORD, float4 pos : SV_Position) : SV_Target
 - **One-Click Capture**: 🔵 button in top-right corner
 - **Visual Feedback**: Orange during capture, hover shows count
 - **Zero Configuration**: Just run — RenderDoc is detected automatically
-- **GPU Pass Labels**: All rendering passes (Shadow Pass, G-Buffer, Deferred Lighting, Buffer Visualization, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
+- **GPU Pass Labels**: All rendering passes (Shadow Pass, G-Buffer, Deferred Lighting, Skybox, Buffer Visualization, Gizmo, Post-Process, ImGui) are annotated with `BeginEvent`/`EndEvent` — visible as hierarchical groups in RenderDoc's Event Browser
 - **GPU Resource Names**: All textures and buffers have descriptive names (e.g., `GBufferA_NormalMetallic`, `ShadowAtlas_CSM`, `MeshVB_Cube`) — visible in RenderDoc's Resource Inspector and Texture Viewer
 
 **Custom DLL Path** (`Config/DefaultEngine.ini`):

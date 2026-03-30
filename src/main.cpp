@@ -689,6 +689,27 @@ protected:
         // ---- Init Texture Manager ----
         m_TextureManager.Initialize(GetDevice(), GetContext());
 
+        // ---- Load HDR Environment Map ----
+        {
+            m_EnvMapTexture = nullptr;
+            namespace fs = std::filesystem;
+            try {
+                for (const auto& entry : fs::directory_iterator(m_TexturesDir)) {
+                    if (!entry.is_regular_file()) continue;
+                    std::string ext = entry.path().extension().string();
+                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                    if (ext == ".hdr") {
+                        m_EnvMapTexture = m_TextureManager.LoadHDRTexture(entry.path().string());
+                        if (m_EnvMapTexture)
+                            std::cout << "[Kiwi] Environment map: " << entry.path().filename().string() << std::endl;
+                        break;
+                    }
+                }
+            } catch (...) {}
+            if (!m_EnvMapTexture)
+                std::cout << "[Kiwi] No .hdr environment map in Textures/" << std::endl;
+        }
+
         // ---- Init Material Library ----
         m_MaterialLibrary.Initialize(m_MaterialsDir);
 
@@ -984,6 +1005,10 @@ protected:
                 // Bind shadow atlas SRV (t3 = single atlas for all cascades)
                 ctx->SetShaderResourceView(3, m_ShadowAtlasSRV.get());
 
+                // Bind environment map (t4) for IBL
+                if (m_EnvMapTexture && m_EnvMapTexture->SRV)
+                    ctx->SetShaderResourceView(4, m_EnvMapTexture->SRV.get());
+
                 // Bind depth buffer SRV for position reconstruction (t7)
                 ctx->SetShaderResourceView(7, GetDepthSRV());
 
@@ -1007,10 +1032,35 @@ protected:
                 ctx->SetShaderResourceView(1, nullptr);
                 ctx->SetShaderResourceView(2, nullptr);
                 ctx->SetShaderResourceView(3, nullptr); // Shadow atlas
+                ctx->SetShaderResourceView(4, nullptr); // Env map
                 ctx->SetShaderResourceView(7, nullptr);
 
                 m_PassTimer.End();
                 ctx->EndEvent();
+
+                // ==== SKYBOX PASS ====
+                if (m_SkyboxPSO && m_EnvMapTexture && m_EnvMapTexture->SRV)
+                {
+                    ctx->BeginEvent("Skybox Pass");
+                    m_PassTimer.Begin("Skybox Pass");
+                    ctx->SetRenderTargets(&sceneRTV, 1, nullptr);
+                    ctx->SetViewports(&vp, 1);
+                    ctx->SetScissorRects(&sr, 1);
+                    ctx->SetPipelineState(m_SkyboxPSO.get());
+                    ctx->SetVertexShader(m_SkyboxVS.get());
+                    ctx->SetPixelShader(m_SkyboxPS.get());
+                    ctx->SetInputLayout(nullptr);
+                    ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+                    ctx->SetShaderResourceView(7, GetDepthSRV());
+                    ctx->SetShaderResourceView(4, m_EnvMapTexture->SRV.get());
+                    ctx->SetSampler(0, m_PostProcessSampler.get());
+                    UpdateDeferredLightingCB();
+                    ctx->Draw(3, 0);
+                    ctx->SetShaderResourceView(4, nullptr);
+                    ctx->SetShaderResourceView(7, nullptr);
+                    m_PassTimer.End();
+                    ctx->EndEvent();
+                }
             }
             else
             {
@@ -1771,6 +1821,23 @@ protected:
 
         // Reinitialize texture manager
         m_TextureManager.Initialize(GetDevice(), GetContext());
+
+        // Reload env map
+        {
+            m_EnvMapTexture = nullptr;
+            namespace fs = std::filesystem;
+            try {
+                for (const auto& entry : fs::directory_iterator(m_TexturesDir)) {
+                    if (!entry.is_regular_file()) continue;
+                    std::string ext = entry.path().extension().string();
+                    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+                    if (ext == ".hdr") {
+                        m_EnvMapTexture = m_TextureManager.LoadHDRTexture(entry.path().string());
+                        break;
+                    }
+                }
+            } catch (...) {}
+        }
     }
 
     
@@ -2020,6 +2087,10 @@ private:
         m_BufferVisVS.reset();
         m_BufferVisPS.reset();
         m_BufferVisPSO.reset();
+        m_SkyboxVS.reset();
+        m_SkyboxPS.reset();
+        m_SkyboxPSO.reset();
+        m_EnvMapTexture = nullptr;
     }
 
     std::string ReadShaderFile(const std::string& filePath)
@@ -2124,6 +2195,25 @@ private:
                     nullptr, visPSODesc);
 
                 std::cout << "[Kiwi] Buffer Visualization shader compiled successfully" << std::endl;
+            }
+        }
+
+        // --- Compile Skybox shader ---
+        std::string skyboxPath = m_ShaderDir + "/Skybox.hlsl";
+        std::string skyboxSrc = ReadShaderFile(skyboxPath);
+        if (!skyboxSrc.empty())
+        {
+            m_SkyboxVS = device->CompileShader(EShaderType::Vertex, skyboxSrc.c_str(), "VSMain", "vs_5_0");
+            m_SkyboxPS = device->CompileShader(EShaderType::Pixel, skyboxSrc.c_str(), "PSMain", "ps_5_0");
+            if (m_SkyboxVS && m_SkyboxPS)
+            {
+                PipelineStateDesc skyPSD;
+                skyPSD.NumRenderTargets = 1;
+                skyPSD.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                skyPSD.DepthEnabled = false;
+                skyPSD.DepthWrite = false;
+                m_SkyboxPSO = device->CreateGraphicsPipelineState(m_SkyboxVS.get(), m_SkyboxPS.get(), nullptr, skyPSD);
+                std::cout << "[Kiwi] Skybox shader compiled successfully" << std::endl;
             }
         }
     }
@@ -5308,6 +5398,12 @@ private:
     std::unique_ptr<RHIShader> m_BufferVisVS;
     std::unique_ptr<RHIShader> m_BufferVisPS;
     std::unique_ptr<RHIPipelineState> m_BufferVisPSO;
+
+    // Skybox shader (fullscreen pass, renders on depth==1 pixels)
+    std::unique_ptr<RHIShader> m_SkyboxVS;
+    std::unique_ptr<RHIShader> m_SkyboxPS;
+    std::unique_ptr<RHIPipelineState> m_SkyboxPSO;
+    GPUTexture* m_EnvMapTexture = nullptr;
 
     // ---- View Mode ----
     EViewMode m_ViewMode = EViewMode::Lit;
