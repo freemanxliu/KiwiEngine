@@ -84,7 +84,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **MaterialLibrary** — Singleton material manager. Auto-creates `Default-Material.mat` on first run, scans `Materials/` folder at startup. Materials are referenced by name from `MeshComponent`.
 - **Shader Properties Metadata** — Shaders can declare a `// @Properties { }` block defining UI-exposed properties (Float, Range, Color, Texture2D). The material editor parses these to generate dynamic property UI.
 - **Material Editor** — Double-click `.mat` files in Content Browser to open a floating editor window. Features: shader selection dropdown, @Properties-driven dynamic UI with color preview swatches, texture slot rows with Pick button (modal popup) + DragDrop from Content Browser, Save/Close buttons.
-- **Property Migration** — All appearance properties (color, roughness, metallic, texture paths) live in Material, not MeshComponent. UploadObjectCB and texture binding read from the material at render time.
+- **Property Migration** — All appearance properties (color, roughness, metallic, texture paths) live in Material, not MeshComponent. UploadObjectUB and texture binding read from the material at render time.
 
 ### 🖼️ Texture System
 
@@ -314,24 +314,50 @@ bool vsync       = config.GetBool("Rendering", "VSync", true);
 
 ### Scene Shaders (HLSL — DX11/DX12)
 
-Create a `.hlsl` file in `Shaders/` with entry points `VSMain` and `PSMain`:
+Create a `.hlsl` file in `Shaders/` with entry points `VSMain` and `PSMain`. Include `Common.hlsli` for the UE5-style split constant buffer layout:
 
 ```hlsl
-cbuffer Constants : register(b0)
+#include "Common.hlsli"
+
+// b0 = ViewUniformBuffer (per-frame, auto-uploaded by engine)
+// b1 = ObjectUniformBuffer (per-draw, auto-uploaded by engine)
+
+struct VSInput
 {
-    row_major float4x4 g_World;
-    row_major float4x4 g_View;
-    row_major float4x4 g_Projection;
-    float4 g_ObjectColor;
-    float  g_Selected;
-    int    g_NumLights;
-    float2 g_Padding;
-    float3 g_CameraPos;
-    float  g_Roughness;
-    float  g_Metallic;
-    float3 g_MaterialPadding;
-    // GPULightData g_Lights[8];
+    float3 Position : POSITION;
+    float3 Normal   : NORMAL;
+    float4 Color    : COLOR;
+    float2 TexCoord : TEXCOORD;
 };
+
+struct VSOutput
+{
+    float4 PositionCS : SV_POSITION;
+    float3 PositionWS : POSITION;
+    float3 NormalWS   : NORMAL;
+    float4 Color      : COLOR;
+    float2 TexCoord   : TEXCOORD;
+};
+
+VSOutput VSMain(VSInput input)
+{
+    VSOutput output;
+    float4 worldPos = mul(float4(input.Position, 1.0), g_World);
+    float4 viewPos = mul(worldPos, g_View);
+    output.PositionCS = mul(viewPos, g_Projection);
+    output.PositionWS = worldPos.xyz;
+    output.NormalWS = mul(input.Normal, (float3x3)g_World);
+    output.Color = input.Color * g_ObjectColor;
+    output.TexCoord = input.TexCoord;
+    return output;
+}
+
+float4 PSMain(VSOutput input) : SV_Target
+{
+    // Use g_CameraPos, g_Lights, g_Selected from ViewUB (b0)
+    // Use g_World, g_ObjectColor, g_Roughness, g_Metallic from ObjectUB (b1)
+    return float4(input.Color.rgb, input.Color.a);
+}
 ```
 
 ### Scene Shaders (GLSL — OpenGL)

@@ -83,7 +83,7 @@
 - **MaterialLibrary** — 单例材质管理器。首次运行自动创建 `Default-Material.mat`，启动时扫描 `Materials/` 文件夹。材质通过名称从 `MeshComponent` 引用。
 - **着色器属性元数据** — 着色器可声明 `// @Properties { }` 块定义 UI 可见属性（Float、Range、Color、Texture2D）。材质编辑器解析这些元数据生成动态属性 UI。
 - **材质编辑器** — 在 Content Browser 中双击 `.mat` 文件打开浮动编辑器窗口。功能：着色器选择下拉框、基于 @Properties 的动态 UI（含颜色预览色块）、贴图槽位行（Pick 按钮 + 模态弹窗 + Content Browser 拖放）、Save/Close 按钮。
-- **属性迁移** — 所有外观属性（颜色、粗糙度、金属度、贴图路径）定义在 Material 中，不在 MeshComponent 中。UploadObjectCB 和贴图绑定在渲染时从材质读取。
+- **属性迁移** — 所有外观属性（颜色、粗糙度、金属度、贴图路径）定义在 Material 中，不在 MeshComponent 中。UploadObjectUB 和贴图绑定在渲染时从材质读取。
 
 ### 🖼️ 纹理系统
 
@@ -313,24 +313,50 @@ bool vsync       = config.GetBool("Rendering", "VSync", true);
 
 ### 场景着色器（HLSL — DX11/DX12）
 
-在 `Shaders/` 文件夹中创建 `.hlsl` 文件，入口点为 `VSMain` 和 `PSMain`：
+在 `Shaders/` 文件夹中创建 `.hlsl` 文件，入口点为 `VSMain` 和 `PSMain`。包含 `Common.hlsli` 以使用 UE5 风格的分层常量缓冲区布局：
 
 ```hlsl
-cbuffer Constants : register(b0)
+#include "Common.hlsli"
+
+// b0 = ViewUniformBuffer（每帧自动上传）
+// b1 = ObjectUniformBuffer（每绘制调用自动上传）
+
+struct VSInput
 {
-    row_major float4x4 g_World;
-    row_major float4x4 g_View;
-    row_major float4x4 g_Projection;
-    float4 g_ObjectColor;
-    float  g_Selected;
-    int    g_NumLights;
-    float2 g_Padding;
-    float3 g_CameraPos;
-    float  g_Roughness;
-    float  g_Metallic;
-    float3 g_MaterialPadding;
-    // GPULightData g_Lights[8];
+    float3 Position : POSITION;
+    float3 Normal   : NORMAL;
+    float4 Color    : COLOR;
+    float2 TexCoord : TEXCOORD;
 };
+
+struct VSOutput
+{
+    float4 PositionCS : SV_POSITION;
+    float3 PositionWS : POSITION;
+    float3 NormalWS   : NORMAL;
+    float4 Color      : COLOR;
+    float2 TexCoord   : TEXCOORD;
+};
+
+VSOutput VSMain(VSInput input)
+{
+    VSOutput output;
+    float4 worldPos = mul(float4(input.Position, 1.0), g_World);
+    float4 viewPos = mul(worldPos, g_View);
+    output.PositionCS = mul(viewPos, g_Projection);
+    output.PositionWS = worldPos.xyz;
+    output.NormalWS = mul(input.Normal, (float3x3)g_World);
+    output.Color = input.Color * g_ObjectColor;
+    output.TexCoord = input.TexCoord;
+    return output;
+}
+
+float4 PSMain(VSOutput input) : SV_Target
+{
+    // 通过 ViewUB(b0) 访问 g_CameraPos、g_Lights、g_Selected
+    // 通过 ObjectUB(b1) 访问 g_World、g_ObjectColor、g_Roughness、g_Metallic
+    return float4(input.Color.rgb, input.Color.a);
+}
 ```
 
 ### 场景着色器（GLSL — OpenGL）
