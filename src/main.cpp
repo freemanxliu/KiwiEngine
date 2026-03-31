@@ -1,4 +1,4 @@
-#include "Core/Application.h"
+﻿#include "Core/Application.h"
 #include "Core/Window.h"
 #include "Core/EngineConfig.h"
 #include "Core/EditorInput.h"
@@ -995,9 +995,9 @@ protected:
                 // Update CB with lighting data
                 UpdateDeferredLightingCB();
 
-                // Upload and bind shadow constant buffer at b1
-                UploadShadowCB();
-                ctx->SetConstantBuffer(1, m_ShadowCB.get());
+                // Upload and bind shadow uniform buffer at b2
+                UploadShadowUB();
+                ctx->SetConstantBuffer(2, m_ShadowCB.get());
 
                 // Draw fullscreen triangle
                 ctx->Draw(3, 0);
@@ -1060,6 +1060,8 @@ protected:
             ctx->BeginEvent("Gizmo Pass");
             m_PassTimer.Begin("Gizmo Pass");
 
+            UploadViewUB(ctx);
+
             // Re-set render targets for forward gizmo drawing (with depth for correct occlusion)
             ctx->SetRenderTargets(&sceneRTV, 1, GetDSV());
             ctx->SetViewports(&vp, 1);
@@ -1104,6 +1106,7 @@ protected:
             // ---- Draw Gizmo ----
             ctx->BeginEvent("Gizmo Pass");
             m_PassTimer.Begin("Gizmo Pass");
+            UploadViewUB(ctx);
             DrawGizmo(ctx);
             m_PassTimer.End();
             ctx->EndEvent();
@@ -1166,8 +1169,36 @@ protected:
     // Scene Mesh Drawing
     // ============================================================
 
-    // Helper: Fill and upload per-object constant buffer
-    void UploadObjectCB(RHICommandContext* ctx, MeshComponent* meshComp)
+    // Helper: Upload per-frame ViewUniformBuffer (call once per frame before draw calls)
+    void UploadViewUB(RHICommandContext* ctx)
+    {
+        Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
+        Mat4 invViewProj = viewProj.Inverse();
+
+        ViewUniformBuffer vub = {};
+        memcpy(vub.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(vub.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+        memcpy(vub.ViewProjectionMatrix, viewProj.m, sizeof(viewProj.m));
+        memcpy(vub.InvViewProjectionMatrix, invViewProj.m, sizeof(invViewProj.m));
+        vub.CameraPos[0] = m_CameraPosition.x;
+        vub.CameraPos[1] = m_CameraPosition.y;
+        vub.CameraPos[2] = m_CameraPosition.z;
+        vub.ViewPadding1 = 0.0f;
+        vub.ScreenWidth = (float)GetWindow()->GetWidth();
+        vub.ScreenHeight = (float)GetWindow()->GetHeight();
+        vub.NearPlane = 0.1f;
+        vub.FarPlane = 1000.0f;
+        vub.NumLights = m_NumActiveLights;
+        vub.ViewPadding2[0] = vub.ViewPadding2[1] = vub.ViewPadding2[2] = 0.0f;
+        memcpy(vub.Lights, m_LightDataCache, sizeof(m_LightDataCache));
+
+        void* mapped = m_ViewUB->Map();
+        if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
+        ctx->SetConstantBuffer(0, m_ViewUB.get());
+    }
+
+    // Helper: Fill and upload per-object ObjectUniformBuffer
+    void UploadObjectUB(RHICommandContext* ctx, MeshComponent* meshComp)
     {
         Mat4 worldMatrix = meshComp->GetWorldMatrix();
 
@@ -1179,36 +1210,23 @@ protected:
         std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
         std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
 
-        ConstantBufferData cbd = {};
-        memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-        cbd.ObjectColor[0] = color.x;
-        cbd.ObjectColor[1] = color.y;
-        cbd.ObjectColor[2] = color.z;
-        cbd.ObjectColor[3] = color.w;
-        cbd.Selected = 0.0f;
-        cbd.NumLights = m_NumActiveLights;
-        cbd.CameraPos[0] = m_CameraPosition.x;
-        cbd.CameraPos[1] = m_CameraPosition.y;
-        cbd.CameraPos[2] = m_CameraPosition.z;
-        cbd.Roughness = roughness;
-        cbd.Metallic  = metallic;
+        ObjectUniformBuffer oub = {};
+        memcpy(oub.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+        oub.ObjectColor[0] = color.x;
+        oub.ObjectColor[1] = color.y;
+        oub.ObjectColor[2] = color.z;
+        oub.ObjectColor[3] = color.w;
+        oub.Selected = 0.0f;
+        oub.Roughness = roughness;
+        oub.Metallic  = metallic;
+        oub.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
+        oub.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
+        oub.VisualizeMode = 0.0f;
+        oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
 
-        // Texture flags
-        cbd.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
-        cbd.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
-        cbd.MaterialPadding = 0.0f;
-
-        memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
-
-        void* mapped = m_ConstantBuffer->Map();
-        if (mapped)
-        {
-            memcpy(mapped, &cbd, sizeof(cbd));
-            m_ConstantBuffer->Unmap();
-        }
-        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+        void* mapped = m_ObjectUB->Map();
+        if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
+        ctx->SetConstantBuffer(1, m_ObjectUB.get());
     }
 
     // Helper: Bind material textures for the current object
@@ -1264,6 +1282,9 @@ protected:
     // Deferred path: All objects rendered with G-Buffer shader (PSO already set)
     void DrawSceneMeshesDeferred(RHICommandContext* ctx)
     {
+        // Upload per-frame ViewUB once before all draw calls
+        UploadViewUB(ctx);
+
         for (const auto& renderItem : m_RenderList)
         {
             size_t i = renderItem.ObjectIndex;
@@ -1289,7 +1310,7 @@ protected:
             ibView.Format = EFormat::R32_UINT;
             ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
 
-            UploadObjectCB(ctx, meshComp);
+            UploadObjectUB(ctx, meshComp);
 
             // Bind material textures (t4 = BaseColor, t5 = NormalMap)
             BindMaterialTextures(ctx, meshComp);
@@ -1301,6 +1322,9 @@ protected:
     // Forward path: Objects rendered with per-object shaders (or forced shader)
     void DrawSceneMeshesForward(RHICommandContext* ctx, const char* forceShaderName = nullptr)
     {
+        // Upload per-frame ViewUB once before all draw calls
+        UploadViewUB(ctx);
+
         std::string lastShaderName;
         for (const auto& renderItem : m_RenderList)
         {
@@ -1352,74 +1376,102 @@ protected:
             ibView.Format = EFormat::R32_UINT;
             ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
 
-            UploadObjectCB(ctx, meshComp);
+            UploadObjectUB(ctx, meshComp);
             BindMaterialTextures(ctx, meshComp);
             ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
         }
     }
 
-    // Update CB for deferred lighting fullscreen pass
+    // Update CBs for deferred lighting fullscreen pass
     void UpdateDeferredLightingCB()
     {
-        ConstantBufferData cbd = {};
-        // Pass InvViewProj via g_World slot for depth-based position reconstruction
+        auto ctx = GetContext();
+
+        // Upload ViewUniformBuffer (contains InvViewProj for position reconstruction)
         Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
         Mat4 invViewProj = viewProj.Inverse();
-        memcpy(cbd.WorldMatrix, invViewProj.m, sizeof(invViewProj.m));
-        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-        cbd.Selected = 0.0f;
-        cbd.NumLights = m_NumActiveLights;
-        cbd.CameraPos[0] = m_CameraPosition.x;
-        cbd.CameraPos[1] = m_CameraPosition.y;
-        cbd.CameraPos[2] = m_CameraPosition.z;
-        cbd.Roughness = 0.0f;
-        cbd.Metallic = 0.0f;
-        memcpy(cbd.Lights, m_LightDataCache, sizeof(m_LightDataCache));
 
-        void* mapped = m_ConstantBuffer->Map();
-        if (mapped)
-        {
-            memcpy(mapped, &cbd, sizeof(cbd));
-            m_ConstantBuffer->Unmap();
-        }
-        auto ctx = GetContext();
-        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+        ViewUniformBuffer vub = {};
+        memcpy(vub.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(vub.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+        memcpy(vub.ViewProjectionMatrix, viewProj.m, sizeof(viewProj.m));
+        memcpy(vub.InvViewProjectionMatrix, invViewProj.m, sizeof(invViewProj.m));
+        vub.CameraPos[0] = m_CameraPosition.x;
+        vub.CameraPos[1] = m_CameraPosition.y;
+        vub.CameraPos[2] = m_CameraPosition.z;
+        vub.ViewPadding1 = 0.0f;
+        vub.ScreenWidth = (float)GetWindow()->GetWidth();
+        vub.ScreenHeight = (float)GetWindow()->GetHeight();
+        vub.NearPlane = 0.1f;
+        vub.FarPlane = 1000.0f;
+        vub.NumLights = m_NumActiveLights;
+        vub.ViewPadding2[0] = vub.ViewPadding2[1] = vub.ViewPadding2[2] = 0.0f;
+        memcpy(vub.Lights, m_LightDataCache, sizeof(m_LightDataCache));
+
+        void* mapped = m_ViewUB->Map();
+        if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
+        ctx->SetConstantBuffer(0, m_ViewUB.get());
+
+        // Upload ObjectUniformBuffer (identity world + no selection)
+        ObjectUniformBuffer oub = {};
+        Mat4 identity = Mat4::Identity();
+        memcpy(oub.WorldMatrix, identity.m, sizeof(identity.m));
+        oub.Selected = 0.0f;
+        oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
+
+        mapped = m_ObjectUB->Map();
+        if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
+        ctx->SetConstantBuffer(1, m_ObjectUB.get());
     }
 
-    // Update CB for buffer visualization fullscreen pass
+    // Update CBs for buffer visualization fullscreen pass
     void UpdateBufferVisualizationCB()
     {
-        ConstantBufferData cbd = {};
-        // Pass InvViewProj via g_World slot (consistent with deferred lighting)
+        auto ctx = GetContext();
+
+        // Upload ViewUniformBuffer
         Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
         Mat4 invViewProj = viewProj.Inverse();
-        memcpy(cbd.WorldMatrix, invViewProj.m, sizeof(invViewProj.m));
-        memcpy(cbd.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
 
-        // Use g_Selected to pass the visualization mode
+        ViewUniformBuffer vub = {};
+        memcpy(vub.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+        memcpy(vub.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+        memcpy(vub.ViewProjectionMatrix, viewProj.m, sizeof(viewProj.m));
+        memcpy(vub.InvViewProjectionMatrix, invViewProj.m, sizeof(invViewProj.m));
+        vub.CameraPos[0] = m_CameraPosition.x;
+        vub.CameraPos[1] = m_CameraPosition.y;
+        vub.CameraPos[2] = m_CameraPosition.z;
+        vub.ViewPadding1 = 0.0f;
+        vub.ScreenWidth = (float)GetWindow()->GetWidth();
+        vub.ScreenHeight = (float)GetWindow()->GetHeight();
+        vub.NearPlane = 0.1f;
+        vub.FarPlane = 1000.0f;
+        vub.NumLights = 0;
+        vub.ViewPadding2[0] = vub.ViewPadding2[1] = vub.ViewPadding2[2] = 0.0f;
+
+        void* mapped = m_ViewUB->Map();
+        if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
+        ctx->SetConstantBuffer(0, m_ViewUB.get());
+
+        // Upload ObjectUniformBuffer with visualize mode
+        ObjectUniformBuffer oub = {};
+        Mat4 identity = Mat4::Identity();
+        memcpy(oub.WorldMatrix, identity.m, sizeof(identity.m));
+        oub.Selected = 0.0f;
+
+        // Use g_VisualizeMode to pass the visualization mode
         switch (m_ViewMode)
         {
-        case EViewMode::BaseColor: cbd.Selected = 0.0f; break;
-        case EViewMode::Roughness: cbd.Selected = 1.0f; break;
-        case EViewMode::Metallic:  cbd.Selected = 2.0f; break;
-        default:                   cbd.Selected = 0.0f; break;
+        case EViewMode::BaseColor: oub.VisualizeMode = 0.0f; break;
+        case EViewMode::Roughness: oub.VisualizeMode = 1.0f; break;
+        case EViewMode::Metallic:  oub.VisualizeMode = 2.0f; break;
+        default:                   oub.VisualizeMode = 0.0f; break;
         }
+        oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
 
-        cbd.NumLights = 0;
-        cbd.CameraPos[0] = m_CameraPosition.x;
-        cbd.CameraPos[1] = m_CameraPosition.y;
-        cbd.CameraPos[2] = m_CameraPosition.z;
-
-        void* mapped = m_ConstantBuffer->Map();
-        if (mapped)
-        {
-            memcpy(mapped, &cbd, sizeof(cbd));
-            m_ConstantBuffer->Unmap();
-        }
-        auto ctx = GetContext();
-        ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+        mapped = m_ObjectUB->Map();
+        if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
+        ctx->SetConstantBuffer(1, m_ObjectUB.get());
     }
 
     // ============================================================
@@ -1721,7 +1773,8 @@ protected:
 
         // Release all GPU resources
         m_GPUMeshes.clear();
-        m_ConstantBuffer.reset();
+        m_ViewUB.reset();
+        m_ObjectUB.reset();
         m_InputLayout.reset();
         m_PipelineState.reset();
 
@@ -1812,13 +1865,17 @@ private:
         };
         m_InputLayout = device->CreateInputLayout(inputElements, 5, tempVS.get());
 
-        // Constant buffer
+        // Constant buffers: View (b0) + Object (b1)
         BufferDesc cbDesc;
-        cbDesc.SizeInBytes = sizeof(ConstantBufferData);
         cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
         cbDesc.Usage = EResourceUsage::Dynamic;
-        cbDesc.DebugName = "MainConstantBuffer";
-        m_ConstantBuffer = device->CreateBuffer(cbDesc);
+        cbDesc.DebugName = "ViewUniformBuffer";
+        cbDesc.SizeInBytes = sizeof(ViewUniformBuffer);
+        m_ViewUB = device->CreateBuffer(cbDesc);
+
+        cbDesc.DebugName = "ObjectUniformBuffer";
+        cbDesc.SizeInBytes = sizeof(ObjectUniformBuffer);
+        m_ObjectUB = device->CreateBuffer(cbDesc);
 
         // Pipeline state (DX11: empty wrapper, DX12: managed per-shader)
         m_PipelineState = device->CreatePipelineState();
@@ -2136,7 +2193,7 @@ private:
     {
         // Create shadow constant buffer
         BufferDesc cbDesc;
-        cbDesc.SizeInBytes = sizeof(ShadowCBData);
+        cbDesc.SizeInBytes = sizeof(ShadowUniformBuffer);
         cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
         cbDesc.Usage = EResourceUsage::Dynamic;
         cbDesc.DebugName = "ShadowCB";
@@ -2344,7 +2401,7 @@ private:
 
     void UpdateShadowData()
     {
-        memset(&m_ShadowCBData, 0, sizeof(m_ShadowCBData));
+        memset(&m_ShadowUBData, 0, sizeof(m_ShadowUBData));
 
         // Find the first shadow-casting directional light
         DirectionalLightComponent* shadowLight = nullptr;
@@ -2365,16 +2422,16 @@ private:
 
         if (!shadowLight)
         {
-            m_ShadowCBData.NumCascades = 0;
+            m_ShadowUBData.NumCascades = 0;
             return;
         }
 
         int numCascades = std::min(shadowLight->NumCascades, MAX_SHADOW_CASCADES);
-        m_ShadowCBData.NumCascades = numCascades;
-        m_ShadowCBData.ShadowBias = shadowLight->ShadowBias;
-        m_ShadowCBData.NormalBias = shadowLight->NormalBias;
-        m_ShadowCBData.ShadowStrength = shadowLight->ShadowStrength;
-        m_ShadowCBData.ShadowMapSize = (float)(m_ShadowCascadeSize * 2); // Atlas total size
+        m_ShadowUBData.NumCascades = numCascades;
+        m_ShadowUBData.ShadowBias = shadowLight->ShadowBias;
+        m_ShadowUBData.NormalBias = shadowLight->NormalBias;
+        m_ShadowUBData.ShadowStrength = shadowLight->ShadowStrength;
+        m_ShadowUBData.ShadowMapSize = (float)(m_ShadowCascadeSize * 2); // Atlas total size
 
         // Recreate shadow maps if resolution changed
         auto device = GetDevice();
@@ -2400,7 +2457,7 @@ private:
 
         for (int i = 0; i < numCascades; i++)
         {
-            m_ShadowCBData.CascadeSplits[i] = splits[i];
+            m_ShadowUBData.CascadeSplits[i] = splits[i];
         }
 
         // Compute light VP matrices for each cascade
@@ -2415,20 +2472,20 @@ private:
                 lightDir, m_ViewMatrix, m_ProjectionMatrix,
                 cascadeNear, cascadeFar, nearZ, farZ, fovY, aspect);
 
-            memcpy(m_ShadowCBData.LightViewProj[i],
+            memcpy(m_ShadowUBData.LightViewProj[i],
                 m_LightViewProjMatrices[i].m, sizeof(float) * 16);
 
             cascadeNear = cascadeFar;
         }
     }
 
-    void UploadShadowCB()
+    void UploadShadowUB()
     {
         if (!m_ShadowCB) return;
         void* mapped = m_ShadowCB->Map();
         if (mapped)
         {
-            memcpy(mapped, &m_ShadowCBData, sizeof(m_ShadowCBData));
+            memcpy(mapped, &m_ShadowUBData, sizeof(m_ShadowUBData));
             m_ShadowCB->Unmap();
         }
     }
@@ -2439,13 +2496,13 @@ private:
 
     void RenderShadowPass(RHICommandContext* ctx)
     {
-        if (!m_ShadowPassPSO || !m_ShadowPassVS || m_ShadowCBData.NumCascades <= 0)
+        if (!m_ShadowPassPSO || !m_ShadowPassVS || m_ShadowUBData.NumCascades <= 0)
             return;
 
         ctx->BeginEvent("Shadow Pass");
         m_PassTimer.Begin("Shadow Pass");
 
-        int numCascades = m_ShadowCBData.NumCascades;
+        int numCascades = m_ShadowUBData.NumCascades;
 
         // Set shadow pass pipeline state
         ctx->SetPipelineState(m_ShadowPassPSO.get());
@@ -2510,23 +2567,19 @@ private:
 
                 auto& gpuMesh = m_GPUMeshes[i];
 
-                // Upload CB with light VP for this cascade
+                // Upload ObjectUB with world matrix for this object
                 Mat4 worldMatrix = meshComp->GetWorldMatrix();
-                ConstantBufferData cbd = {};
-                memcpy(cbd.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-                memcpy(cbd.ViewMatrix, m_LightViewProjMatrices[cascade].m, sizeof(float) * 16);
-                // For shadow pass, we bake View*Proj into the View slot
-                // and set Proj to identity (since light VP is already combined)
-                Mat4 identity = Mat4::Identity();
-                memcpy(cbd.ProjectionMatrix, identity.m, sizeof(identity.m));
+                ObjectUniformBuffer oub = {};
+                memcpy(oub.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
+                oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
 
-                void* mapped = m_ConstantBuffer->Map();
+                void* mapped = m_ObjectUB->Map();
                 if (mapped)
                 {
-                    memcpy(mapped, &cbd, sizeof(cbd));
-                    m_ConstantBuffer->Unmap();
+                    memcpy(mapped, &oub, sizeof(oub));
+                    m_ObjectUB->Unmap();
                 }
-                ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+                ctx->SetConstantBuffer(1, m_ObjectUB.get());
 
                 VertexBufferView vbView;
                 vbView.BufferLocation = 0;
@@ -4890,23 +4943,18 @@ private:
             ibView.Format         = EFormat::R32_UINT;
             ctx->SetIndexBuffer(ib, &ibView);
 
-            ConstantBufferData cbd = {};
-            memcpy(cbd.WorldMatrix,      world.m,            sizeof(world.m));
-            memcpy(cbd.ViewMatrix,       m_ViewMatrix.m,     sizeof(m_ViewMatrix.m));
-            memcpy(cbd.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-            cbd.ObjectColor[0] = color.x;
-            cbd.ObjectColor[1] = color.y;
-            cbd.ObjectColor[2] = color.z;
-            cbd.ObjectColor[3] = color.w;
-            cbd.Selected    = 2.0f; // Unlit/gizmo mode
-            cbd.NumLights   = 0;
-            cbd.CameraPos[0] = m_CameraPosition.x;
-            cbd.CameraPos[1] = m_CameraPosition.y;
-            cbd.CameraPos[2] = m_CameraPosition.z;
+            ObjectUniformBuffer oub = {};
+            memcpy(oub.WorldMatrix, world.m, sizeof(world.m));
+            oub.ObjectColor[0] = color.x;
+            oub.ObjectColor[1] = color.y;
+            oub.ObjectColor[2] = color.z;
+            oub.ObjectColor[3] = color.w;
+            oub.Selected    = 2.0f; // Unlit/gizmo mode
+            oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
 
-            void* mapped = m_ConstantBuffer->Map();
-            if (mapped) { memcpy(mapped, &cbd, sizeof(cbd)); m_ConstantBuffer->Unmap(); }
-            ctx->SetConstantBuffer(0, m_ConstantBuffer.get());
+            void* mapped = m_ObjectUB->Map();
+            if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
+            ctx->SetConstantBuffer(1, m_ObjectUB.get());
             ctx->DrawIndexed(idxCount, 0, 0);
         };
 
@@ -5201,7 +5249,8 @@ private:
 
     // RHI resources (shared interface)
     std::unique_ptr<RHIInputLayout>   m_InputLayout;
-    std::unique_ptr<RHIBuffer>        m_ConstantBuffer;
+    std::unique_ptr<RHIBuffer>        m_ViewUB;      // b0: ViewUniformBuffer (per-frame)
+    std::unique_ptr<RHIBuffer>        m_ObjectUB;    // b1: ObjectUniformBuffer (per-draw)
     std::unique_ptr<RHIPipelineState> m_PipelineState;  // DX11
 
     // Camera (cached from scene CameraComponent each frame)
@@ -5323,14 +5372,14 @@ private:
     std::unique_ptr<RHIShader> m_ShadowPassVS;
     std::unique_ptr<RHIPipelineState> m_ShadowPassPSO;
 
-    // Shadow constant buffer (b1)
+    // Shadow uniform buffer (b2)
     std::unique_ptr<RHIBuffer> m_ShadowCB;
 
     // Comparison sampler for DX11 shadow sampling
     std::unique_ptr<RHISampler> m_ShadowSampler;
 
     // Cached CSM data (computed each frame)
-    ShadowCBData m_ShadowCBData = {};
+    ShadowUniformBuffer m_ShadowUBData = {};
     Mat4 m_LightViewProjMatrices[MAX_SHADOW_CASCADES];
 };
 

@@ -79,10 +79,6 @@ namespace Kiwi
         float ShadowPadding[3];                       // Pad to 16-byte alignment
     };
 
-    // ---- Legacy aliases (keep old name working during transition) ----
-    using ConstantBufferData = ViewUniformBuffer;  // TODO: remove after full migration
-    using ShadowCBData = ShadowUniformBuffer;
-
     // ============================================================
     // Inline HLSL shader source (for InputLayout creation only)
     // Uses the new split CB layout
