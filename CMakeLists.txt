@@ -43,6 +43,7 @@ set(SOURCES
     src/RHI/VulkanDevice.cpp
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
+    src/Scene/GPUScene.cpp
     src/Scene/TextureManager.cpp
     src/Scene/Material.cpp
     src/Scene/stb_image_impl.cpp

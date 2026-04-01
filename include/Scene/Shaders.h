@@ -62,9 +62,12 @@ namespace Kiwi
         float HasBaseColorTex;       // g_HasBaseColorTex — 1.0 if texture bound
         float HasNormalTex;          // g_HasNormalTex    — 1.0 if normal map bound
         float VisualizeMode;         // g_VisualizeMode   — buffer vis mode (0=BaseColor,1=Roughness,2=Metallic)
-        float ObjectPadding[2];      // pad to 16-byte alignment
+        float ObjectPadding[2];      // pad to 16-byte row
+        float _Reserved[36];         // pad struct to 256 bytes total (112 + 144 = 256)
     };
-    // Size: 64 + 16 + 16 + 16 = 112 bytes
+    // Size: 256 bytes (aligned for GPU Scene offset binding)
+    static constexpr uint32_t OBJECT_UB_STRIDE = 256;  // per-primitive stride in GPU Scene buffer
+    static constexpr uint32_t MAX_GPU_SCENE_PRIMITIVES = 1024;
 
     // ---- Shadow Uniform Buffer (b2) — per-frame CSM data ----
     struct ShadowUniformBuffer
@@ -77,6 +80,17 @@ namespace Kiwi
         int32_t NumCascades;
         float ShadowMapSize;                          // Shadow map resolution
         float ShadowPadding[3];                       // Pad to 16-byte alignment
+    };
+
+    // ---- Light Uniform Buffer (b3) — per-light pass ----
+    // UE5 multi-pass deferred: one draw call per light, light params in dedicated CB
+    struct LightUniformBuffer
+    {
+        float ColorIntensity[3];   // Light color * intensity
+        int32_t LightType;         // 0 = Directional, 1 = Point
+        float DirectionOrPos[3];   // Direction (dir light) or Position (point light)
+        float Radius;              // Point light radius (0 for directional)
+        float LightPadding[8];    // Pad to 48 bytes (3 x float4)
     };
 
     // ============================================================

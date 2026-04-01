@@ -36,10 +36,11 @@ namespace Kiwi
     // 缓冲绑定标志
     enum EBufferUsageFlags
     {
-        BUFFER_USAGE_VERTEX    = 1 << 0,
-        BUFFER_USAGE_INDEX     = 1 << 1,
-        BUFFER_USAGE_CONSTANT  = 1 << 2,
-        BUFFER_USAGE_UNORDERED = 1 << 3,
+        BUFFER_USAGE_VERTEX     = 1 << 0,
+        BUFFER_USAGE_INDEX      = 1 << 1,
+        BUFFER_USAGE_CONSTANT   = 1 << 2,
+        BUFFER_USAGE_UNORDERED  = 1 << 3,
+        BUFFER_USAGE_STRUCTURED = 1 << 4,  // StructuredBuffer (SRV, for GPU Scene instancing)
     };
 
     // 纹理绑定标志（用于 TextureDesc::BindFlags）
@@ -198,6 +199,7 @@ namespace Kiwi
         EFormat DSVFormat = EFormat::D32_FLOAT;
         bool DepthEnabled = true;
         bool DepthWrite = true;
+        bool AdditiveBlend = false;  // SrcColor ONE + DstColor ONE (for multi-pass lighting)
     };
 
 } // namespace Kiwi

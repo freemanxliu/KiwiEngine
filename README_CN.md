@@ -47,22 +47,27 @@
 
 ### 🔦 延迟渲染管线（UE5 风格）
 
-- **G-Buffer** — 3 个 MRT（全部 `R8G8B8A8_UNORM`，参考 UE5 布局）：
+- **G-Buffer** — 3 个 MRT（全部 `R8G8B8A8_UNORM`，UE5 标准布局）：
   | RT | 内容 |
   |---|---|
-  | **GBufferA** (t0) | 法线 Octahedron (RG) + 金属度 (B) + ShadingModelID (A) |
-  | **GBufferB** (t1) | BaseColor (RGB) + 粗糙度 (A) |
-  | **GBufferC** (t2) | 自发光 (RGB) + Specular (A) |
+  | **GBufferA** (t0) | 法线 Octahedron (RG) + Normal.z (B) + PerObjectData (A) |
+  | **GBufferB** (t1) | 金属度 (R) + Specular (G) + 粗糙度 (B) + ShadingModelID (A) |
+  | **GBufferC** (t2) | BaseColor (RGB) + AO (A) |
   | **深度** (t7) | 硬件深度 (`R32_TYPELESS`) → 通过 InvViewProj 重建世界坐标 |
 - **Octahedron 法线编码** — 单位法线使用 Octahedron 映射存储在 2 个通道中，比线性 [0,1] 打包在 R8G8 格式下精度更高。
 - **基于深度的位置重建** — 世界空间位置从硬件深度缓冲 + 逆 ViewProjection 矩阵重建，无需专用位置渲染目标（比 R16F 位置 RT 节省约 40% 带宽）。
-- **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。通过 `CreateGraphicsPipelineState()` 和 `PipelineStateDesc` 创建 MRT PSO。
-- **延迟光照 Pass** — 全屏三角形 (SV_VertexID) 从深度重建世界坐标，解码 Octahedron 法线，读取 G-Buffer 材质属性，计算 **UE5 风格 PBR 光照**。BRDF 对齐 UE5 `DefaultLitBxDF`：**D_GGX**（Trowbridge-Reitz NDF）、**Vis_SmithJointApprox**（联合 Smith 可见性，分母已内置）、**F_Schlick**（含 2% 反射率阴影阈值）、**Diffuse_Burley**（Disney 漫反射，粗糙度相关）、**EnvBRDFApprox**（Lazarov 2013 解析近似，无需 LUT）用于间接高光。支持多光源，应用级联阴影贴图和 Reinhard 色调映射。
+- **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。顶点着色器通过 interpolants 将 per-object 材质数据（粗糙度、金属度、纹理标志、选中状态）传递到像素着色器。
+- **Multi-Pass 延迟光照（UE5）** — 光照拆分为多个 Pass，而非单次全屏绘制：
+  - **Ambient pass** — 不透明全屏 Pass，计算环境光/IBL 贡献。
+  - **Per-light additive passes** — 每个光源一次全屏绘制，使用 additive blending (`SrcAlpha ONE`)。无硬性光源数量限制；每个 Pass 绑定独立的 `LightUniformBuffer` (b3)。
+  - **PipelineStateDesc.AdditiveBlend** — 新增 blend state 用于多光源累积。
+- **延迟光照 BRDF** — 对齐 UE5 `DefaultLitBxDF`：**D_GGX**（Trowbridge-Reitz NDF）、**Vis_SmithJointApprox**（联合 Smith 可见性，分母已内置）、**F_Schlick**（含 2% 反射率阴影阈值）、**Diffuse_Burley**（Disney 漫反射，粗糙度相关）、**EnvBRDFApprox**（Lazarov 2013 解析近似，无需 LUT）用于间接高光。支持级联阴影贴图。
 - **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联，所有级联渲染到**单张阴影 Atlas**（2x2 布局）。每个级联占 Atlas 纹理的一个象限（`R32_TYPELESS`，`2*cascadeSize × 2*cascadeSize`）。PSSM 混合对数和均匀分割方案。着色器根据视空间距离选择级联并计算 UV 偏移到 Atlas 对应区域。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
+- **HDR 管线** — 离屏渲染目标使用 `R16G16B16A16_FLOAT` 格式。所有后处理在 HDR 空间操作，最终的 **Tonemap pass**（ACES Filmic）将 HDR 转换为 LDR 后呈现到交换链。内置 `Tonemap.hlsl`。
 - **前向 Gizmo Pass** — 变换 Gizmo（平移/旋转/缩放）在延迟结果之上使用前向渲染（带深度以确保正确遮挡）。
-- **材质属性** — 材质资产定义粗糙度 [0,1]、金属度 [0,1]、基础颜色和贴图。属性存储在 G-Buffer 中，可通过材质编辑器/Inspector UI 编辑。
+- **材质属性** — 材质资产定义粗糙度 [0,1]、金属度 [0,1]、基础颜色和贴图。法线贴图通过 TBN 矩阵应用（每顶点切线 Vec4 含 handedness）。属性存储在 G-Buffer 中，可通过材质编辑器/Inspector UI 编辑。
 
-> **注意**：延迟渲染管线（G-Buffer、CSM 阴影、延迟光照）在 DX11 和 DX12 后端下激活。OpenGL 和 Vulkan 后端使用前向渲染路径。
+> **注意**：延迟渲染管线（G-Buffer、CSM 阴影、Multi-Pass 延迟光照）在 DX11 和 DX12 后端下激活。OpenGL 和 Vulkan 后端使用前向渲染路径。
 
 ### 👁️ 视图模式系统
 
@@ -72,9 +77,12 @@
   |---|---|---|
   | **Lit** | 默认 | 完整延迟渲染 + UE5 风格 PBR 光照 |
   | **Unlit** | 调试 | 前向渲染，无光照（纯反照率） |
-  | **BaseColor** | 缓冲区可视化 | G-Buffer BaseColor (GBufferB RGB) |
-  | **Roughness** | 缓冲区可视化 | G-Buffer 粗糙度 (GBufferB Alpha, 灰度) |
-  | **Metallic** | 缓冲区可视化 | G-Buffer 金属度 (GBufferA Blue, 灰度) |
+  | **BaseColor** | 缓冲区可视化 | G-Buffer BaseColor (GBufferC RGB) |
+  | **Roughness** | 缓冲区可视化 | G-Buffer 粗糙度 (GBufferB Blue, 灰度) |
+  | **Metallic** | 缓冲区可视化 | G-Buffer 金属度 (GBufferB Red, 灰度) |
+  | **Normal** | 缓冲区可视化 | 解码世界空间法线 (GBufferA, 重映射到 [0,1]) |
+  | **Specular** | 缓冲区可视化 | G-Buffer Specular (GBufferB Green, 灰度) |
+  | **AO** | 缓冲区可视化 | G-Buffer 环境遮蔽 (GBufferC Alpha, 灰度) |
 - **缓冲区可视化** — G-Buffer Pass 执行后，专用的 `BufferVisualization` 着色器采样指定的 G-Buffer 通道并以全屏 Pass 显示。
 
 ### 🧱 材质系统
@@ -127,37 +135,73 @@
   | **DefaultLit** | 标准 PBR 风格材质 — 响应粗糙度和金属度属性，新物体默认着色器 |
   | **Unlit** | 纯色输出，无光照计算 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
-  | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，**TBN 法线贴图**（切线空间法线→世界空间，Gram-Schmidt 正交化 + handedness），输出法线+金属度、BaseColor+粗糙度、自发光+Specular 到 3 个 MRT |
-  | **DeferredLighting** | 全屏 PBR 延迟光照（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样、Reinhard 色调映射 |
-  | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器） |
-  | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道 |
+  | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，**TBN 法线贴图**（切线空间法线→世界空间，Gram-Schmidt 正交化 + handedness），输出法线+PerObjectData、金属度+Specular+粗糙度+ShadingModelID、BaseColor+AO 到 3 个 MRT |
+  | **DeferredAmbient** | 全屏环境光 Pass — 计算环境光/IBL 贡献 |
+  | **DeferredLighting** | Per-light 全屏 additive PBR Pass（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样。每个光源一次全屏绘制，additive blending |
+  | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器）。支持 CB offset（默认）和 SV_InstanceID（USE_GPU_SCENE_INSTANCING）两种顶点着色器路径 |
+  | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道（BaseColor、Roughness、Metallic、Normal、Specular、AO） |
   | **Skybox** | 全屏 Pass — 在 depth==1 像素上采样 HDR Equirectangular 环境贴图，逆 ViewProj 方向重建 |
+  | **Tonemap** | ACES Filmic 色调映射（HDR → LDR），作为最终后处理 Pass |
 - **GLSL 着色器** — OpenGL 版本的 DefaultLit、Unlit 和 Wireframe 存放在 `GLShaders/` 目录，使用 `//!VERTEX` / `//!FRAGMENT` 标记分割着色器阶段。
 - **共享 Shader Include** — `Common.hlsli` 定义分层 CB 布局，所有 HLSL 着色器通过 `#include "Common.hlsli"` 引用。编译时自动展开 `#include`。
-- **UE5 风格常量缓冲区布局** — 按更新频率拆分为 3 个缓冲区：
+- **UE5 风格常量缓冲区布局** — 按更新频率拆分为 5 个缓冲区：
   | 寄存器 | 缓冲区 | 更新频率 | 内容 |
   |---|---|---|---|
   | **b0** | `ViewUniformBuffer` | 每帧 1 次 | View/Proj/ViewProj/InvViewProj 矩阵、CameraPos、屏幕尺寸、Near/Far、灯光数量 + 灯光数组[8] |
   | **b1** | `ObjectUniformBuffer` | 每次绘制 | World 矩阵、物体颜色、选中状态、粗糙度、金属度、纹理标志、可视化模式 |
   | **b2** | `ShadowUniformBuffer` | 每帧 1 次 | LightViewProj[4]、级联分割距离、阴影偏移/强度、级联数量 |
+  | **b3** | `LightUniformBuffer` | 每光源 Pass | LightColor、LightDirection、LightPosition、LightType、LightRadius、ShadowAtlasUV |
+  | **b4** | `BatchUniformBuffer` | 每 Batch（预留） | BatchStartIndex，用于 GPU Scene instanced drawing |
 - **自定义着色器** — 创建 `.hlsl` 文件，`#include "Common.hlsli"` 获取 CB 布局，定义 `VSMain`/`PSMain` 入口点，放入 `Shaders/` 即可运行。
+
+### 🧠 GPU Scene 系统
+
+- **GPUScene 类** (`include/Scene/GPUScene.h`, `src/Scene/GPUScene.cpp`) — 统一 GPU Scene 管理器（参考 UE5 `FPrimitiveSceneData`）：
+  - 收集所有可见图元的 `ObjectUniformBuffer` 数据到单个大 CB。
+  - `Update()` — 每帧从场景采集数据 + 构建 batch 分类。
+  - `UploadToGPU()` — 上传到 CB 用于 single-draw offset binding。
+  - `BindPrimitive()` — 通过 CB offset (b1) 绑定指定图元的 256B 窗口。
+- **Batch 分类** — 视锥体剔除后，图元按 MeshID → Material → front-to-back 排序，分类为两条渲染路径：
+  | 路径 | 条件 | 描述 |
+  |---|---|---|
+  | **InstanceBatch** | count ≥ 2，相同 mesh + 材质 | VB/IB/SRV 只绑一次，per-instance 循环 CB offset |
+  | **SingleDrawItem** | 唯一 mesh 或材质组合 | 普通 CB offset + DrawIndexed |
+- **共享 Mesh Pool** — 相同 `EPrimitiveType`（如 50 个 Cube）共享同一套 VB/IB。减少 GPU 内存和绑定开销。
+- **冗余绑定消除** — VB/IB 和纹理 SRV 绑定缓存，连续相同资源跳过绑定。
+- **帧级上传** — GPU Scene 数据在帧开始时上传一次，所有渲染 Pass（Shadow、G-Buffer、Lighting）共享同一份数据。
+- **DX11.1 CB Offset** — 使用 `VSSetConstantBuffers1`（DX11.1）+ 缓存 `ID3D11DeviceContext1`。
+- **DX12 CB Offset** — 使用 GPU 虚拟地址 + 偏移计算。
+- **未来: StructuredBuffer Instancing** — RHI 已提供 `CreateBufferSRV()` 和 `DrawIndexedInstanced()`（DX11+DX12）。Shader 已预留 `USE_GPU_SCENE_INSTANCING` 路径（SV_InstanceID + StructuredBuffer(t8)），待激活。
 
 ### 🌈 后处理系统
 
-- **PostProcessShaderLibrary** — 扫描 `PostProcessShaders/` 文件夹，编译像素着色器 + 共享全屏顶点着色器，创建无 InputLayout 的 PSO。
-- **全屏三角形** — 使用 `SV_VertexID`（0,1,2）生成覆盖全屏的三角形，无需顶点缓冲区。
-- **Ping-Pong 渲染** — 场景 → RT[0] → 后处理链 → 后缓冲区。中间 Pass 在 RT[0] 和 RT[1] 之间交替。
+- **PostProcessShaderLibrary** — 扫描 `PostProcessShaders/` 文件夹，编译像素着色器 + 共享全屏顶点着色器，创建无 Input Layout 的 PSO。
+- **全屏三角形** — 使用 `SV_VertexID` (0,1,2) 生成覆盖屏幕的三角形，无需顶点缓冲区。
+- **Ping-Pong 渲染** — Scene → RT[0] → 后处理链 → backbuffer。中间 Pass 在 RT[0] 和 RT[1] 之间交替。
+- **HDR 管线** — 离屏 RT 使用 `R16G16B16A16_FLOAT`。所有后处理在 HDR 空间操作，最终 Tonemap 转换为 LDR。
 - **内置效果**：
   | 效果 | 描述 |
   |---|---|
-  | **Grayscale（灰度）** | 基于亮度的去色，可控制强度 |
-  | **Vignette（暗角）** | 边缘变暗效果，可配置强度 |
-- **逐对象后处理** — 每个 `PostProcessComponent` 管理独立的材质列表，支持排序、启用/禁用和强度调节。
+  | **Grayscale** | 亮度去饱和，可控制强度 |
+  | **Vignette** | 可配置强度的暗角效果 |
+  | **Tonemap** | ACES Filmic 色调映射（HDR → LDR），作为最终后处理 Pass |
+
+- **Per-Object Post-Process** — 每个 `PostProcessComponent` 管理独立的材质列表，支持排序、启用/禁用和强度调节。
+
+### ⚡ 性能与 Draw Call 优化
+
+- **共享 Mesh Pool** — 相同 `EPrimitiveType`（如 50 个 Cube）共享同一套 VB/IB。减少 GPU 内存和绑定开销。
+- **GPU Scene Batch 分类** — 图元按 MeshID → Material → front-to-back 排序。连续相同 mesh+material 的图元分组为 `InstanceBatch`（共享 VB/IB/SRV 绘制）。
+- **冗余绑定消除** — VB/IB 和纹理 SRV 绑定缓存，连续相同资源跳过绑定。
+- **双渲染路径** — Instance Batch（count ≥ 2）只绑一次 VB/IB/SRV 然后 per-instance 循环；Single Draw 使用普通 CB offset binding。两条路径均应用于 Deferred、Forward 和 Shadow 三个渲染路径。
 
 ### 💡 光照系统
 
-- **多光源支持** — 单次绘制调用中支持最多 8 盏灯光（方向光 + 点光源）。
-- **GPU 灯光数据** — 打包结构体：颜色+强度、类型（0=方向光、1=点光源）、方向/位置、半径。
+- **Multi-Pass 延迟光照** — 每个光源作为独立的 fullscreen additive pass 渲染：
+  - **Ambient pass**（不透明）— 计算环境光/IBL 贡献。
+  - **Per-light pass**（additive blend）— 每个光源一次全屏绘制，绑定独立的 `LightUniformBuffer` (b3)。无硬性光源数量限制。
+- **无限光源** — 光源数量不受固定数组大小限制。每个光源 Pass 绑定独立的 CB。
+- **GPU 灯光数据** — Per-light `LightUniformBuffer`：颜色+强度、类型（0=方向光、1=点光源）、方向/位置、半径、阴影 Atlas UV 参数。
 - **级联阴影贴图（CSM）** — 方向光支持实时级联阴影贴图：
   - 最多 **4 级级联**，渲染到**单张阴影 Atlas**（2x2 布局，`2*cascadeSize × 2*cascadeSize`）
   - **Shadow Atlas** — 所有级联共享一张 `R32_TYPELESS` 深度纹理；每个级联通过 viewport/scissor 渲染到各自象限
@@ -480,16 +524,17 @@ KiwiEngine/
 │       ├── PostProcessShaders.h      # 后处理着色器定义（全屏 VS）
 │       ├── PostProcessShaderLibrary.h # 后处理着色器扫描与编译
 │       ├── ModelImporter.h           # OBJ/FBX 模型导入（tinyobjloader + ufbx）
-│       └── ViewMode.h               # 视图模式枚举（Lit、Unlit、BaseColor、Roughness、Metallic）
+│       ├── ViewMode.h               # 视图模式枚举（Lit、Unlit、BaseColor、Roughness、Metallic）
+│       └── GPUScene.h               # GPU Scene 管理器（batch 分类、CB/StructuredBuffer 上传）
 ├── src/
 │   ├── main.cpp                      # 入口点与场景编辑器（ImGui UI、渲染）
 │   ├── Core/                         # Window、Application、EditorInput、EngineConfig
 │   ├── RHI/                          # DX11、DX12、GL、Vulkan 后端实现 + DXC 编译器
 │   ├── Scene/                        # 网格生成、场景序列化、模型导入
 │   └── Debug/                        # RenderDoc 运行时加载
-├── Shaders/                          # HLSL 着色器（Default、Unlit、Wireframe、DefaultLit、GBufferPass、DeferredLighting、ShadowPass、BufferVisualization）
+├── Shaders/                          # HLSL 着色器（Default、Unlit、Wireframe、DefaultLit、GBufferPass、DeferredAmbient、DeferredLighting、ShadowPass、BufferVisualization、Skybox）
 ├── GLShaders/                        # GLSL 着色器（DefaultLit、Unlit、Wireframe）
-├── PostProcessShaders/               # 后处理 HLSL 着色器（Grayscale、Vignette）
+├── PostProcessShaders/               # 后处理 HLSL 着色器（Grayscale、Vignette、Tonemap）
 ├── Textures/                         # 用户纹理文件（PNG、JPG、BMP、TGA）
 ├── Materials/                        # 材质资产文件（.mat JSON）
 ├── Scenes/                           # 场景 JSON 文件（Default.json、用户场景）
@@ -543,6 +588,9 @@ KiwiEngine/
 | `RHICommandContext` | `SetShaderResourceView()` | 绑定 SRV 到像素着色器槽位 |
 | `RHICommandContext` | `ResourceBarrier()` | DX12: 资源状态转换；DX11/GL: 空操作 |
 | `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU 调试标注，用于 RenderDoc/PIX Pass 分组 |
+| `RHICommandContext` | `SetConstantBufferOffset()` | DX11.1/DX12 CB 子范围绑定，用于 GPU Scene（偏移量单位为 16 字节常量） |
+| `RHICommandContext` | `DrawIndexedInstanced()` | Instanced 绘制，用于 GPU Scene batch（回退：循环 DrawIndexed） |
+| `RHIDevice` | `CreateBufferSRV()` | 创建 StructuredBuffer SRV，用于 GPU Scene instanced drawing |
 
 ### 添加新后端
 

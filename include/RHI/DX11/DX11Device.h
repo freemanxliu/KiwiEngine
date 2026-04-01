@@ -124,6 +124,10 @@ namespace Kiwi
         std::unique_ptr<RHISampler> CreateSampler() override;
         std::unique_ptr<RHISampler> CreateComparisonSampler() override;
 
+        // Buffer SRV for StructuredBuffer (GPU Scene instanced drawing)
+        std::unique_ptr<RHITextureView> CreateBufferSRV(
+            RHIBuffer* buffer, uint32_t numElements, uint32_t structByteStride) override;
+
         bool IsFeatureSupported(const char* feature) const override { return true; }
 
         // ---- ImGui 集成 ----
@@ -196,6 +200,8 @@ namespace Kiwi
 
         // Constant Buffer
         void SetConstantBuffer(uint32_t slot, RHIBuffer* buffer) override;
+        void SetConstantBufferOffset(uint32_t slot, RHIBuffer* buffer,
+            uint32_t offsetIn16Constants, uint32_t sizeIn16Constants) override;
 
         // Shader Resource View (SRV)
         void SetShaderResourceView(uint32_t slot, RHITextureView* srv) override;
@@ -210,12 +216,15 @@ namespace Kiwi
         // Draw
         void Draw(uint32_t vertexCount, uint32_t vertexStart = 0) override;
         void DrawIndexed(uint32_t indexCount, uint32_t indexStart = 0, int32_t vertexOffset = 0) override;
+        void DrawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount,
+            uint32_t startIndex = 0, int32_t baseVertex = 0, uint32_t startInstance = 0) override;
 
         // Flush
         void Flush() override;
 
     private:
         ComPtr<ID3D11DeviceContext> m_Context;
+        ComPtr<ID3D11DeviceContext1> m_Context1;  // Cached DX11.1 context for offset CB binding
         ComPtr<ID3DUserDefinedAnnotation> m_Annotation;
     };
 

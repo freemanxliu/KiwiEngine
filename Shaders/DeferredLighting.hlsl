@@ -1,26 +1,20 @@
 // ============================================================
-// Deferred Lighting Pass Shader (UE5 DefaultLitBxDF reference)
-// Reads G-Buffer + Depth and computes physically-based lighting
-// Includes Cascaded Shadow Mapping (CSM) with single atlas
-// Uses fullscreen triangle (SV_VertexID)
+// Deferred Lighting Pass — Per-Light (UE5 Multi-Pass Architecture)
 //
-// BRDF (matching UE5 BRDF.ush / ShadingModels.ush):
-//   NDF:     D_GGX (Trowbridge-Reitz)
-//   Vis:     Vis_SmithJointApprox (joint Smith, denominator baked in)
-//   Fresnel: F_Schlick (with 2% shadow threshold)
-//   Diffuse: Diffuse_Burley (Disney diffuse, roughness-dependent)
-//   Env:     EnvBRDFApprox (Lazarov 2013, no LUT needed)
+// This shader is drawn ONCE per light source with additive blend.
+// Each draw call receives light parameters via LightUB (b3).
 //
-// G-Buffer layout (all R8G8B8A8_UNORM):
-//   t0 GBufferA: Normal Octahedron(RG) + Metallic(B) + ShadingModelID(A)
-//   t1 GBufferB: BaseColor(RGB) + Roughness(A)
-//   t2 GBufferC: Emissive(RGB) + Specular(A)
-//   t3 ShadowAtlas: 2x2 cascade layout (R32_FLOAT depth)
+// G-Buffer layout (UE5, all R8G8B8A8_UNORM):
+//   t0 GBufferA: Normal(RG octahedron + B=z) + PerObjectData(A)
+//   t1 GBufferB: Metallic(R) + Specular(G) + Roughness(B) + ShadingModelID(A)
+//   t2 GBufferC: BaseColor(RGB) + AO(A)
+//   t3 ShadowAtlas: CSM depth atlas
 //   t7 DepthBuffer: Hardware depth (R32_FLOAT)
 //
 // Constant Buffers:
-//   b0 = ViewUB (View, Proj, InvViewProj, CameraPos, Lights)
-//   b2 = ShadowUB (CSM data)
+//   b0 = ViewUB   (camera, screen — NO light data)
+//   b2 = ShadowUB (CSM data — only for directional light pass)
+//   b3 = LightUB  (per-light: color, direction/position, radius, type)
 // ============================================================
 
 #include "Common.hlsli"
@@ -28,7 +22,7 @@
 #define MAX_CSM_CASCADES 4
 #define PI 3.14159265359
 
-// Shadow Uniform Buffer (b2) — per-frame CSM data
+// Shadow Uniform Buffer (b2)
 cbuffer ShadowUB : register(b2)
 {
     row_major float4x4 g_LightViewProj[MAX_CSM_CASCADES];
@@ -41,21 +35,24 @@ cbuffer ShadowUB : register(b2)
     float3 g_ShadowPadding;
 };
 
-// G-Buffer textures (UE5-inspired layout)
-Texture2D g_GBufferA     : register(t0);
-Texture2D g_GBufferB     : register(t1);
-Texture2D g_GBufferC     : register(t2);
+// Light Uniform Buffer (b3) — per-light pass
+cbuffer LightUB : register(b3)
+{
+    float3 g_LightColor;      // Color * Intensity
+    int    g_LightType;        // 0 = Directional, 1 = Point
+    float3 g_LightDirOrPos;   // Direction (directional) or Position (point)
+    float  g_LightRadius;     // Point light radius
+    float2 g_LightPadding[4]; // Pad to 48 bytes
+};
 
-// Shadow atlas (single texture, 2x2 cascade layout)
+// G-Buffer textures
+Texture2D g_GBufferA    : register(t0);
+Texture2D g_GBufferB    : register(t1);
+Texture2D g_GBufferC    : register(t2);
 Texture2D g_ShadowAtlas : register(t3);
-
-// Depth buffer for position reconstruction
 Texture2D g_DepthBuffer : register(t7);
 
-// IBL: Equirectangular environment map
-Texture2D g_EnvMap : register(t4);
-
-SamplerState g_GBufferSampler        : register(s0);
+SamplerState g_Sampler                 : register(s0);
 SamplerComparisonState g_ShadowSampler : register(s2);
 
 struct VSOutput
@@ -64,7 +61,7 @@ struct VSOutput
     float2 TexCoord : TEXCOORD0;
 };
 
-// ---- Fullscreen Triangle Vertex Shader ----
+// ---- Fullscreen Triangle VS ----
 VSOutput VSMain(uint vertexID : SV_VertexID)
 {
     VSOutput output;
@@ -74,96 +71,71 @@ VSOutput VSMain(uint vertexID : SV_VertexID)
     return output;
 }
 
-// ---- Octahedron Normal Decoding ----
-float3 OctahedronDecode(float2 oct)
+// ---- Normal Decode ----
+float3 DecodeNormal(float4 gbufferA)
 {
-    oct = oct * 2.0 - 1.0;
+    float2 oct = gbufferA.rg * 2.0 - 1.0;
     float3 n = float3(oct.x, oct.y, 1.0 - abs(oct.x) - abs(oct.y));
     if (n.z < 0.0)
     {
-        float2 signNotZero = float2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
-        n.xy = (1.0 - abs(n.yx)) * signNotZero;
+        float2 s = float2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+        n.xy = (1.0 - abs(n.yx)) * s;
     }
     return normalize(n);
 }
 
-// ---- Reconstruct world-space position from depth ----
+// ---- World Position from Depth ----
 float3 ReconstructWorldPos(float2 uv, float depth)
 {
     float2 ndc = uv * 2.0 - 1.0;
     ndc.y = -ndc.y;
-    float4 clipPos = float4(ndc, depth, 1.0);
-    float4 worldPos = mul(clipPos, g_InvViewProj);
-    return worldPos.xyz / worldPos.w;
+    float4 clip = float4(ndc, depth, 1.0);
+    float4 world = mul(clip, g_InvViewProj);
+    return world.xyz / world.w;
 }
 
-// ---- PCF Shadow Sampling (on atlas) ----
+// ---- CSM Shadow ----
 float SampleShadowAtlas(float2 atlasUV, float depth, float bias)
 {
     float texelSize = 1.0 / g_ShadowMapSize;
     float d = depth - bias;
-
     float shadow = 0.0;
     shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV, d);
-    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(texelSize, 0), d);
+    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2( texelSize, 0), d);
     shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(-texelSize, 0), d);
-    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(0, texelSize), d);
+    shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(0,  texelSize), d);
     shadow += g_ShadowAtlas.SampleCmpLevelZero(g_ShadowSampler, atlasUV + float2(0, -texelSize), d);
     return shadow / 5.0;
 }
 
-// ---- Compute shadow factor (atlas-based CSM) ----
 float ComputeShadow(float3 worldPos, float viewZ)
 {
-    if (g_NumCascades <= 0)
-        return 1.0;
+    if (g_NumCascades <= 0) return 1.0;
 
-    int cascadeIndex = 0;
-    float splits[MAX_CSM_CASCADES] = {
-        g_CascadeSplits.x, g_CascadeSplits.y, g_CascadeSplits.z, g_CascadeSplits.w
-    };
-
+    int ci = 0;
+    float splits[4] = { g_CascadeSplits.x, g_CascadeSplits.y, g_CascadeSplits.z, g_CascadeSplits.w };
     for (int i = 0; i < g_NumCascades - 1; i++)
-    {
-        if (viewZ > splits[i])
-            cascadeIndex = i + 1;
-    }
+        if (viewZ > splits[i]) ci = i + 1;
 
-    float4 shadowPos = mul(float4(worldPos, 1.0), g_LightViewProj[cascadeIndex]);
-    float3 shadowCoord;
-    shadowCoord.xy = shadowPos.xy / shadowPos.w * 0.5 + 0.5;
-    shadowCoord.y = 1.0 - shadowCoord.y;
-    shadowCoord.z = shadowPos.z / shadowPos.w;
+    float4 sp = mul(float4(worldPos, 1.0), g_LightViewProj[ci]);
+    float3 sc;
+    sc.xy = sp.xy / sp.w * 0.5 + 0.5;
+    sc.y = 1.0 - sc.y;
+    sc.z = sp.z / sp.w;
 
-    if (shadowCoord.x < 0 || shadowCoord.x > 1 ||
-        shadowCoord.y < 0 || shadowCoord.y > 1 ||
-        shadowCoord.z < 0 || shadowCoord.z > 1)
+    if (sc.x < 0 || sc.x > 1 || sc.y < 0 || sc.y > 1 || sc.z < 0 || sc.z > 1)
         return 1.0;
 
-    static const float2 atlasOffsets[MAX_CSM_CASCADES] = {
-        float2(0.0, 0.0), float2(0.5, 0.0),
-        float2(0.0, 0.5), float2(0.5, 0.5)
+    static const float2 offsets[4] = {
+        float2(0,0), float2(0.5,0), float2(0,0.5), float2(0.5,0.5)
     };
-
-    float2 atlasUV = shadowCoord.xy * 0.5 + atlasOffsets[cascadeIndex];
-    float shadow = SampleShadowAtlas(atlasUV, shadowCoord.z, g_ShadowBias);
-    return lerp(1.0, shadow, g_ShadowStrength);
-}
-
-// ---- Equirectangular UV from direction (for IBL sampling) ----
-float2 DirectionToEquirectangular(float3 dir)
-{
-    float phi = asin(clamp(dir.y, -1.0, 1.0));
-    float theta = atan2(dir.z, dir.x);
-    float u = theta / (2.0 * PI) + 0.5;
-    float v = phi / PI + 0.5;
-    return float2(u, 1.0 - v);
+    float2 atlasUV = sc.xy * 0.5 + offsets[ci];
+    return lerp(1.0, SampleShadowAtlas(atlasUV, sc.z, g_ShadowBias), g_ShadowStrength);
 }
 
 // ============================================================
-// UE5-style BRDF functions
+// BRDF (UE5 reference)
 // ============================================================
-
 float Pow5(float x) { float x2 = x * x; return x2 * x2 * x; }
 
 float D_GGX(float a2, float NoH)
@@ -175,15 +147,15 @@ float D_GGX(float a2, float NoH)
 float Vis_SmithJointApprox(float a2, float NoV, float NoL)
 {
     float a = sqrt(a2);
-    float Vis_SmithV = NoL * (NoV * (1.0 - a) + a);
-    float Vis_SmithL = NoV * (NoL * (1.0 - a) + a);
-    return 0.5 * rcp(Vis_SmithV + Vis_SmithL);
+    float v = NoL * (NoV * (1.0 - a) + a);
+    float l = NoV * (NoL * (1.0 - a) + a);
+    return 0.5 * rcp(v + l);
 }
 
-float3 F_Schlick(float3 SpecularColor, float VoH)
+float3 F_Schlick(float3 F0, float VoH)
 {
     float Fc = Pow5(1.0 - VoH);
-    return saturate(50.0 * SpecularColor.g) * Fc + (1.0 - Fc) * SpecularColor;
+    return saturate(50.0 * F0.g) * Fc + (1.0 - Fc) * F0;
 }
 
 float3 Diffuse_Burley(float3 DiffuseColor, float Roughness, float NoV, float NoL, float VoH)
@@ -194,124 +166,81 @@ float3 Diffuse_Burley(float3 DiffuseColor, float Roughness, float NoV, float NoL
     return DiffuseColor * ((1.0 / PI) * FdV * FdL);
 }
 
-float3 EnvBRDFApprox(float3 SpecularColor, float Roughness, float NoV)
-{
-    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
-    const float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
-    float4 r = Roughness * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
-    float2 AB = float2(-1.04, 1.04) * a004 + r.zw;
-    AB.y *= saturate(50.0 * SpecularColor.g);
-    return SpecularColor * AB.x + AB.y;
-}
-
-float3 SpecularGGX(float Roughness, float3 SpecularColor, float NoV, float NoL, float NoH, float VoH)
+float3 SpecularGGX(float Roughness, float3 F0, float NoV, float NoL, float NoH, float VoH)
 {
     float a2 = max(Roughness * Roughness, 0.001);
-    float  D   = D_GGX(a2, NoH);
-    float  Vis = Vis_SmithJointApprox(a2, NoV, NoL);
-    float3 F   = F_Schlick(SpecularColor, VoH);
-    return D * Vis * F;
+    return D_GGX(a2, NoH) * Vis_SmithJointApprox(a2, NoV, NoL) * F_Schlick(F0, VoH);
 }
 
-// ---- Lighting Pixel Shader ----
+// ============================================================
+// Per-Light Pixel Shader
+// Output is ADDITIVE — accumulated into scene color RT
+// ============================================================
 float4 PSMain(VSOutput input) : SV_TARGET
 {
-    float4 gbufferA = g_GBufferA.Sample(g_GBufferSampler, input.TexCoord);
-    float4 gbufferB = g_GBufferB.Sample(g_GBufferSampler, input.TexCoord);
-    float4 gbufferC = g_GBufferC.Sample(g_GBufferSampler, input.TexCoord);
+    float depth = g_DepthBuffer.Sample(g_Sampler, input.TexCoord).r;
+    if (depth >= 1.0) return float4(0, 0, 0, 0); // Sky — no contribution
 
-    float depth = g_DepthBuffer.Sample(g_GBufferSampler, input.TexCoord).r;
-    if (depth >= 1.0)
-        return float4(0.12, 0.12, 0.18, 1.0);
+    // Decode G-Buffer
+    float4 gA = g_GBufferA.Sample(g_Sampler, input.TexCoord);
+    float4 gB = g_GBufferB.Sample(g_Sampler, input.TexCoord);
+    float4 gC = g_GBufferC.Sample(g_Sampler, input.TexCoord);
 
-    float3 N         = OctahedronDecode(gbufferA.rg);
-    float  metallic  = gbufferA.b;
-    float3 baseColor = gbufferB.rgb;
-    float  roughness = max(gbufferB.a, 0.04);
-    float3 emissive  = gbufferC.rgb;
-    float  specular  = gbufferC.a;
+    float3 N         = DecodeNormal(gA);
+    float  metallic  = gB.r;
+    float  specular  = gB.g;
+    float  roughness = max(gB.b, 0.04);
+    float3 baseColor = gC.rgb;
+    float  ao        = gC.a;
 
     float3 worldPos = ReconstructWorldPos(input.TexCoord, depth);
-    float3 V = normalize(g_CameraPos - worldPos);
-    float NoV = saturate(abs(dot(N, V)) + 1e-5);
+    float3 V   = normalize(g_CameraPos - worldPos);
+    float  NoV = saturate(abs(dot(N, V)) + 1e-5);
 
-    float4 viewSpacePos = mul(float4(worldPos, 1.0), g_View);
-    float viewZ = viewSpacePos.z;
-
-    float3 diffuseColor = baseColor * (1.0 - metallic);
+    // Material properties (UE5 metallic workflow)
+    float3 diffuseColor  = baseColor * (1.0 - metallic);
     float3 specularColor = lerp(float3(0.08, 0.08, 0.08) * specular, baseColor, metallic);
 
-    float3 directDiffuse  = float3(0, 0, 0);
-    float3 directSpecular = float3(0, 0, 0);
+    // ---- Compute light direction and attenuation ----
+    float3 L;
+    float attenuation = 1.0;
 
-    int numLights = min(g_NumLights, MAX_LIGHTS);
-    for (int i = 0; i < numLights; i++)
+    if (g_LightType == 0) // Directional
     {
-        float3 lightColor = g_Lights[i].ColorIntensity;
-        float3 L;
-        float attenuation = 1.0;
+        L = normalize(g_LightDirOrPos);
 
-        if (g_Lights[i].Type == 0)
-        {
-            L = normalize(g_Lights[i].DirectionOrPos);
-            attenuation *= ComputeShadow(worldPos, viewZ);
-        }
-        else
-        {
-            float3 toLight = g_Lights[i].DirectionOrPos - worldPos;
-            float dist = length(toLight);
-            L = toLight / max(dist, 0.0001);
-            float radius = max(g_Lights[i].Radius, 0.001);
-            float normalizedDist = dist / radius;
-            float falloff = saturate(1.0 - normalizedDist * normalizedDist);
-            attenuation = falloff * falloff;
-        }
+        // CSM shadow
+        float4 viewPos = mul(float4(worldPos, 1.0), g_View);
+        attenuation *= ComputeShadow(worldPos, viewPos.z);
+    }
+    else // Point
+    {
+        float3 toLight = g_LightDirOrPos - worldPos;
+        float distSq = dot(toLight, toLight);
+        float dist = sqrt(distSq);
+        L = toLight / max(dist, 0.0001);
 
-        float NoL = saturate(dot(N, L));
-        if (NoL <= 0.0) continue;
-
-        float3 H = normalize(V + L);
-        float NoH = saturate(dot(N, H));
-        float VoH = saturate(dot(V, H));
-
-        float3 diffBRDF = Diffuse_Burley(diffuseColor, roughness, NoV, NoL, VoH);
-        float3 specBRDF = SpecularGGX(roughness, specularColor, NoV, NoL, NoH, VoH);
-
-        float3 radiance = lightColor * NoL * attenuation;
-        directDiffuse  += diffBRDF * radiance;
-        directSpecular += specBRDF * radiance;
+        // UE5 inverse-square + windowing: 1/d^2 * (1 - (d/r)^4)^2
+        float invSq = 1.0 / max(distSq, 0.0001);
+        float nd = dist / max(g_LightRadius, 0.001);
+        float nd4 = nd * nd * nd * nd;
+        float window = saturate(1.0 - nd4);
+        attenuation = invSq * window * window;
     }
 
-    if (numLights == 0)
-    {
-        float3 L = normalize(float3(0.5, 0.7, 0.3));
-        float NoL = saturate(dot(N, L));
-        float3 H = normalize(V + L);
-        float NoH = saturate(dot(N, H));
-        float VoH = saturate(dot(V, H));
+    float NoL = saturate(dot(N, L));
+    if (NoL <= 0.0) return float4(0, 0, 0, 0); // Back-facing — no contribution
 
-        float3 radiance = float3(1, 1, 1) * NoL * 0.85;
-        directDiffuse  = Diffuse_Burley(diffuseColor, roughness, NoV, NoL, VoH) * radiance;
-        directSpecular = SpecularGGX(roughness, specularColor, NoV, NoL, NoH, VoH) * radiance;
-    }
+    float3 H   = normalize(V + L);
+    float  NoH = saturate(dot(N, H));
+    float  VoH = saturate(dot(V, H));
 
-    // IBL
-    float2 envUV_diffuse = DirectionToEquirectangular(N);
-    float3 envDiffuse = g_EnvMap.SampleLevel(g_GBufferSampler, envUV_diffuse, 6.0).rgb;
-    float envLuma = dot(envDiffuse, float3(0.299, 0.587, 0.114));
-    if (envLuma < 0.001) envDiffuse = float3(0.03, 0.03, 0.03);
-    float3 ambientDiffuse = diffuseColor * envDiffuse * 0.3;
+    // BRDF
+    float3 diffBRDF = Diffuse_Burley(diffuseColor, roughness, NoV, NoL, VoH);
+    float3 specBRDF = SpecularGGX(roughness, specularColor, NoV, NoL, NoH, VoH);
 
-    float3 R = reflect(-V, N);
-    float2 envUV_specular = DirectionToEquirectangular(R);
-    float specMip = roughness * 6.0;
-    float3 envSpecular = g_EnvMap.SampleLevel(g_GBufferSampler, envUV_specular, specMip).rgb;
-    if (dot(envSpecular, float3(0.299, 0.587, 0.114)) < 0.001) envSpecular = float3(0.05, 0.05, 0.05);
-    float3 ambientSpecular = EnvBRDFApprox(specularColor, roughness, NoV) * envSpecular * 0.5;
+    float3 radiance = g_LightColor * NoL * attenuation;
+    float3 result = (diffBRDF + specBRDF) * radiance * ao;
 
-    float3 finalColor = directDiffuse + directSpecular + ambientDiffuse + ambientSpecular + emissive;
-    finalColor = finalColor / (finalColor + 1.0); // Reinhard
-
-    return float4(finalColor, 1.0);
+    return float4(result, 0.0);
 }

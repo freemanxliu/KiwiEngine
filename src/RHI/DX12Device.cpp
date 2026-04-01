@@ -216,27 +216,29 @@ namespace Kiwi
     {
         // Root parameter layout (UE5-inspired split uniform buffers):
         //   Slot 0: CBV b0 — ViewUniformBuffer (per-frame)
-        //   Slot 1: Descriptor table with 8 SRVs at t0-t7
+        //   Slot 1: Descriptor table with 16 SRVs at t0-t15 (t0-t7 textures, t8 GPU Scene StructuredBuffer)
         //   Slot 2: CBV b1 — ObjectUniformBuffer (per-draw)
         //   Slot 3: CBV b2 — ShadowUniformBuffer (per-frame)
+        //   Slot 4: CBV b3 — LightUniformBuffer (per-light pass)
+        //   Slot 5: CBV b4 — BatchUB (GPU Scene batch start index)
         D3D12_DESCRIPTOR_RANGE srvRange = {};
         srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        srvRange.NumDescriptors = 8;
+        srvRange.NumDescriptors = 16;
         srvRange.BaseShaderRegister = 0;
         srvRange.RegisterSpace = 0;
         srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-        D3D12_ROOT_PARAMETER rootParams[4] = {};
+        D3D12_ROOT_PARAMETER rootParams[6] = {};
         // Slot 0: CBV b0 (ViewUB)
         rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParams[0].Descriptor.ShaderRegister = 0;
         rootParams[0].Descriptor.RegisterSpace = 0;
         rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-        // Slot 1: SRV descriptor table (8 descriptors: t0-t7)
+        // Slot 1: SRV descriptor table (16 descriptors: t0-t15)
         rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
         rootParams[1].DescriptorTable.pDescriptorRanges = &srvRange;
-        rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         // Slot 2: CBV b1 (ObjectUB)
         rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParams[2].Descriptor.ShaderRegister = 1;
@@ -247,6 +249,16 @@ namespace Kiwi
         rootParams[3].Descriptor.ShaderRegister = 2;
         rootParams[3].Descriptor.RegisterSpace = 0;
         rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        // Slot 4: CBV b3 (LightUB — per-light pass)
+        rootParams[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        rootParams[4].Descriptor.ShaderRegister = 3;
+        rootParams[4].Descriptor.RegisterSpace = 0;
+        rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        // Slot 5: CBV b4 (BatchUB — GPU Scene batch start index)
+        rootParams[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        rootParams[5].Descriptor.ShaderRegister = 4;
+        rootParams[5].Descriptor.RegisterSpace = 0;
+        rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
         // Three static samplers:
         // s0 = linear clamp (post-process, G-Buffer sampling)
@@ -300,7 +312,7 @@ namespace Kiwi
         staticSamplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
         D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
-        rootSigDesc.NumParameters = 4;
+        rootSigDesc.NumParameters = 6;
         rootSigDesc.pParameters = rootParams;
         rootSigDesc.NumStaticSamplers = 3;
         rootSigDesc.pStaticSamplers = staticSamplers;
@@ -924,7 +936,20 @@ namespace Kiwi
 
         for (uint32_t i = 0; i < pipelineDesc.NumRenderTargets; i++)
         {
-            psoDesc.BlendState.RenderTarget[i].BlendEnable = FALSE;
+            if (pipelineDesc.AdditiveBlend)
+            {
+                psoDesc.BlendState.RenderTarget[i].BlendEnable = TRUE;
+                psoDesc.BlendState.RenderTarget[i].SrcBlend = D3D12_BLEND_ONE;
+                psoDesc.BlendState.RenderTarget[i].DestBlend = D3D12_BLEND_ONE;
+                psoDesc.BlendState.RenderTarget[i].BlendOp = D3D12_BLEND_OP_ADD;
+                psoDesc.BlendState.RenderTarget[i].SrcBlendAlpha = D3D12_BLEND_ONE;
+                psoDesc.BlendState.RenderTarget[i].DestBlendAlpha = D3D12_BLEND_ZERO;
+                psoDesc.BlendState.RenderTarget[i].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            }
+            else
+            {
+                psoDesc.BlendState.RenderTarget[i].BlendEnable = FALSE;
+            }
             psoDesc.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         }
 
@@ -957,6 +982,39 @@ namespace Kiwi
     {
         D3D12_CPU_DESCRIPTOR_HANDLE handle = {};
         return std::make_unique<DX12Sampler>(handle);
+    }
+
+    std::unique_ptr<RHITextureView> DX12Device::CreateBufferSRV(
+        RHIBuffer* buffer, uint32_t numElements, uint32_t structByteStride)
+    {
+        auto dxBuffer = static_cast<DX12Buffer*>(buffer);
+
+        // Create a CPU-only descriptor heap for the SRV
+        D3D12_DESCRIPTOR_HEAP_DESC cpuSrvHeapDesc = {};
+        cpuSrvHeapDesc.NumDescriptors = 1;
+        cpuSrvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        cpuSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+
+        ComPtr<ID3D12DescriptorHeap> cpuSrvHeap;
+        HRESULT hr = m_Device->CreateDescriptorHeap(&cpuSrvHeapDesc, IID_PPV_ARGS(&cpuSrvHeap));
+        if (FAILED(hr)) return nullptr;
+
+        D3D12_CPU_DESCRIPTOR_HANDLE srvHandle = cpuSrvHeap->GetCPUDescriptorHandleForHeapStart();
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;  // StructuredBuffer uses UNKNOWN format
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = numElements;
+        srvDesc.Buffer.StructureByteStride = structByteStride;
+        srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+        m_Device->CreateShaderResourceView(dxBuffer->GetD3DResource(), &srvDesc, srvHandle);
+
+        auto view = std::make_unique<DX12TextureView>(srvHandle);
+        view->SetSRVHeap(std::move(cpuSrvHeap));
+        return view;
     }
 
     // ============================================================
@@ -1182,12 +1240,33 @@ namespace Kiwi
         // b0 -> root param 0 (ViewUB)
         // b1 -> root param 2 (ObjectUB) — root param 1 is SRV table
         // b2 -> root param 3 (ShadowUB)
+        // b3 -> root param 4 (LightUB)
+        // b4 -> root param 5 (BatchUB)
         uint32_t rootParamIndex = slot;
-        if (slot == 1)
-            rootParamIndex = 2;  // b1 maps to root param 2
-        else if (slot == 2)
-            rootParamIndex = 3;  // b2 maps to root param 3
+        if (slot == 1)      rootParamIndex = 2;  // b1 maps to root param 2
+        else if (slot == 2) rootParamIndex = 3;  // b2 maps to root param 3
+        else if (slot == 3) rootParamIndex = 4;  // b3 maps to root param 4
+        else if (slot == 4) rootParamIndex = 5;  // b4 maps to root param 5
         m_CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, dxBuffer->GetGPUVirtualAddress());
+    }
+
+    void DX12CommandContext::SetConstantBufferOffset(uint32_t slot, RHIBuffer* buffer,
+        uint32_t offsetIn16Constants, uint32_t sizeIn16Constants)
+    {
+        auto dxBuffer = static_cast<DX12Buffer*>(buffer);
+        // offsetIn16Constants is in units of shader constants (1 constant = 1 float4 = 16 bytes).
+        // This matches DX11.1 VSSetConstantBuffers1 semantics.
+        uint32_t byteOffset = offsetIn16Constants * 16;  // 16 bytes per shader constant
+        D3D12_GPU_VIRTUAL_ADDRESS gpuVA = dxBuffer->GetGPUVirtualAddress() + byteOffset;
+
+        // Map HLSL register to root parameter (same as SetConstantBuffer)
+        uint32_t rootParamIndex = slot;
+        if (slot == 1)      rootParamIndex = 2;
+        else if (slot == 2) rootParamIndex = 3;
+        else if (slot == 3) rootParamIndex = 4;
+        else if (slot == 4) rootParamIndex = 5;
+
+        m_CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuVA);
     }
 
     void DX12CommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)
@@ -1245,6 +1324,12 @@ namespace Kiwi
     void DX12CommandContext::Draw(uint32_t vertexCount, uint32_t vertexStart)
     {
         m_CommandList->DrawInstanced(vertexCount, 1, vertexStart, 0);
+    }
+
+    void DX12CommandContext::DrawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount,
+        uint32_t startIndex, int32_t baseVertex, uint32_t startInstance)
+    {
+        m_CommandList->DrawIndexedInstanced(indexCountPerInstance, instanceCount, startIndex, baseVertex, startInstance);
     }
 
     void DX12CommandContext::DrawIndexed(uint32_t indexCount, uint32_t indexStart, int32_t vertexOffset)

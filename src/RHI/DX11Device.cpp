@@ -277,6 +277,11 @@ namespace Kiwi
         if (desc.BindFlags & BUFFER_USAGE_INDEX)       bd.BindFlags |= D3D11_BIND_INDEX_BUFFER;
         if (desc.BindFlags & BUFFER_USAGE_CONSTANT)    bd.BindFlags |= D3D11_BIND_CONSTANT_BUFFER;
         if (desc.BindFlags & BUFFER_USAGE_UNORDERED)   bd.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+        if (desc.BindFlags & BUFFER_USAGE_STRUCTURED)
+        {
+            bd.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+            bd.MiscFlags |= D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        }
 
         if (desc.Usage == EResourceUsage::Dynamic)
         {
@@ -760,6 +765,28 @@ namespace Kiwi
         return std::make_unique<DX11Sampler>(sampler.Get());
     }
 
+    std::unique_ptr<RHITextureView> DX11Device::CreateBufferSRV(
+        RHIBuffer* buffer, uint32_t numElements, uint32_t structByteStride)
+    {
+        auto dxBuffer = static_cast<DX11Buffer*>(buffer);
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;  // StructuredBuffer uses UNKNOWN format
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = numElements;
+
+        ComPtr<ID3D11ShaderResourceView> srv;
+        HRESULT hr = m_Device->CreateShaderResourceView(
+            dxBuffer->GetD3DBuffer(), &srvDesc, &srv);
+        if (FAILED(hr))
+        {
+            return nullptr;
+        }
+
+        return std::make_unique<DX11TextureView>(srv.Get());
+    }
+
     // ============================================================
     // DX11CommandContext 实现
     // ============================================================
@@ -957,6 +984,38 @@ namespace Kiwi
         m_Context->GSSetConstantBuffers(slot, 1, &d3dBuffer);
     }
 
+    void DX11CommandContext::SetConstantBufferOffset(uint32_t slot, RHIBuffer* buffer,
+        uint32_t offsetIn16Constants, uint32_t sizeIn16Constants)
+    {
+        auto dxBuffer = static_cast<DX11Buffer*>(buffer);
+        ID3D11Buffer* d3dBuffer = dxBuffer->GetD3DBuffer();
+
+        // DX11.1 firstConstant/numConstants are in units of shader constants
+        // (1 constant = 1 float4 = 16 bytes).
+        UINT firstConstant = offsetIn16Constants;
+        UINT numConstants   = sizeIn16Constants;
+
+        // Cache ID3D11DeviceContext1 query to avoid per-call COM overhead
+        if (!m_Context1)
+        {
+            m_Context->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&m_Context1);
+        }
+
+        if (m_Context1)
+        {
+            m_Context1->VSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
+            m_Context1->PSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
+            m_Context1->GSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
+        }
+        else
+        {
+            // Fallback: no DX11.1 support — bind whole buffer (offset ignored)
+            m_Context->VSSetConstantBuffers(slot, 1, &d3dBuffer);
+            m_Context->PSSetConstantBuffers(slot, 1, &d3dBuffer);
+            m_Context->GSSetConstantBuffers(slot, 1, &d3dBuffer);
+        }
+    }
+
     void DX11CommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)
     {
         if (srv)
@@ -964,11 +1023,13 @@ namespace Kiwi
             auto dxView = static_cast<DX11TextureView*>(srv);
             ID3D11ShaderResourceView* srvPtr = dxView->AsSRV();
             m_Context->PSSetShaderResources(slot, 1, &srvPtr);
+            m_Context->VSSetShaderResources(slot, 1, &srvPtr);
         }
         else
         {
             ID3D11ShaderResourceView* nullSRV = nullptr;
             m_Context->PSSetShaderResources(slot, 1, &nullSRV);
+            m_Context->VSSetShaderResources(slot, 1, &nullSRV);
         }
     }
 
@@ -1020,6 +1081,12 @@ namespace Kiwi
         m_Context->Draw(vertexCount, vertexStart);
     }
 
+    void DX11CommandContext::DrawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount,
+        uint32_t startIndex, int32_t baseVertex, uint32_t startInstance)
+    {
+        m_Context->DrawIndexedInstanced(indexCountPerInstance, instanceCount, startIndex, baseVertex, startInstance);
+    }
+
     void DX11CommandContext::DrawIndexed(uint32_t indexCount, uint32_t indexStart, int32_t vertexOffset)
     {
         m_Context->DrawIndexed(indexCount, indexStart, vertexOffset);
@@ -1046,9 +1113,55 @@ namespace Kiwi
         RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
         const PipelineStateDesc& pipelineDesc)
     {
-        // DX11: MRT formats are handled at SetRenderTargets time, not PSO creation.
-        // Use appropriate cull mode based on whether we have an input layout.
-        return CreatePipelineStateWithCull(inputLayout != nullptr);
+        auto pso = std::make_unique<DX11PipelineState>();
+
+        // Blend state
+        D3D11_BLEND_DESC blendDesc = {};
+        blendDesc.AlphaToCoverageEnable = FALSE;
+        blendDesc.IndependentBlendEnable = FALSE;
+        if (pipelineDesc.AdditiveBlend)
+        {
+            blendDesc.RenderTarget[0].BlendEnable = TRUE;
+            blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+            blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+            blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+            blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+            blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+            blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        }
+        else
+        {
+            blendDesc.RenderTarget[0].BlendEnable = FALSE;
+        }
+        blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+        ComPtr<ID3D11BlendState> blendState;
+        m_Device->CreateBlendState(&blendDesc, &blendState);
+        pso->SetBlendState(blendState.Get());
+
+        // Rasterizer state
+        D3D11_RASTERIZER_DESC rasterDesc = {};
+        rasterDesc.FillMode = D3D11_FILL_SOLID;
+        rasterDesc.CullMode = inputLayout ? D3D11_CULL_BACK : D3D11_CULL_NONE;
+        rasterDesc.FrontCounterClockwise = FALSE;
+        rasterDesc.DepthClipEnable = TRUE;
+
+        ComPtr<ID3D11RasterizerState> rasterState;
+        m_Device->CreateRasterizerState(&rasterDesc, &rasterState);
+        pso->SetRasterizerState(rasterState.Get());
+
+        // Depth stencil state
+        D3D11_DEPTH_STENCIL_DESC dsDesc = {};
+        dsDesc.DepthEnable = pipelineDesc.DepthEnabled;
+        dsDesc.DepthWriteMask = pipelineDesc.DepthWrite ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+        dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
+        dsDesc.StencilEnable = FALSE;
+
+        ComPtr<ID3D11DepthStencilState> dsState;
+        m_Device->CreateDepthStencilState(&dsDesc, &dsState);
+        pso->SetDepthStencilState(dsState.Get());
+
+        return pso;
     }
 
     // ============================================================

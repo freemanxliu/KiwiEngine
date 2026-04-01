@@ -20,13 +20,14 @@ namespace Kiwi
             { -half,  half,  half }, // 7
         };
 
+        // All faces use white vertex color — actual color comes from material _Color property
         Vec4 faceColors[6] = {
-            { 1.0f, 0.2f, 0.2f, 1.0f }, // Front  - Red
-            { 0.2f, 1.0f, 0.2f, 1.0f }, // Back   - Green
-            { 0.2f, 0.2f, 1.0f, 1.0f }, // Top    - Blue
-            { 1.0f, 1.0f, 0.2f, 1.0f }, // Bottom - Yellow
-            { 1.0f, 0.2f, 1.0f, 1.0f }, // Right  - Magenta
-            { 0.2f, 1.0f, 1.0f, 1.0f }, // Left   - Cyan
+            { 1.0f, 1.0f, 1.0f, 1.0f }, // Front
+            { 1.0f, 1.0f, 1.0f, 1.0f }, // Back
+            { 1.0f, 1.0f, 1.0f, 1.0f }, // Top
+            { 1.0f, 1.0f, 1.0f, 1.0f }, // Bottom
+            { 1.0f, 1.0f, 1.0f, 1.0f }, // Right
+            { 1.0f, 1.0f, 1.0f, 1.0f }, // Left
         };
 
         struct Face
@@ -105,11 +106,7 @@ namespace Kiwi
                 Vec3 sphereTan = Vec3(-sinf(theta), 0.0f, cosf(theta)).Normalize();
                 v.Tangent = { sphereTan.x, sphereTan.y, sphereTan.z, 1.0f };
 
-                v.Color = Vec4(
-                    0.5f + 0.5f * v.Normal.x,
-                    0.5f + 0.5f * v.Normal.y,
-                    0.5f + 0.5f * v.Normal.z,
-                    1.0f);
+                v.Color = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
 
                 // Spherical UV mapping
                 v.TexCoord = Vec2(
@@ -163,7 +160,7 @@ namespace Kiwi
             vBot.Position = { radius * cosT, -halfH, radius * sinT };
             vBot.Normal = normal;
             vBot.Tangent = { tangent.x, tangent.y, tangent.z, 1.0f };
-            vBot.Color = { 0.5f + 0.5f * cosT, 0.7f, 0.5f + 0.5f * sinT, 1.0f };
+            vBot.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             vBot.TexCoord = { u, 1.0f };
             mesh.m_Vertices.push_back(vBot);
 
@@ -197,7 +194,7 @@ namespace Kiwi
             vc.Position = { 0, halfH, 0 };
             vc.Normal = { 0, 1, 0 };
             vc.Tangent = { 1, 0, 0, 1 };
-            vc.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
+            vc.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             vc.TexCoord = { 0.5f, 0.5f };
             mesh.m_Vertices.push_back(vc);
         }
@@ -211,7 +208,7 @@ namespace Kiwi
             v.Position = { radius * ct, halfH, radius * st };
             v.Normal = { 0, 1, 0 };
             v.Tangent = { 1, 0, 0, 1 };
-            v.Color = { 0.7f, 0.9f, 0.7f, 1.0f };
+            v.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             v.TexCoord = { 0.5f + 0.5f * ct, 0.5f + 0.5f * st };
             mesh.m_Vertices.push_back(v);
         }
@@ -230,7 +227,7 @@ namespace Kiwi
             vc.Position = { 0, -halfH, 0 };
             vc.Normal = { 0, -1, 0 };
             vc.Tangent = { 1, 0, 0, 1 };
-            vc.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
+            vc.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             vc.TexCoord = { 0.5f, 0.5f };
             mesh.m_Vertices.push_back(vc);
         }
@@ -244,7 +241,7 @@ namespace Kiwi
             v.Position = { radius * ct, -halfH, radius * st };
             v.Normal = { 0, -1, 0 };
             v.Tangent = { 1, 0, 0, 1 };
-            v.Color = { 0.7f, 0.7f, 0.9f, 1.0f };
+            v.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             v.TexCoord = { 0.5f + 0.5f * ct, 0.5f - 0.5f * st };
             mesh.m_Vertices.push_back(v);
         }
@@ -277,7 +274,7 @@ namespace Kiwi
         mesh.m_Vertices.push_back(v2);
         mesh.m_Vertices.push_back(v3);
 
-        mesh.m_Indices = { 0, 2, 1, 0, 3, 2 };
+        mesh.m_Indices = { 0, 1, 2, 0, 2, 3 };
 
         return mesh;
     }

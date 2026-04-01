@@ -47,23 +47,28 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 
 ### 🔦 Deferred Rendering Pipeline (UE5-Inspired)
 
-- **G-Buffer** — 3 MRT (all `R8G8B8A8_UNORM`, UE5-inspired layout):
+- **G-Buffer** — 3 MRT (all `R8G8B8A8_UNORM`, UE5 layout):
   | RT | Contents |
   |---|---|
-  | **GBufferA** (t0) | Normal (Octahedron RG) + Metallic (B) + ShadingModelID (A) |
-  | **GBufferB** (t1) | BaseColor (RGB) + Roughness (A) |
-  | **GBufferC** (t2) | Emissive (RGB) + Specular (A) |
+  | **GBufferA** (t0) | Normal Octahedron (RG) + Normal.z (B) + PerObjectData (A) |
+  | **GBufferB** (t1) | Metallic (R) + Specular (G) + Roughness (B) + ShadingModelID (A) |
+  | **GBufferC** (t2) | BaseColor (RGB) + AO (A) |
   | **Depth** (t7) | Hardware depth (`R32_TYPELESS`) → world position via InvViewProj |
 - **Octahedron Normal Encoding** — Unit normals stored in 2 channels using octahedron mapping, providing better precision than linear [0,1] packing in R8G8 format.
 - **Depth-Based Position Reconstruction** — World-space position is reconstructed from hardware depth buffer + inverse ViewProjection matrix, eliminating the need for a dedicated position render target (~40% bandwidth savings vs R16F position RT).
-- **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`.
-- **Deferred Lighting Pass** — Fullscreen triangle (SV_VertexID) reconstructs world position from depth, decodes octahedron normals, reads material properties from G-Buffer, and computes **UE5-style PBR lighting** with multi-light support. BRDF matches UE5's `DefaultLitBxDF`: **D_GGX** (Trowbridge-Reitz NDF), **Vis_SmithJointApprox** (joint Smith visibility with baked-in denominator), **F_Schlick** (with 2% reflectance shadow threshold), **Diffuse_Burley** (Disney diffuse, roughness-dependent), and **EnvBRDFApprox** (Lazarov 2013 analytical approximation, no LUT needed) for indirect specular. Applies cascaded shadow maps and Reinhard tone mapping.
+- **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`. Vertex shader passes per-object material data (Roughness, Metallic, texture flags, Selected) to pixel shader via interpolants.
+- **Multi-Pass Deferred Lighting (UE5)** — Lighting is split into multiple passes instead of a single fullscreen draw:
+  - **Ambient pass** — Opaque fullscreen pass computes ambient/IBL contribution.
+  - **Per-light additive passes** — Each light gets its own fullscreen draw with additive blending (`SrcAlpha ONE`). No hard cap on light count; each pass binds a dedicated `LightUniformBuffer` (b3) with per-light parameters.
+  - **PipelineStateDesc.AdditiveBlend** — New blend state for multi-pass light accumulation.
+- **Deferred Lighting BRDF** — Matches UE5's `DefaultLitBxDF`: **D_GGX** (Trowbridge-Reitz NDF), **Vis_SmithJointApprox** (joint Smith visibility with baked-in denominator), **F_Schlick** (with 2% reflectance shadow threshold), **Diffuse_Burley** (Disney diffuse, roughness-dependent), and **EnvBRDFApprox** (Lazarov 2013 analytical approximation, no LUT needed) for indirect specular. Applies cascaded shadow maps.
 - **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades rendered into a **single shadow atlas** (2x2 layout). Each cascade occupies one quadrant of the atlas texture (`R32_TYPELESS`, `2*cascadeSize × 2*cascadeSize`). PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. Shader selects cascade by view-space distance and computes UV offset into the atlas. 5-tap PCF filtering with comparison sampler for soft shadow edges.
+- **HDR Pipeline** — Offscreen render target uses `R16G16B16A16_FLOAT` format. Post-processing operates on HDR values, then a final **Tonemap pass** (ACES Filmic) converts to LDR before presenting to the swap chain. Built-in `Tonemap.hlsl` in `PostProcessShaders/`.
 - **Forward Gizmo Pass** — Transform gizmo (translate/rotate/scale) rendered on top of the deferred result using forward rendering with depth for correct occlusion.
 - **Skybox + IBL** — Equirectangular HDR environment map (`.hdr` files in `Textures/` auto-detected at startup). Skybox renders on depth==1 pixels via fullscreen triangle + inverse ViewProj direction reconstruction. IBL diffuse: environment map sampled at high mip level along normal direction. IBL specular: environment map sampled along reflection vector with roughness-dependent mip level, combined with UE5's EnvBRDFApprox. Supports `R16G16B16A16_FLOAT` HDR textures via stb_image float loading.
 - **Material Properties** — Material assets define Roughness [0,1], Metallic [0,1], base color, and textures (base color, **normal map**, metallic/roughness). Normal maps are applied via TBN matrix with per-vertex tangent vectors (Vec4 with handedness). Properties are stored in G-Buffer and editable via Material Editor / Inspector UI.
 
-> **Note**: The deferred rendering pipeline (G-Buffer, CSM shadows, deferred lighting) is active for DX11 and DX12 backends. The OpenGL and Vulkan backends use a forward rendering path.
+> **Note**: The deferred rendering pipeline (G-Buffer, CSM shadows, multi-pass deferred lighting) is active for DX11 and DX12 backends. The OpenGL and Vulkan backends use a forward rendering path.
 
 ### 👁️ View Mode System
 
@@ -73,9 +78,12 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   |---|---|---|
   | **Lit** | Default | Full deferred rendering with UE5-style PBR lighting |
   | **Unlit** | Debug | Forward rendering with no lighting (pure albedo) |
-  | **BaseColor** | Buffer Visualization | G-Buffer BaseColor (GBufferB RGB) |
-  | **Roughness** | Buffer Visualization | G-Buffer Roughness (GBufferB Alpha, grayscale) |
-  | **Metallic** | Buffer Visualization | G-Buffer Metallic (GBufferA Blue, grayscale) |
+  | **BaseColor** | Buffer Visualization | G-Buffer BaseColor (GBufferC RGB) |
+  | **Roughness** | Buffer Visualization | G-Buffer Roughness (GBufferB Blue, grayscale) |
+  | **Metallic** | Buffer Visualization | G-Buffer Metallic (GBufferB Red, grayscale) |
+  | **Normal** | Buffer Visualization | Decoded world-space normal from GBufferA (remapped to [0,1]) |
+  | **Specular** | Buffer Visualization | G-Buffer Specular (GBufferB Green, grayscale) |
+  | **AO** | Buffer Visualization | G-Buffer Ambient Occlusion (GBufferC Alpha, grayscale) |
 - **Buffer Visualization** — G-Buffer pass runs, then a dedicated `BufferVisualization` shader samples the specific G-Buffer channel and displays it as a fullscreen pass.
 
 ### 🧱 Material System
@@ -128,37 +136,72 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **DefaultLit** | Standard PBR-style material — responds to Roughness and Metallic properties, default shader for new objects |
   | **Unlit** | Pure color output, no lighting |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
-  | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, **TBN normal mapping** (tangent-space normal map → world-space via Gram-Schmidt TBN with handedness), outputs Normal+Metallic, BaseColor+Roughness, Emissive+Specular to 3 MRT |
-  | **DeferredLighting** | Fullscreen PBR deferred lighting (UE5 DefaultLitBxDF) — D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox, CSM shadow atlas, Reinhard tone mapping |
-  | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader) |
-  | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels |
+  | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, **TBN normal mapping** (tangent-space normal map → world-space via Gram-Schmidt TBN with handedness), outputs Normal+PerObjectData, Metallic+Specular+Roughness+ShadingModelID, BaseColor+AO to 3 MRT |
+  | **DeferredAmbient** | Fullscreen ambient pass — computes ambient/IBL contribution with additive-friendly output |
+  | **DeferredLighting** | Per-light fullscreen additive PBR pass (UE5 DefaultLitBxDF) — D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox, CSM shadow atlas sampling. One draw call per light with additive blending |
+  | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader). Supports both CB offset (default) and SV_InstanceID (USE_GPU_SCENE_INSTANCING) vertex shader paths |
+  | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels (BaseColor, Roughness, Metallic, Normal, Specular, AO) |
   | **Skybox** | Fullscreen pass — equirectangular HDR environment map sampling on depth==1 pixels, inverse ViewProj direction reconstruction |
+  | **Tonemap** | ACES Filmic tone mapping (HDR → LDR), applied as the final post-process pass |
 - **GLSL Shaders** — OpenGL versions of DefaultLit, Unlit, and Wireframe in `GLShaders/` directory, using `//!VERTEX` / `//!FRAGMENT` markers for stage separation.
 - **Shared Shader Include** — `Common.hlsli` defines the split CB layout, included by all HLSL shaders via `#include "Common.hlsli"`. `ReadShaderFile()` and `ShaderLibrary` automatically resolve `#include` directives at compile time.
-- **UE5-Inspired Constant Buffer Layout** — Split into 3 buffers by update frequency:
+- **UE5-Inspired Constant Buffer Layout** — Split into 5 buffers by update frequency:
   | Register | Buffer | Update Frequency | Contents |
   |---|---|---|---|
   | **b0** | `ViewUniformBuffer` | Per-frame (1×) | View, Projection, ViewProjection, InvViewProj, CameraPos, ScreenSize, Near/Far, NumLights, Lights[8] |
   | **b1** | `ObjectUniformBuffer` | Per-draw call | World matrix, ObjectColor, Selected, Roughness, Metallic, texture flags, VisualizeMode |
   | **b2** | `ShadowUniformBuffer` | Per-frame (1×) | LightViewProj[4], CascadeSplits, ShadowBias/Strength, NumCascades |
+  | **b3** | `LightUniformBuffer` | Per-light pass | LightColor, LightDirection, LightPosition, LightType, LightRadius, ShadowAtlasUV |
+  | **b4** | `BatchUniformBuffer` | Per-batch (reserved) | BatchStartIndex for GPU Scene instanced drawing |
 - **Custom Shaders** — Create a `.hlsl` with `VSMain`/`PSMain` entry points, `#include "Common.hlsli"` for the CB layout, drop into `Shaders/`, and it's available at runtime.
+
+### 🧠 GPU Scene System
+
+- **GPUScene Class** (`include/Scene/GPUScene.h`, `src/Scene/GPUScene.cpp`) — Unified GPU Scene manager (inspired by UE5's `FPrimitiveSceneData`):
+  - Collects `ObjectUniformBuffer` data from all visible primitives into a single large CB.
+  - `Update()` — Collects data from scene + classifies into draw batches each frame.
+  - `UploadToGPU()` — Uploads data to CB for single-draw offset binding.
+  - `BindPrimitive()` — Binds a specific primitive's 256B window via CB offset (b1).
+- **Batch Classification** — After frustum culling, primitives are sorted and classified into two draw paths:
+  | Path | Type | Description |
+  |---|---|---|
+  | **InstanceBatch** | count ≥ 2, same mesh + material | VB/IB/SRV bound once, loop CB offset per instance |
+  | **SingleDrawItem** | unique mesh or material combo | Ordinary CB offset + DrawIndexed |
+- **Shared Mesh Pool** — Objects sharing the same `EPrimitiveType` (Cube, Sphere, etc.) share a single VB/IB pair. Eliminates redundant GPU resources.
+- **Redundant Bind Elimination** — VB/IB and texture SRV bindings are skipped when consecutive draws use the same mesh or material.
+- **Frame-Level Upload** — GPU Scene data is uploaded once per frame before all rendering passes (Shadow, G-Buffer, Lighting share the same data).
+- **DX11.1 CB Offset** — `SetConstantBufferOffset` uses `VSSetConstantBuffers1` (DX11.1) with cached `ID3D11DeviceContext1`.
+- **DX12 CB Offset** — Uses GPU virtual address + offset calculation in root signature.
+- **Future: StructuredBuffer Instancing** — RHI provides `CreateBufferSRV()` and `DrawIndexedInstanced()` for both DX11 and DX12. Shaders have `USE_GPU_SCENE_INSTANCING` path (SV_InstanceID + StructuredBuffer(t8)) ready for activation.
 
 ### 🌈 Post-Processing System
 
 - **PostProcessShaderLibrary** — Scans `PostProcessShaders/` folder, compiles pixel shaders + shared fullscreen vertex shader, creates PSOs without input layout.
 - **Fullscreen Triangle** — Efficient fullscreen pass using `SV_VertexID` (0,1,2) to generate a screen-covering triangle — no vertex buffer needed.
 - **Ping-Pong Rendering** — Scene → RT[0] → post-process chain → backbuffer. Intermediate passes alternate between RT[0] and RT[1].
+- **HDR Pipeline** — Offscreen RT uses `R16G16B16A16_FLOAT`. All post-processing operates on HDR values. Final tonemap converts to LDR.
 - **Built-in Effects**:
   | Effect | Description |
   |---|---|
   | **Grayscale** | Luminance-based desaturation with intensity control |
   | **Vignette** | Darkened edges with configurable intensity |
+  | **Tonemap** | ACES Filmic tone mapping (HDR → LDR), applied as the final post-process pass |
 - **Per-Object Post-Process** — Each `PostProcessComponent` manages a material list with ordering, enable/disable, and intensity per effect.
+
+### ⚡ Performance & Draw Call Optimization
+
+- **Shared Mesh Pool** — Objects with the same `EPrimitiveType` (e.g., 50 Cubes) share a single VB/IB pair. Reduces GPU memory and binding overhead.
+- **GPU Scene Batch Classification** — Primitives are sorted by MeshID → Material → front-to-back. Consecutive same-mesh/same-material objects are grouped into `InstanceBatch` entries (drawn with shared VB/IB/SRV).
+- **Redundant Bind Elimination** — VB/IB and texture SRV bindings are cached and skipped when consecutive draws use the same resources.
+- **Dual Draw Path** — Instanced batches (count ≥ 2) bind VB/IB/SRV once and loop per-instance; single draws use ordinary CB offset binding. Both paths are applied to Deferred, Forward, and Shadow rendering.
 
 ### 💡 Lighting
 
-- **Multi-Light Support** — Up to 8 simultaneous lights (directional + point) in a single draw call.
-- **GPU Light Data** — Packed struct: color+intensity, type (0=Directional, 1=Point), direction/position, radius.
+- **Multi-Pass Deferred Lighting** — Each light renders as a separate fullscreen additive pass:
+  - **Ambient pass** (opaque) — Computes ambient/IBL contribution.
+  - **Per-light pass** (additive blend) — One fullscreen draw per light with its own `LightUniformBuffer` (b3). No hard cap on light count.
+- **Unlimited Lights** — Light count is not bounded by a fixed array size. Each light pass binds an independent CB.
+- **GPU Light Data** — Per-light `LightUniformBuffer`: color+intensity, type (0=Directional, 1=Point), direction/position, radius, shadow atlas UV parameters.
 - **Cascaded Shadow Mapping (CSM)** — Directional lights support real-time cascaded shadow maps:
   - Up to **4 cascades** rendered into a **single shadow atlas** (2x2 layout, `2*cascadeSize × 2*cascadeSize`)
   - **Shadow Atlas** — All cascades share one `R32_TYPELESS` depth texture; each cascade rendered via viewport/scissor into its quadrant
@@ -481,16 +524,17 @@ KiwiEngine/
 │       ├── PostProcessShaders.h      # Post-process shader definitions (fullscreen VS)
 │       ├── PostProcessShaderLibrary.h # Post-process shader scanning & compilation
 │       ├── ModelImporter.h           # OBJ/FBX model import (tinyobjloader + ufbx)
-│       └── ViewMode.h               # View mode enum (Lit, Unlit, BaseColor, Roughness, Metallic)
+│       ├── ViewMode.h               # View mode enum (Lit, Unlit, BaseColor, Roughness, Metallic)
+│       └── GPUScene.h               # GPU Scene manager (batch classification, CB/StructuredBuffer upload)
 ├── src/
 │   ├── main.cpp                      # Entry point & scene editor (ImGui UI, rendering)
 │   ├── Core/                         # Window, Application, EditorInput, EngineConfig
 │   ├── RHI/                          # DX11, DX12, GL, Vulkan backend implementations + DXC compiler
 │   ├── Scene/                        # Mesh generation, Scene serialization, Model import
 │   └── Debug/                        # RenderDoc runtime loading
-├── Shaders/                          # HLSL shaders (Default, Unlit, Wireframe, DefaultLit, GBufferPass, DeferredLighting, ShadowPass, BufferVisualization)
+├── Shaders/                          # HLSL shaders (Default, Unlit, Wireframe, DefaultLit, GBufferPass, DeferredAmbient, DeferredLighting, ShadowPass, BufferVisualization, Skybox)
 ├── GLShaders/                        # GLSL shaders (DefaultLit, Unlit, Wireframe)
-├── PostProcessShaders/               # Post-process HLSL shaders (Grayscale, Vignette)
+├── PostProcessShaders/               # Post-process HLSL shaders (Grayscale, Vignette, Tonemap)
 ├── Textures/                         # User texture files (PNG, JPG, BMP, TGA)
 ├── Materials/                        # Material asset files (.mat JSON)
 ├── Scenes/                           # Scene JSON files (Default.json, user scenes)
@@ -544,6 +588,9 @@ KiwiEngine/
 | `RHICommandContext` | `SetShaderResourceView()` | Bind SRV to pixel shader slot |
 | `RHICommandContext` | `ResourceBarrier()` | DX12: state transitions; VK: pipeline barriers; DX11/GL: no-op |
 | `RHICommandContext` | `BeginEvent()` / `EndEvent()` / `SetMarker()` | GPU debug annotations for RenderDoc/PIX pass grouping |
+| `RHICommandContext` | `SetConstantBufferOffset()` | DX11.1/DX12 CB sub-range binding for GPU Scene (offset in 16-byte constants) |
+| `RHICommandContext` | `DrawIndexedInstanced()` | Instanced drawing for GPU Scene batches (fallback: loops DrawIndexed) |
+| `RHIDevice` | `CreateBufferSRV()` | StructuredBuffer SRV for GPU Scene instanced drawing |
 
 ### Adding a New Backend
 

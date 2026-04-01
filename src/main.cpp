@@ -7,6 +7,7 @@
 #include "Scene/GLShaders.h"
 #include "Scene/ShaderLibrary.h"
 #include "Scene/Scene.h"
+#include "Scene/GPUScene.h"
 #include "Scene/SceneObject.h"
 #include "Scene/MeshComponent.h"
 #include "Scene/CameraComponent.h"
@@ -132,6 +133,16 @@ struct GPUMeshData
     std::unique_ptr<RHIBuffer> IndexBuffer;
     uint32_t VertexCount = 0;
     uint32_t IndexCount = 0;
+};
+
+// Shared Mesh Pool — same EPrimitiveType shares one VB/IB pair
+struct SharedMeshEntry
+{
+    RHIBuffer* VertexBuffer = nullptr;   // Non-owning pointer into shared pool
+    RHIBuffer* IndexBuffer  = nullptr;
+    uint32_t   VertexCount  = 0;
+    uint32_t   IndexCount   = 0;
+    uint32_t   MeshID       = 0;        // Unique ID for sorting/batching
 };
 
 // ============================================================
@@ -643,33 +654,117 @@ protected:
             }
             else
             {
-                // First run: create a minimal default scene in-memory
-                m_Scene.SetName("Default Scene");
+                // First run: create GPU Scene debug scene
+                // Tests: multiple primitive types, multiple materials, multiple lights,
+                //        different transforms, GPU Scene offset binding correctness
+                m_Scene.SetName("GPU Scene Debug");
 
+                // ---- Camera ----
                 auto* camObj = m_Scene.AddCameraObject("Main Camera");
                 auto* cam = camObj->GetComponent<CameraComponent>();
-                cam->Position = Vec3(0.0f, 3.0f, -6.0f);
-                cam->Rotation = Vec3(20.0f, 0.0f, 0.0f);
+                cam->Position = Vec3(0.0f, 5.0f, -12.0f);
+                cam->Rotation = Vec3(25.0f, 0.0f, 0.0f);
                 cam->FieldOfView = 45.0f;
 
+                // ---- Directional Light (Sun) ----
                 auto* lightObj = m_Scene.AddDirectionalLightObject("Sun Light");
                 auto* sunLight = lightObj->GetComponent<DirectionalLightComponent>();
                 if (sunLight)
                 {
                     sunLight->Rotation = { 50.0f, -30.0f, 0.0f };
-                    sunLight->LightColor = { 1.0f, 1.0f, 0.9f };
-                    sunLight->Intensity = 1.0f;
+                    sunLight->LightColor = { 1.0f, 0.95f, 0.85f };
+                    sunLight->Intensity = 3.0f;
                 }
 
+                // ---- Point Light (warm fill) ----
+                auto* pointLightObj = m_Scene.AddPointLightObject("Point Light Warm");
+                auto* pointLight = pointLightObj->GetComponent<PointLightComponent>();
+                if (pointLight)
+                {
+                    pointLight->Position = { -3.0f, 3.0f, -2.0f };
+                    pointLight->LightColor = { 1.0f, 0.7f, 0.3f };
+                    pointLight->Intensity = 5.0f;
+                    pointLight->Radius = 12.0f;
+                }
+
+                // ---- Point Light (cool fill) ----
+                auto* pointLightObj2 = m_Scene.AddPointLightObject("Point Light Cool");
+                auto* pointLight2 = pointLightObj2->GetComponent<PointLightComponent>();
+                if (pointLight2)
+                {
+                    pointLight2->Position = { 4.0f, 2.5f, 1.0f };
+                    pointLight2->LightColor = { 0.3f, 0.5f, 1.0f };
+                    pointLight2->Intensity = 4.0f;
+                    pointLight2->Radius = 10.0f;
+                }
+
+                // ---- Ground (large floor) ----
                 auto* floor = m_Scene.AddMeshObject(EPrimitiveType::Floor, "Ground");
-                (void)floor;
-                auto* cube = m_Scene.AddMeshObject(EPrimitiveType::Cube, "Cube_1");
-                auto* cubeMesh = cube->GetComponent<MeshComponent>();
-                if (cubeMesh) cubeMesh->Position = { 0.0f, 0.5f, 0.0f };
+                auto* floorMesh = floor->GetComponent<MeshComponent>();
+                if (floorMesh) floorMesh->Scale = { 3.0f, 1.0f, 3.0f };
+
+                // ---- Row of cubes (different positions — tests GPU Scene offset correctness) ----
+                const float cubeSpacing = 2.5f;
+                for (int i = 0; i < 5; ++i)
+                {
+                    float x = (i - 2) * cubeSpacing;
+                    std::string name = "Cube_" + std::to_string(i + 1);
+                    auto* cubeObj = m_Scene.AddMeshObject(EPrimitiveType::Cube, name);
+                    auto* mesh = cubeObj->GetComponent<MeshComponent>();
+                    if (mesh)
+                    {
+                        mesh->Position = { x, 0.5f, 0.0f };
+                        // Alternate scales to test different transforms
+                        float s = 0.5f + 0.3f * i;
+                        mesh->Scale = { s, s, s };
+                    }
+                }
+
+                // ---- Spheres (back row — tests different primitive type) ----
+                for (int i = 0; i < 4; ++i)
+                {
+                    float x = (i - 1.5f) * 3.0f;
+                    std::string name = "Sphere_" + std::to_string(i + 1);
+                    auto* sphereObj = m_Scene.AddMeshObject(EPrimitiveType::Sphere, name);
+                    auto* mesh = sphereObj->GetComponent<MeshComponent>();
+                    if (mesh)
+                    {
+                        mesh->Position = { x, 0.8f, 4.0f };
+                        mesh->Scale = { 0.8f, 0.8f, 0.8f };
+                    }
+                }
+
+                // ---- Cylinders (side columns — tests yet another primitive) ----
+                for (int i = 0; i < 2; ++i)
+                {
+                    float x = (i == 0) ? -6.0f : 6.0f;
+                    std::string name = "Column_" + std::to_string(i + 1);
+                    auto* cylObj = m_Scene.AddMeshObject(EPrimitiveType::Cylinder, name);
+                    auto* mesh = cylObj->GetComponent<MeshComponent>();
+                    if (mesh)
+                    {
+                        mesh->Position = { x, 1.5f, 0.0f };
+                        mesh->Scale = { 0.4f, 1.5f, 0.4f };
+                    }
+                }
+
+                // ---- Rotated cube (tests rotation in GPU Scene) ----
+                auto* rotCubeObj = m_Scene.AddMeshObject(EPrimitiveType::Cube, "Rotated_Cube");
+                auto* rotMesh = rotCubeObj->GetComponent<MeshComponent>();
+                if (rotMesh)
+                {
+                    rotMesh->Position = { 0.0f, 1.5f, -4.0f };
+                    rotMesh->Rotation = { 30.0f, 45.0f, 15.0f };
+                    rotMesh->Scale = { 1.2f, 1.2f, 1.2f };
+                }
+
+                // Total: 1 camera + 3 lights + 1 floor + 5 cubes + 4 spheres + 2 cylinders + 1 rotated cube
+                // = 17 objects, 13 meshes — good for testing GPU Scene with multiple primitives
 
                 // Save as Default.json for future runs
                 m_Scene.SaveToFile(defaultScene);
-                std::cout << "[Kiwi] Created default scene: " << defaultScene << std::endl;
+                std::cout << "[Kiwi] Created GPU Scene debug scene (" 
+                          << m_Scene.GetObjects().size() << " objects)" << std::endl;
             }
         }
 
@@ -734,15 +829,8 @@ protected:
                         m_DragStartRotation = sel->GetRotation();
                         m_DragStartScale    = sel->GetScale();
 
-                        // For rotate: record starting angle projected on screen
-                        if (m_GizmoMode == EGizmoMode::Rotate)
-                        {
-                            uint32_t w = GetWindow()->GetWidth();
-                            uint32_t h = GetWindow()->GetHeight();
-                            Vec2 originSS = WorldToScreen(m_DragStartPos, w, h, m_ViewMatrix, m_ProjectionMatrix);
-                            Vec2 mp = { (float)mouse.X, (float)mouse.Y };
-                            m_DragStartAngle = atan2f(mp.y - originSS.y, mp.x - originSS.x);
-                        }
+                        // (Rotate gizmo no longer needs screen-space angle init —
+                        //  uses 3D plane intersection in drag handler)
                     }
                     else
                     {
@@ -783,18 +871,66 @@ protected:
                     }
                     else if (m_GizmoMode == EGizmoMode::Rotate)
                     {
-                        // Compute angle delta on screen: atan2 of cursor vs gizmo origin SS
-                        Vec2 originSS = WorldToScreen(m_DragStartPos, w, h, m_ViewMatrix, m_ProjectionMatrix);
-                        Vec2 mp = { (float)mouse.X, (float)mouse.Y };
-                        float curAngle = atan2f(mp.y - originSS.y, mp.x - originSS.x);
-                        float deltaRad = curAngle - m_DragStartAngle;
-                        float deltaDeg = deltaRad * (180.0f / PI);
+                        // 3D plane-projected rotation:
+                        // 1. Intersect mouse ray with the plane defined by (axisDir, gizmoCenter)
+                        // 2. Compute angle between start and current intersection points
 
-                        Vec3 newRot = m_DragStartRotation;
-                        if      (m_DragAxis == EGizmoAxis::X) newRot.x += deltaDeg;
-                        else if (m_DragAxis == EGizmoAxis::Y) newRot.y += deltaDeg;
-                        else if (m_DragAxis == EGizmoAxis::Z) newRot.z += deltaDeg;
-                        sel->GetRotation() = newRot;
+                        // Helper: intersect ray with plane (normal=axisDir, point=center)
+                        auto RayPlaneIntersect = [](const Ray& ray, const Vec3& planeN, const Vec3& planeP) -> Vec3
+                        {
+                            float denom = planeN.x * ray.Direction.x + planeN.y * ray.Direction.y + planeN.z * ray.Direction.z;
+                            if (fabsf(denom) < 1e-6f)
+                            {
+                                // Ray parallel to plane — fallback: project origin onto plane
+                                return planeP;
+                            }
+                            float dx = planeP.x - ray.Origin.x;
+                            float dy = planeP.y - ray.Origin.y;
+                            float dz = planeP.z - ray.Origin.z;
+                            float t = (dx * planeN.x + dy * planeN.y + dz * planeN.z) / denom;
+                            return { ray.Origin.x + ray.Direction.x * t,
+                                     ray.Origin.y + ray.Direction.y * t,
+                                     ray.Origin.z + ray.Direction.z * t };
+                        };
+
+                        Vec3 center = m_DragStartPos;
+
+                        Ray rayNow   = ScreenToRay(mouse.X, mouse.Y, w, h, m_ViewMatrix, m_ProjectionMatrix);
+                        Ray rayStart = ScreenToRay(m_DragStartMouseX, m_DragStartMouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
+
+                        Vec3 hitNow   = RayPlaneIntersect(rayNow,   axisDir, center);
+                        Vec3 hitStart = RayPlaneIntersect(rayStart, axisDir, center);
+
+                        // Vectors from center to hit points (projected onto the rotation plane)
+                        Vec3 vStart = { hitStart.x - center.x, hitStart.y - center.y, hitStart.z - center.z };
+                        Vec3 vNow   = { hitNow.x - center.x,   hitNow.y - center.y,   hitNow.z - center.z };
+
+                        float lenS = sqrtf(vStart.x*vStart.x + vStart.y*vStart.y + vStart.z*vStart.z);
+                        float lenN = sqrtf(vNow.x*vNow.x + vNow.y*vNow.y + vNow.z*vNow.z);
+
+                        if (lenS > 1e-5f && lenN > 1e-5f)
+                        {
+                            // Normalize
+                            vStart = { vStart.x/lenS, vStart.y/lenS, vStart.z/lenS };
+                            vNow   = { vNow.x/lenN,   vNow.y/lenN,   vNow.z/lenN   };
+
+                            // Angle via atan2(cross · axis, dot) — gives signed angle
+                            Vec3 crossV = {
+                                vStart.y * vNow.z - vStart.z * vNow.y,
+                                vStart.z * vNow.x - vStart.x * vNow.z,
+                                vStart.x * vNow.y - vStart.y * vNow.x
+                            };
+                            float sinAngle = crossV.x * axisDir.x + crossV.y * axisDir.y + crossV.z * axisDir.z;
+                            float cosAngle = vStart.x * vNow.x + vStart.y * vNow.y + vStart.z * vNow.z;
+                            float deltaRad = atan2f(sinAngle, cosAngle);
+                            float deltaDeg = deltaRad * (180.0f / PI);
+
+                            Vec3 newRot = m_DragStartRotation;
+                            if      (m_DragAxis == EGizmoAxis::X) newRot.x += deltaDeg;
+                            else if (m_DragAxis == EGizmoAxis::Y) newRot.y += deltaDeg;
+                            else if (m_DragAxis == EGizmoAxis::Z) newRot.z += deltaDeg;
+                            sel->GetRotation() = newRot;
+                        }
                     }
                     else if (m_GizmoMode == EGizmoMode::Scale)
                     {
@@ -834,18 +970,20 @@ protected:
         // ---- Begin frame (DX12: Reset + RootSig + DescriptorHeaps + Barrier; DX11: no-op) ----
         ctx->BeginFrame(swapChain);
 
-        // ---- Check for active post-process effects ----
-        bool hasPostProcess = false;
+        // ---- Collect user post-process effects ----
         std::vector<PostProcessMaterial*> activeEffects;
         CollectActivePostProcessEffects(activeEffects);
-        hasPostProcess = !activeEffects.empty() && m_OffscreenRT[0] != nullptr;
+
+        // Always use offscreen RT for HDR pipeline (Tonemap is always-on)
+        bool hasPostProcess = (m_OffscreenRT[0] != nullptr);
 
         // ---- Ensure offscreen RT size matches window ----
         uint32_t winW = GetWindow()->GetWidth();
         uint32_t winH = GetWindow()->GetHeight();
-        if (hasPostProcess && (m_OffscreenWidth != winW || m_OffscreenHeight != winH))
+        if (m_OffscreenWidth != winW || m_OffscreenHeight != winH)
         {
             CreateOffscreenRenderTargets(device, winW, winH);
+            hasPostProcess = (m_OffscreenRT[0] != nullptr);
         }
 
         // ---- Ensure G-Buffer size matches window ----
@@ -898,11 +1036,15 @@ protected:
             // DEFERRED RENDERING PATH
             // ================================================================
 
-            // ==== PASS 0: Shadow Pass (CSM) ====
+            // ==== PASS 0: Upload GPU Scene Buffer (once per frame, before any pass) ====
+            m_GPUScene.Update(m_Scene, m_MaterialLibrary, m_RenderList);
+            m_GPUScene.UploadToGPU();
+
+            // ==== PASS 1: Shadow Pass (CSM) ====
             UpdateShadowData();
             RenderShadowPass(ctx);
 
-            // ==== PASS 1: G-Buffer Geometry Pass ====
+            // ==== PASS 2: G-Buffer Geometry Pass ====
             ctx->BeginEvent("G-Buffer Pass");
             m_PassTimer.Begin("G-Buffer Pass");
 
@@ -958,55 +1100,82 @@ protected:
             // ==== PASS 2: Deferred Lighting / Buffer Visualization ====
             if (m_ViewMode == EViewMode::Lit)
             {
-                // Full deferred lighting pass
-                ctx->BeginEvent("Deferred Lighting Pass");
-                m_PassTimer.Begin("Deferred Lighting Pass");
+                // ---- UE5 Multi-Pass Deferred Lighting ----
+                ctx->BeginEvent("Deferred Lighting");
+                m_PassTimer.Begin("Deferred Lighting");
 
                 ctx->SetRenderTargets(&sceneRTV, 1, nullptr);
                 ctx->SetViewports(&vp, 1);
                 ctx->SetScissorRects(&sr, 1);
 
-                ClearColorValue clearColor = { 0.12f, 0.12f, 0.18f, 1.0f };
-                ctx->ClearRenderTargetView(sceneRTV, clearColor);
-
-                // Set deferred lighting pipeline
-                ctx->SetPipelineState(m_DeferredLightingPSO.get());
-                ctx->SetVertexShader(m_DeferredLightingVS.get());
-                ctx->SetPixelShader(m_DeferredLightingPS.get());
-                ctx->SetInputLayout(nullptr);
-                ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
-
-                // Bind G-Buffer SRVs (t0=GBufferA, t1=GBufferB, t2=GBufferC)
+                // Bind G-Buffer + depth (shared across all sub-passes)
                 ctx->SetShaderResourceView(0, m_GBufferSRV[0].get());
                 ctx->SetShaderResourceView(1, m_GBufferSRV[1].get());
                 ctx->SetShaderResourceView(2, m_GBufferSRV[2].get());
-
-                // Bind shadow atlas SRV (t3 = single atlas for all cascades)
-                ctx->SetShaderResourceView(3, m_ShadowAtlasSRV.get());
-
-                // Bind depth buffer SRV for position reconstruction (t7)
                 ctx->SetShaderResourceView(7, GetDepthSRV());
-
-                // Bind sampler (DX11 only; DX12 uses static sampler s0)
                 ctx->SetSampler(0, m_PostProcessSampler.get());
-                // Bind comparison sampler for shadow mapping (DX11 s2; DX12 uses static sampler)
-                ctx->SetSampler(2, m_ShadowSampler.get());
 
-                // Update CB with lighting data
+                // Upload ViewUB (b0)
                 UpdateDeferredLightingCB();
 
-                // Upload and bind shadow uniform buffer at b2
-                UploadShadowUB();
-                ctx->SetConstantBuffer(2, m_ShadowCB.get());
+                // ---- Step 1: Ambient Pass (opaque first write) ----
+                ctx->BeginEvent("Ambient Pass");
+                if (m_DeferredAmbientPSO)
+                {
+                    ctx->SetPipelineState(m_DeferredAmbientPSO.get());
+                    ctx->SetVertexShader(m_DeferredAmbientVS.get());
+                    ctx->SetPixelShader(m_DeferredAmbientPS.get());
+                    ctx->SetInputLayout(nullptr);
+                    ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+                    ctx->Draw(3, 0);
+                }
+                else
+                {
+                    ClearColorValue clearColor = { 0.05f, 0.05f, 0.08f, 1.0f };
+                    ctx->ClearRenderTargetView(sceneRTV, clearColor);
+                }
+                ctx->EndEvent();
 
-                // Draw fullscreen triangle
-                ctx->Draw(3, 0);
+                // ---- Step 2: Per-Light Passes (additive blend) ----
+                if (m_DeferredLightingAdditivePSO && m_NumActiveLights > 0)
+                {
+                    ctx->SetPipelineState(m_DeferredLightingAdditivePSO.get());
+                    ctx->SetVertexShader(m_DeferredLightingVS.get());
+                    ctx->SetPixelShader(m_DeferredLightingPS.get());
+                    ctx->SetInputLayout(nullptr);
+                    ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+
+                    // Shadow atlas + comparison sampler
+                    ctx->SetShaderResourceView(3, m_ShadowAtlasSRV.get());
+                    ctx->SetSampler(2, m_ShadowSampler.get());
+                    UploadShadowUB();
+                    ctx->SetConstantBuffer(2, m_ShadowCB.get());
+
+                    for (int li = 0; li < m_NumActiveLights; li++)
+                    {
+                        ctx->BeginEvent("Light Pass");
+
+                        // Upload LightUB (b3)
+                        LightUniformBuffer lub = {};
+                        memcpy(lub.ColorIntensity, m_LightDataCache[li].ColorIntensity, sizeof(float) * 3);
+                        lub.LightType = m_LightDataCache[li].Type;
+                        memcpy(lub.DirectionOrPos, m_LightDataCache[li].DirectionOrPos, sizeof(float) * 3);
+                        lub.Radius = m_LightDataCache[li].Radius;
+
+                        void* mapped = m_LightCB->Map();
+                        if (mapped) { memcpy(mapped, &lub, sizeof(lub)); m_LightCB->Unmap(); }
+                        ctx->SetConstantBuffer(3, m_LightCB.get());
+
+                        ctx->Draw(3, 0);
+                        ctx->EndEvent();
+                    }
+                }
 
                 // Unbind SRVs
                 ctx->SetShaderResourceView(0, nullptr);
                 ctx->SetShaderResourceView(1, nullptr);
                 ctx->SetShaderResourceView(2, nullptr);
-                ctx->SetShaderResourceView(3, nullptr); // Shadow atlas
+                ctx->SetShaderResourceView(3, nullptr);
                 ctx->SetShaderResourceView(7, nullptr);
 
                 m_PassTimer.End();
@@ -1112,7 +1281,7 @@ protected:
             ctx->EndEvent();
         }
 
-        // ---- Post-Process Pass ----
+        // ---- Post-Process Pass (always runs — HDR Tonemap is built-in) ----
         if (hasPostProcess)
         {
             ctx->BeginEvent("Post-Process Pass");
@@ -1229,6 +1398,8 @@ protected:
         ctx->SetConstantBuffer(1, m_ObjectUB.get());
     }
 
+    // GPU Scene upload now handled by GPUScene class (m_GPUScene)
+
     // Helper: Bind material textures for the current object
     void BindMaterialTextures(RHICommandContext* ctx, MeshComponent* meshComp)
     {
@@ -1279,61 +1450,135 @@ protected:
         }
     }
 
-    // Deferred path: All objects rendered with G-Buffer shader (PSO already set)
+    // Deferred path: dual-path rendering
+    //   Path 1: Instanced batches (same mesh + same material, count >= 2)
+    //           → DrawIndexedInstanced, shader reads StructuredBuffer via SV_InstanceID
+    //   Path 2: Single draws (unique mesh or material combo)
+    //           → DrawIndexed, shader reads ObjectUB (b1) via CB offset binding
     void DrawSceneMeshesDeferred(RHICommandContext* ctx)
     {
-        // Upload per-frame ViewUB once before all draw calls
         UploadViewUB(ctx);
 
-        for (const auto& renderItem : m_RenderList)
+        auto& batches = m_GPUScene.GetInstanceBatches();
+        auto& singles = m_GPUScene.GetSingleDrawItems();
+
+        // ---- Path 1: Instanced batches (same mesh + same material) ----
+        // Uses StructuredBuffer (t8) + SV_InstanceID for true GPU instancing.
+        // One DrawIndexedInstanced per batch = one draw call for N identical objects.
+        if (!batches.empty() && m_GBufferVS_Instanced && m_GBufferPSO_Instanced)
         {
-            size_t i = renderItem.ObjectIndex;
+            // Switch to instanced PSO/VS
+            ctx->SetPipelineState(m_GBufferPSO_Instanced.get());
+            ctx->SetVertexShader(m_GBufferVS_Instanced.get());
+            ctx->SetPixelShader(m_GBufferPS.get());
+            ctx->SetInputLayout(m_InputLayout.get());
+
+            // Bind GPU Scene StructuredBuffer (t8) for all batches
+            m_GPUScene.BindForInstancing(ctx);
+
+            for (const auto& batch : batches)
+            {
+                SharedMeshEntry mesh = {};
+                for (auto& entry : m_SharedMeshPool)
+                    if (entry.MeshID == batch.MeshID) { mesh = entry; break; }
+                if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
+
+                // Bind VB/IB once for entire batch
+                VertexBufferView vbView;
+                vbView.BufferLocation = 0;
+                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                vbView.StrideInBytes = sizeof(Vertex);
+                RHIBuffer* vbPtr = mesh.VertexBuffer;
+                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+                IndexBufferView ibView;
+                ibView.BufferLocation = 0;
+                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                ibView.Format = EFormat::R32_UINT;
+                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+
+                // Bind material textures once for entire batch
+                if (!batch.RenderListIndices.empty())
+                {
+                    auto* meshComp = m_RenderList[batch.RenderListIndices[0]].MeshComp;
+                    if (meshComp) BindMaterialTextures(ctx, meshComp);
+                }
+
+                // Set batch start index in GPU Scene buffer (b4)
+                m_GPUScene.SetBatchStartIndex(ctx, batch.StartIndex);
+
+                // TRUE instanced draw: one call for all instances!
+                ctx->DrawIndexedInstanced(mesh.IndexCount, batch.InstanceCount, 0, 0, 0);
+            }
+
+            // Switch back to non-instanced PSO for single draws
+            ctx->SetPipelineState(m_GBufferPSO.get());
+            ctx->SetVertexShader(m_GBufferVS.get());
+            ctx->SetPixelShader(m_GBufferPS.get());
+        }
+
+        // ---- Path 2: Single draws (CB offset binding) ----
+        RHIBuffer* lastVB = nullptr;
+        const char* lastMaterial = nullptr;
+
+        for (const auto& single : singles)
+        {
+            const auto& renderItem = m_RenderList[single.RenderListIndex];
             auto* meshComp = renderItem.MeshComp;
             if (!meshComp) continue;
 
-            if (i >= m_GPUMeshes.size() || !m_GPUMeshes[i].VertexBuffer)
-                continue;
+            SharedMeshEntry mesh = GetSharedMesh(renderItem.ObjectIndex);
+            if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
 
-            auto& gpuMesh = m_GPUMeshes[i];
+            if (mesh.VertexBuffer != lastVB)
+            {
+                VertexBufferView vbView;
+                vbView.BufferLocation = 0;
+                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                vbView.StrideInBytes = sizeof(Vertex);
+                RHIBuffer* vbPtr = mesh.VertexBuffer;
+                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
 
-            VertexBufferView vbView;
-            vbView.BufferLocation = 0;
-            vbView.SizeInBytes = gpuMesh.VertexCount * sizeof(Vertex);
-            vbView.StrideInBytes = sizeof(Vertex);
+                IndexBufferView ibView;
+                ibView.BufferLocation = 0;
+                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                ibView.Format = EFormat::R32_UINT;
+                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+                lastVB = mesh.VertexBuffer;
+            }
 
-            RHIBuffer* vbPtr = gpuMesh.VertexBuffer.get();
-            ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+            // CB offset binding for this primitive
+            m_GPUScene.BindPrimitive(ctx, single.GPUSceneIndex);
 
-            IndexBufferView ibView;
-            ibView.BufferLocation = 0;
-            ibView.SizeInBytes = gpuMesh.IndexCount * sizeof(uint32_t);
-            ibView.Format = EFormat::R32_UINT;
-            ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
+            const char* matName = meshComp->MaterialName.c_str();
+            if (lastMaterial == nullptr || strcmp(matName, lastMaterial) != 0)
+            {
+                BindMaterialTextures(ctx, meshComp);
+                lastMaterial = matName;
+            }
 
-            UploadObjectUB(ctx, meshComp);
-
-            // Bind material textures (t4 = BaseColor, t5 = NormalMap)
-            BindMaterialTextures(ctx, meshComp);
-
-            ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
+            ctx->DrawIndexed(mesh.IndexCount, 0, 0);
         }
     }
 
     // Forward path: Objects rendered with per-object shaders (or forced shader)
+    // DC merging: skip redundant PSO/VB/IB/SRV binds
     void DrawSceneMeshesForward(RHICommandContext* ctx, const char* forceShaderName = nullptr)
     {
-        // Upload per-frame ViewUB once before all draw calls
         UploadViewUB(ctx);
 
         std::string lastShaderName;
+        RHIBuffer* lastVB = nullptr;
+        const char* lastMaterial = nullptr;
+
         for (const auto& renderItem : m_RenderList)
         {
             size_t i = renderItem.ObjectIndex;
             auto* meshComp = renderItem.MeshComp;
             if (!meshComp) continue;
 
-            if (i >= m_GPUMeshes.size() || !m_GPUMeshes[i].VertexBuffer)
-                continue;
+            SharedMeshEntry mesh = GetSharedMesh(i);
+            if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
 
             // --- Per-object shader switching ---
             std::string matShaderName;
@@ -1349,36 +1594,44 @@ protected:
             {
                 CompiledShader* shader = m_ShaderLibrary.GetShader(shaderName);
                 if (!shader) shader = m_ShaderLibrary.GetDefault();
-
                 if (shader)
                 {
-                    if (shader->PSO)
-                        ctx->SetPipelineState(shader->PSO.get());
+                    if (shader->PSO) ctx->SetPipelineState(shader->PSO.get());
                     ctx->SetVertexShader(shader->VertexShader.get());
                     ctx->SetPixelShader(shader->PixelShader.get());
                     lastShaderName = shaderName;
                 }
             }
 
-            auto& gpuMesh = m_GPUMeshes[i];
+            // Skip VB/IB if same mesh
+            if (mesh.VertexBuffer != lastVB)
+            {
+                VertexBufferView vbView;
+                vbView.BufferLocation = 0;
+                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                vbView.StrideInBytes = sizeof(Vertex);
+                RHIBuffer* vbPtr = mesh.VertexBuffer;
+                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
 
-            VertexBufferView vbView;
-            vbView.BufferLocation = 0;
-            vbView.SizeInBytes = gpuMesh.VertexCount * sizeof(Vertex);
-            vbView.StrideInBytes = sizeof(Vertex);
+                IndexBufferView ibView;
+                ibView.BufferLocation = 0;
+                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                ibView.Format = EFormat::R32_UINT;
+                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+                lastVB = mesh.VertexBuffer;
+            }
 
-            RHIBuffer* vbPtr = gpuMesh.VertexBuffer.get();
-            ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+            uint32_t primitiveIdx = (uint32_t)(&renderItem - &m_RenderList[0]);
+            m_GPUScene.BindPrimitive(ctx, primitiveIdx);
 
-            IndexBufferView ibView;
-            ibView.BufferLocation = 0;
-            ibView.SizeInBytes = gpuMesh.IndexCount * sizeof(uint32_t);
-            ibView.Format = EFormat::R32_UINT;
-            ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
+            const char* matName = meshComp->MaterialName.c_str();
+            if (lastMaterial == nullptr || strcmp(matName, lastMaterial) != 0)
+            {
+                BindMaterialTextures(ctx, meshComp);
+                lastMaterial = matName;
+            }
 
-            UploadObjectUB(ctx, meshComp);
-            BindMaterialTextures(ctx, meshComp);
-            ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
+            ctx->DrawIndexed(mesh.IndexCount, 0, 0);
         }
     }
 
@@ -1603,22 +1856,52 @@ protected:
             }
         }
 
-        // If no effects ran (shouldn't happen), blit RT[0] to backbuffer
-        // This case is handled by the hasPostProcess check in OnRender
+        // ---- Built-in Tonemap Pass (always last) ----
+        // Reads from current srcIdx (HDR), writes to backbuffer (LDR)
+        {
+            auto* tonemapShader = m_PostProcessLibrary.GetShader("Tonemap");
+            if (tonemapShader && tonemapShader->PixelShader)
+            {
+                // Source: current ping-pong buffer (HDR)
+                ctx->ResourceBarrier(m_OffscreenRT[srcIdx].get(),
+                    RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+                // Destination: backbuffer
+                RHITextureView* bbRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
+                ctx->SetRenderTargets(&bbRTV, 1, nullptr);
+                ctx->SetViewports(&vp, 1);
+                ctx->SetScissorRects(&sr, 1);
+
+                ctx->SetPipelineState(tonemapShader->PSO.get());
+                ctx->SetVertexShader(tonemapShader->VertexShader.get());
+                ctx->SetPixelShader(tonemapShader->PixelShader.get());
+                ctx->SetInputLayout(nullptr);
+                ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+
+                ctx->SetShaderResourceView(0, m_OffscreenSRV[srcIdx].get());
+                ctx->SetSampler(0, m_PostProcessSampler.get());
+
+                // Upload exposure via PostProcessCB
+                float ppData[4] = { 1.0f, 0.0f, 0.0f, 0.0f }; // exposure = 1.0
+                void* mapped = m_PostProcessCB->Map();
+                if (mapped) { memcpy(mapped, ppData, sizeof(ppData)); m_PostProcessCB->Unmap(); }
+                ctx->SetConstantBuffer(0, m_PostProcessCB.get());
+
+                ctx->Draw(3, 0);
+                ctx->SetShaderResourceView(0, nullptr);
+
+                return; // Tonemap wrote directly to backbuffer — done
+            }
+        }
+
+        // Fallback: if Tonemap shader not available, blit RT[0] to backbuffer (no tonemap)
     }
 
     // ============================================================
     // InitView — Frustum Culling + Render Sorting
     // ============================================================
 
-    // Render item: references a MeshComponent that passed frustum culling
-    struct RenderItem
-    {
-        size_t         ObjectIndex;   // Index into m_Scene.GetObjects() (for GPU buffer lookup)
-        MeshComponent* MeshComp;      // The mesh component to render
-        int32_t        SortOrder;     // Higher = rendered first
-        float          DistToCamera;  // Distance from object center to camera
-    };
+    // RenderItem is defined in GPUScene.h (shared with GPUScene batch classification)
 
     void InitView()
     {
@@ -1660,17 +1943,26 @@ protected:
             item.MeshComp = meshComp;
             item.SortOrder = meshComp->SortOrder;
             item.DistToCamera = distSq;
+            // DC merge keys: group by mesh type + material
+            item.MeshID = (uint32_t)meshComp->PrimitiveType;
+            item.MaterialName = meshComp->MaterialName.c_str();
             m_RenderList.push_back(item);
         }
 
-        // Sort: primary key = SortOrder (descending, higher first),
-        //        secondary key = distance to camera (descending, far first = back-to-front)
+        // Sort for DC merging: SortOrder → MeshID → Material → front-to-back
+        // Groups same mesh + same material together to minimize state changes.
+        // Front-to-back within group exploits Early-Z for deferred pass.
         std::sort(m_RenderList.begin(), m_RenderList.end(),
             [](const RenderItem& a, const RenderItem& b)
             {
                 if (a.SortOrder != b.SortOrder)
-                    return a.SortOrder > b.SortOrder; // Higher SortOrder rendered first
-                return a.DistToCamera > b.DistToCamera; // Farther objects rendered first (back-to-front)
+                    return a.SortOrder > b.SortOrder;
+                if (a.MeshID != b.MeshID)
+                    return a.MeshID < b.MeshID;           // Group same mesh type
+                int matCmp = strcmp(a.MaterialName, b.MaterialName);
+                if (matCmp != 0)
+                    return matCmp < 0;                     // Group same material
+                return a.DistToCamera < b.DistToCamera;   // Front-to-back (Early-Z)
             });
     }
 
@@ -1763,6 +2055,7 @@ protected:
                 m_NumActiveLights++;
             }
         }
+
     }
 
     // ---- RHI Switch callbacks ----
@@ -1774,7 +2067,9 @@ protected:
         // Release all GPU resources
         m_GPUMeshes.clear();
         m_ViewUB.reset();
+        m_GPUScene.Release();
         m_ObjectUB.reset();
+        m_LightCB.reset();
         m_InputLayout.reset();
         m_PipelineState.reset();
 
@@ -1873,9 +2168,19 @@ private:
         cbDesc.SizeInBytes = sizeof(ViewUniformBuffer);
         m_ViewUB = device->CreateBuffer(cbDesc);
 
-        cbDesc.DebugName = "ObjectUniformBuffer";
+        // GPU Scene Buffer: managed by GPUScene class (UE5 FPrimitiveSceneData pattern)
+        // Supports dirty-flag incremental updates, one Map/Unmap per frame.
+        m_GPUScene.Initialize(device);
+
+        // Small per-draw ObjectUB for fullscreen passes and gizmos (not part of scene)
+        cbDesc.DebugName = "ObjectUB_Aux";
         cbDesc.SizeInBytes = sizeof(ObjectUniformBuffer);
         m_ObjectUB = device->CreateBuffer(cbDesc);
+
+        // Per-light CB for multi-pass deferred lighting (b3)
+        cbDesc.DebugName = "LightUniformBuffer";
+        cbDesc.SizeInBytes = sizeof(LightUniformBuffer);
+        m_LightCB = device->CreateBuffer(cbDesc);
 
         // Pipeline state (DX11: empty wrapper, DX12: managed per-shader)
         m_PipelineState = device->CreatePipelineState();
@@ -1969,7 +2274,7 @@ private:
             TextureDesc rtDesc;
             rtDesc.Width = width;
             rtDesc.Height = height;
-            rtDesc.Format = EFormat::R8G8B8A8_UNORM;
+            rtDesc.Format = EFormat::R16G16B16A16_FLOAT;  // HDR scene color
             rtDesc.BindFlags = TEXTURE_BIND_RENDER_TARGET | TEXTURE_BIND_SHADER_RESOURCE;
             rtDesc.Usage = EResourceUsage::Default;
             rtDesc.MipLevels = 1;
@@ -2071,12 +2376,18 @@ private:
         m_GBufferVS.reset();
         m_GBufferPS.reset();
         m_GBufferPSO.reset();
+        m_GBufferVS_Instanced.reset();
+        m_GBufferPSO_Instanced.reset();
         m_DeferredLightingVS.reset();
         m_DeferredLightingPS.reset();
         m_DeferredLightingPSO.reset();
         m_BufferVisVS.reset();
         m_BufferVisPS.reset();
         m_BufferVisPSO.reset();
+        m_DeferredAmbientVS.reset();
+        m_DeferredAmbientPS.reset();
+        m_DeferredAmbientPSO.reset();
+        m_DeferredLightingAdditivePSO.reset();
     }
 
     std::string ReadShaderFile(const std::string& filePath)
@@ -2089,7 +2400,37 @@ private:
         }
         std::stringstream ss;
         ss << file.rdbuf();
-        return ss.str();
+        std::string source = ss.str();
+
+        // Resolve #include directives — FXC D3DCompile needs pre-expanded source
+        std::string parentDir = filePath.substr(0, filePath.find_last_of("/\\"));
+        std::string result;
+        std::istringstream stream(source);
+        std::string line;
+        while (std::getline(stream, line))
+        {
+            size_t pos = line.find("#include");
+            if (pos != std::string::npos)
+            {
+                size_t q1 = line.find('"', pos);
+                size_t q2 = line.find('"', q1 + 1);
+                if (q1 != std::string::npos && q2 != std::string::npos)
+                {
+                    std::string includeName = line.substr(q1 + 1, q2 - q1 - 1);
+                    std::string includePath = parentDir + "/" + includeName;
+                    std::ifstream incFile(includePath);
+                    if (incFile.is_open())
+                    {
+                        std::string incContent((std::istreambuf_iterator<char>(incFile)),
+                                                std::istreambuf_iterator<char>());
+                        result += incContent + "\n";
+                        continue;
+                    }
+                }
+            }
+            result += line + "\n";
+        }
+        return result;
     }
 
     void CompileDeferredShaders(RHIDevice* device)
@@ -2119,6 +2460,16 @@ private:
                 m_GBufferPSO = device->CreateGraphicsPipelineState(
                     m_GBufferVS.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
 
+                // Compile instanced variant (USE_GPU_SCENE_INSTANCING defined)
+                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                m_GBufferVS_Instanced = device->CompileShader(
+                    EShaderType::Vertex, gbufferSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                if (m_GBufferVS_Instanced)
+                {
+                    m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(
+                        m_GBufferVS_Instanced.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+                }
+
                 std::cout << "[Kiwi] G-Buffer shader compiled successfully" << std::endl;
             }
             else
@@ -2142,7 +2493,7 @@ private:
                 // Fullscreen pass: no input layout, no depth
                 PipelineStateDesc lightingPSODesc;
                 lightingPSODesc.NumRenderTargets = 1;
-                lightingPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                lightingPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
                 lightingPSODesc.DepthEnabled = false;
                 lightingPSODesc.DepthWrite = false;
 
@@ -2156,6 +2507,49 @@ private:
             {
                 std::cerr << "[Kiwi] Failed to compile Deferred Lighting shaders" << std::endl;
             }
+        }
+
+        // --- Compile Deferred Ambient shader ---
+        std::string ambientPath = m_ShaderDir + "/DeferredAmbient.hlsl";
+        std::string ambientSrc = ReadShaderFile(ambientPath);
+        if (!ambientSrc.empty())
+        {
+            m_DeferredAmbientVS = device->CompileShader(
+                EShaderType::Vertex, ambientSrc.c_str(), "VSMain", "vs_5_0");
+            m_DeferredAmbientPS = device->CompileShader(
+                EShaderType::Pixel, ambientSrc.c_str(), "PSMain", "ps_5_0");
+
+            if (m_DeferredAmbientVS && m_DeferredAmbientPS)
+            {
+                PipelineStateDesc ambientPSODesc;
+                ambientPSODesc.NumRenderTargets = 1;
+                ambientPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
+                ambientPSODesc.DepthEnabled = false;
+                ambientPSODesc.DepthWrite = false;
+
+                m_DeferredAmbientPSO = device->CreateGraphicsPipelineState(
+                    m_DeferredAmbientVS.get(), m_DeferredAmbientPS.get(),
+                    nullptr, ambientPSODesc);
+
+                std::cout << "[Kiwi] Deferred Ambient shader compiled successfully" << std::endl;
+            }
+        }
+
+        // --- Create additive blend PSO for per-light passes ---
+        if (m_DeferredLightingVS && m_DeferredLightingPS)
+        {
+            PipelineStateDesc additivePSODesc;
+            additivePSODesc.NumRenderTargets = 1;
+            additivePSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
+            additivePSODesc.DepthEnabled = false;
+            additivePSODesc.DepthWrite = false;
+            additivePSODesc.AdditiveBlend = true;
+
+            m_DeferredLightingAdditivePSO = device->CreateGraphicsPipelineState(
+                m_DeferredLightingVS.get(), m_DeferredLightingPS.get(),
+                nullptr, additivePSODesc);
+
+            std::cout << "[Kiwi] Deferred Lighting additive PSO created" << std::endl;
         }
 
         // --- Compile Buffer Visualization shader ---
@@ -2232,6 +2626,16 @@ private:
                 m_ShadowPassPSO = device->CreateGraphicsPipelineState(
                     m_ShadowPassVS.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
 
+                // Compile instanced variant (USE_GPU_SCENE_INSTANCING defined)
+                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                m_ShadowPassVS_Instanced = device->CompileShader(
+                    EShaderType::Vertex, shadowSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                if (m_ShadowPassVS_Instanced)
+                {
+                    m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(
+                        m_ShadowPassVS_Instanced.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
+                }
+
                 std::cout << "[Kiwi] Shadow Pass shader compiled successfully" << std::endl;
             }
             else
@@ -2285,6 +2689,8 @@ private:
         ReleaseShadowMaps();
         m_ShadowPassVS.reset();
         m_ShadowPassPSO.reset();
+        m_ShadowPassVS_Instanced.reset();
+        m_ShadowPassPSO_Instanced.reset();
         m_ShadowCB.reset();
         m_ShadowSampler.reset();
     }
@@ -2557,45 +2963,80 @@ private:
             shadowSR.Bottom = (int32_t)(oy + m_ShadowCascadeSize);
             ctx->SetScissorRects(&shadowSR, 1);
 
-            // Draw all mesh objects from light's perspective
-            for (const auto& renderItem : m_RenderList)
+            // Draw all mesh objects -- instanced batches first, then single draws
+            auto& batches = m_GPUScene.GetInstanceBatches();
+            auto& singles = m_GPUScene.GetSingleDrawItems();
+
+            // Instanced batches: true DrawIndexedInstanced via StructuredBuffer
+            if (!batches.empty() && m_ShadowPassVS_Instanced && m_ShadowPassPSO_Instanced)
             {
-                size_t i = renderItem.ObjectIndex;
+                ctx->SetPipelineState(m_ShadowPassPSO_Instanced.get());
+                ctx->SetVertexShader(m_ShadowPassVS_Instanced.get());
+                ctx->SetPixelShader(nullptr);
+                ctx->SetInputLayout(m_InputLayout.get());
+                m_GPUScene.BindForInstancing(ctx);
+
+                for (const auto& batch : batches)
+                {
+                    SharedMeshEntry mesh = {};
+                    for (auto& entry : m_SharedMeshPool)
+                        if (entry.MeshID == batch.MeshID) { mesh = entry; break; }
+                    if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
+
+                    VertexBufferView vbView;
+                    vbView.BufferLocation = 0;
+                    vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                    vbView.StrideInBytes = sizeof(Vertex);
+                    RHIBuffer* vbPtr = mesh.VertexBuffer;
+                    ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+                    IndexBufferView ibView;
+                    ibView.BufferLocation = 0;
+                    ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                    ibView.Format = EFormat::R32_UINT;
+                    ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+
+                    m_GPUScene.SetBatchStartIndex(ctx, batch.StartIndex);
+                    ctx->DrawIndexedInstanced(mesh.IndexCount, batch.InstanceCount, 0, 0, 0);
+                }
+
+                // Restore non-instanced PSO for single draws
+                ctx->SetPipelineState(m_ShadowPassPSO.get());
+                ctx->SetVertexShader(m_ShadowPassVS.get());
+                ctx->SetPixelShader(nullptr);
+            }
+
+            // Single draws (CB offset)
+            RHIBuffer* lastShadowVB = nullptr;
+            for (const auto& single : singles)
+            {
+                const auto& renderItem = m_RenderList[single.RenderListIndex];
                 auto* meshComp = renderItem.MeshComp;
                 if (!meshComp) continue;
-                if (i >= m_GPUMeshes.size() || !m_GPUMeshes[i].VertexBuffer) continue;
 
-                auto& gpuMesh = m_GPUMeshes[i];
+                SharedMeshEntry mesh = GetSharedMesh(renderItem.ObjectIndex);
+                if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
 
-                // Upload ObjectUB with world matrix for this object
-                Mat4 worldMatrix = meshComp->GetWorldMatrix();
-                ObjectUniformBuffer oub = {};
-                memcpy(oub.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-                oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
+                m_GPUScene.BindPrimitive(ctx, single.GPUSceneIndex);
 
-                void* mapped = m_ObjectUB->Map();
-                if (mapped)
+                if (mesh.VertexBuffer != lastShadowVB)
                 {
-                    memcpy(mapped, &oub, sizeof(oub));
-                    m_ObjectUB->Unmap();
+                    VertexBufferView vbView;
+                    vbView.BufferLocation = 0;
+                    vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                    vbView.StrideInBytes = sizeof(Vertex);
+                    RHIBuffer* vbPtr = mesh.VertexBuffer;
+                    ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+                    IndexBufferView ibView;
+                    ibView.BufferLocation = 0;
+                    ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                    ibView.Format = EFormat::R32_UINT;
+                    ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+                    lastShadowVB = mesh.VertexBuffer;
                 }
-                ctx->SetConstantBuffer(1, m_ObjectUB.get());
 
-                VertexBufferView vbView;
-                vbView.BufferLocation = 0;
-                vbView.SizeInBytes = gpuMesh.VertexCount * sizeof(Vertex);
-                vbView.StrideInBytes = sizeof(Vertex);
-
-                RHIBuffer* vbPtr = gpuMesh.VertexBuffer.get();
-                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
-
-                IndexBufferView ibView;
-                ibView.BufferLocation = 0;
-                ibView.SizeInBytes = gpuMesh.IndexCount * sizeof(uint32_t);
-                ibView.Format = EFormat::R32_UINT;
-                ctx->SetIndexBuffer(gpuMesh.IndexBuffer.get(), &ibView);
-
-                ctx->DrawIndexed(gpuMesh.IndexCount, 0, 0);
+                ctx->DrawIndexed(mesh.IndexCount, 0, 0);
             }
         }
 
@@ -5166,14 +5607,18 @@ private:
         auto device = GetDevice();
         auto& objects = m_Scene.GetObjects();
 
+        // ---- Shared Mesh Pool: same EPrimitiveType shares one VB/IB ----
+        m_SharedMeshPool.clear();
         m_GPUMeshes.resize(objects.size());
+
+        // Map: PrimitiveType -> index in m_SharedMeshPool
+        std::unordered_map<int, size_t> meshTypeToPoolIndex;
 
         for (size_t i = 0; i < objects.size(); i++)
         {
             auto& obj = *objects[i];
             auto& gpu = m_GPUMeshes[i];
 
-            // Only build GPU buffers for objects with MeshComponent
             auto* meshComp = obj.GetComponent<MeshComponent>();
             if (!meshComp)
             {
@@ -5184,29 +5629,92 @@ private:
                 continue;
             }
 
-            gpu.VertexCount = meshComp->MeshData.GetVertexCount();
-            gpu.IndexCount = meshComp->MeshData.GetIndexCount();
+            int primType = (int)meshComp->PrimitiveType;
 
-            if (gpu.VertexCount == 0 || gpu.IndexCount == 0) continue;
+            // Check if we already have a shared VB/IB for this primitive type
+            auto it = meshTypeToPoolIndex.find(primType);
+            if (it != meshTypeToPoolIndex.end())
+            {
+                // Reuse existing shared mesh — point to same VB/IB
+                auto& shared = m_SharedMeshPool[it->second];
+                gpu.VertexBuffer.reset();  // No owned buffer — use shared
+                gpu.IndexBuffer.reset();
+                gpu.VertexCount = shared.VertexCount;
+                gpu.IndexCount  = shared.IndexCount;
+            }
+            else
+            {
+                // First instance of this primitive type — create VB/IB and share
+                gpu.VertexCount = meshComp->MeshData.GetVertexCount();
+                gpu.IndexCount = meshComp->MeshData.GetIndexCount();
 
-            // Debug names include object name for RenderDoc identification
-            std::string vbName = "MeshVB_" + obj.Name;
-            std::string ibName = "MeshIB_" + obj.Name;
+                if (gpu.VertexCount == 0 || gpu.IndexCount == 0) continue;
 
-            BufferDesc vbDesc;
-            vbDesc.SizeInBytes = gpu.VertexCount * sizeof(Vertex);
-            vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
-            vbDesc.Usage = EResourceUsage::Immutable;
-            vbDesc.DebugName = vbName.c_str();
-            gpu.VertexBuffer = device->CreateBuffer(vbDesc, meshComp->MeshData.GetVertices().data());
+                std::string typeName = std::to_string(primType);
+                std::string vbName = "SharedVB_Type" + typeName;
+                std::string ibName = "SharedIB_Type" + typeName;
 
-            BufferDesc ibDesc;
-            ibDesc.SizeInBytes = gpu.IndexCount * sizeof(uint32_t);
-            ibDesc.BindFlags = BUFFER_USAGE_INDEX;
-            ibDesc.Usage = EResourceUsage::Immutable;
-            ibDesc.DebugName = ibName.c_str();
-            gpu.IndexBuffer = device->CreateBuffer(ibDesc, meshComp->MeshData.GetIndices().data());
+                BufferDesc vbDesc;
+                vbDesc.SizeInBytes = gpu.VertexCount * sizeof(Vertex);
+                vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
+                vbDesc.Usage = EResourceUsage::Immutable;
+                vbDesc.DebugName = vbName.c_str();
+                gpu.VertexBuffer = device->CreateBuffer(vbDesc, meshComp->MeshData.GetVertices().data());
+
+                BufferDesc ibDesc;
+                ibDesc.SizeInBytes = gpu.IndexCount * sizeof(uint32_t);
+                ibDesc.BindFlags = BUFFER_USAGE_INDEX;
+                ibDesc.Usage = EResourceUsage::Immutable;
+                ibDesc.DebugName = ibName.c_str();
+                gpu.IndexBuffer = device->CreateBuffer(ibDesc, meshComp->MeshData.GetIndices().data());
+
+                // Register in shared pool
+                SharedMeshEntry entry;
+                entry.VertexBuffer = gpu.VertexBuffer.get();
+                entry.IndexBuffer  = gpu.IndexBuffer.get();
+                entry.VertexCount  = gpu.VertexCount;
+                entry.IndexCount   = gpu.IndexCount;
+                entry.MeshID       = primType;
+
+                meshTypeToPoolIndex[primType] = m_SharedMeshPool.size();
+                m_SharedMeshPool.push_back(entry);
+            }
         }
+
+        std::cout << "[Kiwi] Shared Mesh Pool: " << m_SharedMeshPool.size()
+                  << " unique meshes for " << objects.size() << " objects" << std::endl;
+    }
+
+    // Get shared mesh entry for a given object (returns non-owning pointers)
+    SharedMeshEntry GetSharedMesh(size_t objectIndex) const
+    {
+        if (objectIndex >= m_GPUMeshes.size()) return {};
+        auto& gpu = m_GPUMeshes[objectIndex];
+
+        // If this GPUMeshData owns its own VB/IB, return it directly
+        if (gpu.VertexBuffer)
+        {
+            SharedMeshEntry e;
+            e.VertexBuffer = gpu.VertexBuffer.get();
+            e.IndexBuffer  = gpu.IndexBuffer.get();
+            e.VertexCount  = gpu.VertexCount;
+            e.IndexCount   = gpu.IndexCount;
+            return e;
+        }
+
+        // Otherwise, find shared entry by primitive type
+        auto& objects = m_Scene.GetObjects();
+        if (objectIndex >= objects.size()) return {};
+        auto* meshComp = objects[objectIndex]->GetComponent<MeshComponent>();
+        if (!meshComp) return {};
+
+        int primType = (int)meshComp->PrimitiveType;
+        for (auto& entry : m_SharedMeshPool)
+        {
+            if (entry.MeshID == (uint32_t)primType)
+                return entry;
+        }
+        return {};
     }
 
     // ============================================================
@@ -5216,6 +5724,7 @@ private:
     Scene m_Scene;
     EditorInput m_EditorInput;
     std::vector<GPUMeshData> m_GPUMeshes;
+    std::vector<SharedMeshEntry> m_SharedMeshPool;  // Shared VB/IB per primitive type
     std::vector<RenderItem> m_RenderList; // Sorted visible objects from InitView()
 
     // Shader Library — manages all loaded shaders
@@ -5250,7 +5759,9 @@ private:
     // RHI resources (shared interface)
     std::unique_ptr<RHIInputLayout>   m_InputLayout;
     std::unique_ptr<RHIBuffer>        m_ViewUB;      // b0: ViewUniformBuffer (per-frame)
-    std::unique_ptr<RHIBuffer>        m_ObjectUB;    // b1: ObjectUniformBuffer (per-draw)
+    GPUScene                          m_GPUScene;       // b1: GPU Scene Buffer (all primitives, per-frame upload)
+    std::unique_ptr<RHIBuffer>        m_ObjectUB;    // b1: ObjectUniformBuffer (aux: fullscreen/gizmo)
+    std::unique_ptr<RHIBuffer>        m_LightCB;     // b3: LightUniformBuffer (per-light pass)
     std::unique_ptr<RHIPipelineState> m_PipelineState;  // DX11
 
     // Camera (cached from scene CameraComponent each frame)
@@ -5348,10 +5859,22 @@ private:
     std::unique_ptr<RHIShader> m_GBufferPS;
     std::unique_ptr<RHIPipelineState> m_GBufferPSO; // MRT PSO
 
+    // G-Buffer instanced variants (USE_GPU_SCENE_INSTANCING)
+    std::unique_ptr<RHIShader> m_GBufferVS_Instanced;
+    std::unique_ptr<RHIPipelineState> m_GBufferPSO_Instanced;
+
     // Deferred Lighting shader (fullscreen pass)
     std::unique_ptr<RHIShader> m_DeferredLightingVS;
     std::unique_ptr<RHIShader> m_DeferredLightingPS;
     std::unique_ptr<RHIPipelineState> m_DeferredLightingPSO;
+
+    // Deferred Ambient shader (opaque first-write pass)
+    std::unique_ptr<RHIShader> m_DeferredAmbientVS;
+    std::unique_ptr<RHIShader> m_DeferredAmbientPS;
+    std::unique_ptr<RHIPipelineState> m_DeferredAmbientPSO;
+
+    // Additive blend PSO for per-light passes
+    std::unique_ptr<RHIPipelineState> m_DeferredLightingAdditivePSO;
 
     // Buffer Visualization shader (fullscreen pass for debug ViewModes)
     std::unique_ptr<RHIShader> m_BufferVisVS;
@@ -5371,6 +5894,10 @@ private:
     // Shadow pass shader and PSO
     std::unique_ptr<RHIShader> m_ShadowPassVS;
     std::unique_ptr<RHIPipelineState> m_ShadowPassPSO;
+
+    // Shadow pass instanced variants (USE_GPU_SCENE_INSTANCING)
+    std::unique_ptr<RHIShader> m_ShadowPassVS_Instanced;
+    std::unique_ptr<RHIPipelineState> m_ShadowPassPSO_Instanced;
 
     // Shadow uniform buffer (b2)
     std::unique_ptr<RHIBuffer> m_ShadowCB;

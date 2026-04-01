@@ -186,6 +186,12 @@ namespace Kiwi
         // DX12: 返回空（使用 root signature 中的静态比较采样器）
         virtual std::unique_ptr<RHISampler> CreateComparisonSampler() { return nullptr; }
 
+        // 创建 Buffer SRV（StructuredBuffer 用于 GPU Scene instanced drawing）
+        // numElements: number of elements in the buffer
+        // structByteStride: byte size of each element (e.g., 256 for ObjectUniformBuffer)
+        virtual std::unique_ptr<RHITextureView> CreateBufferSRV(
+            RHIBuffer* buffer, uint32_t numElements, uint32_t structByteStride) { return nullptr; }
+
         // 查询特性
         virtual bool IsFeatureSupported(const char* feature) const = 0;
 
@@ -257,6 +263,17 @@ namespace Kiwi
         // ---- 常量缓冲 ----
         virtual void SetConstantBuffer(uint32_t slot, RHIBuffer* buffer) = 0;
 
+        // Bind a sub-range of a large constant buffer (GPU Scene pattern).
+        // offsetIn16Constants: offset in units of shader constants (1 constant = 1 float4 = 16 bytes).
+        //                      Matches DX11.1 VSSetConstantBuffers1 semantics.
+        // sizeIn16Constants:   size in units of shader constants.
+        // Default: falls back to SetConstantBuffer (ignores offset).
+        virtual void SetConstantBufferOffset(uint32_t slot, RHIBuffer* buffer,
+            uint32_t offsetIn16Constants, uint32_t sizeIn16Constants)
+        {
+            SetConstantBuffer(slot, buffer);
+        }
+
         // ---- 着色器资源视图（SRV）----
         virtual void SetShaderResourceView(uint32_t slot, RHITextureView* srv) = 0;
 
@@ -270,6 +287,13 @@ namespace Kiwi
         // ---- 绘制 ----
         virtual void Draw(uint32_t vertexCount, uint32_t vertexStart = 0) = 0;
         virtual void DrawIndexed(uint32_t indexCount, uint32_t indexStart = 0, int32_t vertexOffset = 0) = 0;
+        virtual void DrawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount,
+            uint32_t startIndex = 0, int32_t baseVertex = 0, uint32_t startInstance = 0)
+        {
+            // Default fallback: draw instances one by one
+            for (uint32_t i = 0; i < instanceCount; ++i)
+                DrawIndexed(indexCountPerInstance, startIndex, baseVertex);
+        }
 
         // ---- 提交 ----
         virtual void Flush() = 0;
