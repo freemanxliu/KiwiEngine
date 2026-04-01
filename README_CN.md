@@ -44,6 +44,7 @@
 
 - **DXC 集成** — `DXCCompiler` 单例封装 `IDxcCompiler3`，运行时通过 `LoadLibrary("dxcompiler.dll")` 加载。DXC 运行时 DLL（`dxcompiler.dll` + `dxil.dll`）由 CMake 自动复制到输出目录。
 - **ShaderLibrary** 根据当前活跃的 RHI 后端自动选择 HLSL（`Shaders/`）或 GLSL（`GLShaders/`）源文件。
+- **增量着色器热重载** — 着色器重载仅重新编译源文件已修改的着色器（基于 `filesystem::file_time_type` 时间戳对比）。未修改的着色器保持不变。编译失败时保留旧版本，不会中断渲染。适用于所有着色器系统：`ShaderLibrary`（前向着色器）、`PostProcessShaderLibrary`（后处理着色器）以及逐文件的延迟/阴影着色器（GBufferPass、DeferredLighting、DeferredAmbient、BufferVisualization、ShadowPass）。通过右上角 🔄 按钮或 `Rendering` 菜单（F5）触发。
 
 ### 🔦 延迟渲染管线（UE5 风格）
 
@@ -299,6 +300,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 - **切换视图模式**：菜单栏 → Rendering → View Mode → Lit / Unlit / BaseColor / Roughness / Metallic
 - **相机导航**：按住右键 + WASD 飞行移动；右键 + 鼠标拖动旋转视角
 - **相机设置**：点击右上角 📷 按钮调节移动速度和 FOV
+- **着色器热重载**：点击右上角 🔄 按钮或按 F5，仅重新编译修改过的着色器（增量编译，无修改时零开销）
 - **添加物体**：Placer 面板 → Cube / Sphere / Cylinder / Floor / Post Process
 - **添加灯光**：Placer 面板 → Directional Light / Point Light
 - **添加相机**：Placer 面板 → Camera

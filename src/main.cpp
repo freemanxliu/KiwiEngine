@@ -1328,6 +1328,13 @@ protected:
 
         m_PassTimer.EndFrame();
 
+        // ---- Hot-reload shaders after all rendering is done ----
+        if (m_PendingShaderReload)
+        {
+            m_PendingShaderReload = false;
+            ReloadModifiedShaders();
+        }
+
         // ---- End frame (DX12: BackBuffer->Present barrier; DX11: no-op) ----
         ctx->EndFrame(swapChain);
 
@@ -2209,7 +2216,18 @@ private:
 
             // Initialize shadow map resources
             InitShadowResources(device);
+
+            // Record timestamps for deferred + shadow shaders (for incremental reload)
+            namespace fs = std::filesystem;
+            m_DeferredShaderTimestamps["GBufferPass"] = fs::last_write_time(m_ShaderDir + "/GBufferPass.hlsl");
+            m_DeferredShaderTimestamps["DeferredLighting"] = fs::last_write_time(m_ShaderDir + "/DeferredLighting.hlsl");
+            m_DeferredShaderTimestamps["DeferredAmbient"] = fs::last_write_time(m_ShaderDir + "/DeferredAmbient.hlsl");
+            m_DeferredShaderTimestamps["BufferVisualization"] = fs::last_write_time(m_ShaderDir + "/BufferVisualization.hlsl");
+            m_DeferredShaderTimestamps["ShadowPass"] = fs::last_write_time(m_ShaderDir + "/ShadowPass.hlsl");
         }
+
+        // Mark first load complete — future reloads will be incremental
+        m_FirstShaderLoad = false;
 
         // Init ImGui backend
         device->InitImGui(GetWindow()->GetHWND());
@@ -2696,6 +2714,286 @@ private:
     }
 
     // ============================================================
+    // Reload All Shaders — release and recompile without RHI switch
+    // ============================================================
+
+    void ReloadAllShaders()
+    {
+        auto device = GetDevice();
+        if (!device) return;
+
+        std::cout << "[Kiwi] Reloading all shaders..." << std::endl;
+
+        // 1. Release all existing shader resources
+        m_ShaderLibrary.ReleaseAll();
+        ReleaseDeferredShaders();
+        ReleasePostProcessResources();
+        ReleaseShadowShaderOnly(); // Only release shader/PSO, keep CB/sampler/atlas
+
+        // 2. Recompile ShaderLibrary
+        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL ||
+                     device->GetApiType() == RHI_API_TYPE::VULKAN);
+        std::string shaderDir = isGL ? (m_ShaderDir + "\\..\\GLShaders") : m_ShaderDir;
+        {
+            namespace fs = std::filesystem;
+            if (!fs::exists(shaderDir))
+            {
+                std::string fallback = m_ShaderDir + "\\..\\..\\..\\GLShaders";
+                if (isGL && fs::exists(fallback)) shaderDir = fallback;
+            }
+        }
+        m_ShaderLibrary.Initialize(shaderDir, device, m_InputLayout.get());
+
+        // 3. Recompile post-process shaders
+        InitPostProcessResources(device);
+
+        // 4. Recompile deferred + shadow shaders (DX11/DX12 only)
+        if (!isGL)
+        {
+            CompileDeferredShaders(device);
+            CompileShadowShader(device);
+
+            // Record timestamps for deferred shaders
+            namespace fs = std::filesystem;
+            m_DeferredShaderTimestamps["GBufferPass"] = fs::last_write_time(m_ShaderDir + "/GBufferPass.hlsl");
+            m_DeferredShaderTimestamps["DeferredLighting"] = fs::last_write_time(m_ShaderDir + "/DeferredLighting.hlsl");
+            m_DeferredShaderTimestamps["DeferredAmbient"] = fs::last_write_time(m_ShaderDir + "/DeferredAmbient.hlsl");
+            m_DeferredShaderTimestamps["BufferVisualization"] = fs::last_write_time(m_ShaderDir + "/BufferVisualization.hlsl");
+            m_DeferredShaderTimestamps["ShadowPass"] = fs::last_write_time(m_ShaderDir + "/ShadowPass.hlsl");
+        }
+
+        m_FirstShaderLoad = false;
+
+        std::cout << "[Kiwi] All shaders reloaded." << std::endl;
+    }
+
+    // Incremental reload: only recompile shaders whose source files have been modified
+    void ReloadModifiedShaders()
+    {
+        auto device = GetDevice();
+        if (!device) return;
+
+        // On first load, do a full reload (timestamps aren't recorded yet)
+        if (m_FirstShaderLoad)
+        {
+            ReloadAllShaders();
+            return;
+        }
+
+        std::cout << "[Kiwi] Checking for modified shaders..." << std::endl;
+        int total = 0;
+
+        // 1. ShaderLibrary (forward shading shaders)
+        total += m_ShaderLibrary.ReloadModifiedShaders();
+
+        // 2. PostProcessShaderLibrary
+        total += m_PostProcessLibrary.ReloadModifiedShaders();
+
+        // 3. Deferred shaders (GBufferPass, DeferredLighting, DeferredAmbient, BufferVisualization)
+        if (device->GetApiType() != RHI_API_TYPE::OPENGL &&
+            device->GetApiType() != RHI_API_TYPE::VULKAN)
+        {
+            total += ReloadDeferredShaderIfModified(device, "GBufferPass", m_ShaderDir + "/GBufferPass.hlsl");
+            total += ReloadDeferredShaderIfModified(device, "DeferredLighting", m_ShaderDir + "/DeferredLighting.hlsl");
+            total += ReloadDeferredShaderIfModified(device, "DeferredAmbient", m_ShaderDir + "/DeferredAmbient.hlsl");
+            total += ReloadDeferredShaderIfModified(device, "BufferVisualization", m_ShaderDir + "/BufferVisualization.hlsl");
+            total += ReloadShadowShaderIfModified(device);
+        }
+
+        if (total > 0)
+            std::cout << "[Kiwi] " << total << " shader(s) hot-reloaded." << std::endl;
+        else
+            std::cout << "[Kiwi] No modified shaders found." << std::endl;
+    }
+
+    // Check if a deferred shader file has been modified, and recompile if so
+    int ReloadDeferredShaderIfModified(RHIDevice* device, const std::string& shaderName, const std::string& filePath)
+    {
+        namespace fs = std::filesystem;
+
+        // Track timestamps in a local map
+        auto& timestamps = m_DeferredShaderTimestamps;
+        auto lastWrite = fs::last_write_time(filePath);
+        auto it = timestamps.find(shaderName);
+        if (it != timestamps.end() && it->second == lastWrite)
+            return 0; // Not modified
+
+        // Recompile
+        std::string src = ReadShaderFile(filePath);
+        if (src.empty()) return 0;
+
+        std::cout << "[Kiwi] Recompiling deferred shader: " << shaderName << std::endl;
+
+        if (shaderName == "GBufferPass")
+        {
+            m_GBufferVS.reset();
+            m_GBufferPS.reset();
+            m_GBufferPSO.reset();
+            m_GBufferVS_Instanced.reset();
+            m_GBufferPSO_Instanced.reset();
+
+            m_GBufferVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
+            m_GBufferPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
+            if (m_GBufferVS && m_GBufferPS)
+            {
+                PipelineStateDesc gbufferPSODesc;
+                gbufferPSODesc.NumRenderTargets = 3;
+                gbufferPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.RTVFormats[1] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.RTVFormats[2] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.DSVFormat = EFormat::D32_FLOAT;
+                gbufferPSODesc.DepthEnabled = true;
+                gbufferPSODesc.DepthWrite = true;
+
+                m_GBufferPSO = device->CreateGraphicsPipelineState(
+                    m_GBufferVS.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+
+                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                m_GBufferVS_Instanced = device->CompileShader(
+                    EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                if (m_GBufferVS_Instanced)
+                {
+                    m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(
+                        m_GBufferVS_Instanced.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+                }
+            }
+            timestamps[shaderName] = fs::last_write_time(filePath);
+            return 1;
+        }
+        else if (shaderName == "DeferredLighting")
+        {
+            m_DeferredLightingVS.reset();
+            m_DeferredLightingPS.reset();
+            m_DeferredLightingPSO.reset();
+            m_DeferredLightingAdditivePSO.reset();
+
+            m_DeferredLightingVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
+            m_DeferredLightingPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
+            if (m_DeferredLightingVS && m_DeferredLightingPS)
+            {
+                PipelineStateDesc lightingPSODesc;
+                lightingPSODesc.NumRenderTargets = 1;
+                lightingPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;
+                lightingPSODesc.DepthEnabled = false;
+                lightingPSODesc.DepthWrite = false;
+
+                m_DeferredLightingPSO = device->CreateGraphicsPipelineState(
+                    m_DeferredLightingVS.get(), m_DeferredLightingPS.get(), nullptr, lightingPSODesc);
+
+                // Recreate additive blend PSO
+                PipelineStateDesc additivePSODesc = lightingPSODesc;
+                additivePSODesc.AdditiveBlend = true;
+                m_DeferredLightingAdditivePSO = device->CreateGraphicsPipelineState(
+                    m_DeferredLightingVS.get(), m_DeferredLightingPS.get(), nullptr, additivePSODesc);
+            }
+            timestamps[shaderName] = fs::last_write_time(filePath);
+            return 1;
+        }
+        else if (shaderName == "DeferredAmbient")
+        {
+            m_DeferredAmbientVS.reset();
+            m_DeferredAmbientPS.reset();
+            m_DeferredAmbientPSO.reset();
+
+            m_DeferredAmbientVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
+            m_DeferredAmbientPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
+            if (m_DeferredAmbientVS && m_DeferredAmbientPS)
+            {
+                PipelineStateDesc ambientPSODesc;
+                ambientPSODesc.NumRenderTargets = 1;
+                ambientPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;
+                ambientPSODesc.DepthEnabled = false;
+                ambientPSODesc.DepthWrite = false;
+                m_DeferredAmbientPSO = device->CreateGraphicsPipelineState(
+                    m_DeferredAmbientVS.get(), m_DeferredAmbientPS.get(), nullptr, ambientPSODesc);
+            }
+            timestamps[shaderName] = fs::last_write_time(filePath);
+            return 1;
+        }
+        else if (shaderName == "BufferVisualization")
+        {
+            m_BufferVisVS.reset();
+            m_BufferVisPS.reset();
+            m_BufferVisPSO.reset();
+
+            m_BufferVisVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
+            m_BufferVisPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
+            if (m_BufferVisVS && m_BufferVisPS)
+            {
+                PipelineStateDesc visPSODesc;
+                visPSODesc.NumRenderTargets = 1;
+                visPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                visPSODesc.DepthEnabled = false;
+                visPSODesc.DepthWrite = false;
+                m_BufferVisPSO = device->CreateGraphicsPipelineState(
+                    m_BufferVisVS.get(), m_BufferVisPS.get(), nullptr, visPSODesc);
+            }
+            timestamps[shaderName] = fs::last_write_time(filePath);
+            return 1;
+        }
+
+        return 0;
+    }
+
+    // Check if ShadowPass.hlsl has been modified, and recompile if so
+    int ReloadShadowShaderIfModified(RHIDevice* device)
+    {
+        namespace fs = std::filesystem;
+        const std::string shadowPath = m_ShaderDir + "/ShadowPass.hlsl";
+        const std::string shaderName = "ShadowPass";
+
+        auto lastWrite = fs::last_write_time(shadowPath);
+        auto it = m_DeferredShaderTimestamps.find(shaderName);
+        if (it != m_DeferredShaderTimestamps.end() && it->second == lastWrite)
+            return 0;
+
+        std::string src = ReadShaderFile(shadowPath);
+        if (src.empty()) return 0;
+
+        std::cout << "[Kiwi] Recompiling shadow shader: ShadowPass" << std::endl;
+
+        m_ShadowPassVS.reset();
+        m_ShadowPassPSO.reset();
+        m_ShadowPassVS_Instanced.reset();
+        m_ShadowPassPSO_Instanced.reset();
+
+        m_ShadowPassVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
+        if (m_ShadowPassVS)
+        {
+            PipelineStateDesc shadowPSODesc;
+            shadowPSODesc.NumRenderTargets = 0;
+            shadowPSODesc.RTVFormats[0] = EFormat::Unknown;
+            shadowPSODesc.DSVFormat = EFormat::D32_FLOAT;
+            shadowPSODesc.DepthEnabled = true;
+            shadowPSODesc.DepthWrite = true;
+
+            m_ShadowPassPSO = device->CreateGraphicsPipelineState(
+                m_ShadowPassVS.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
+
+            ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+            m_ShadowPassVS_Instanced = device->CompileShader(
+                EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+            if (m_ShadowPassVS_Instanced)
+            {
+                m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(
+                    m_ShadowPassVS_Instanced.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
+            }
+        }
+
+        m_DeferredShaderTimestamps[shaderName] = fs::last_write_time(shadowPath);
+        return 1;
+    }
+
+    // Release only shadow shader + PSO (keep CB, sampler, atlas alive)
+    void ReleaseShadowShaderOnly()
+    {
+        m_ShadowPassVS.reset();
+        m_ShadowPassPSO.reset();
+        m_ShadowPassVS_Instanced.reset();
+        m_ShadowPassPSO_Instanced.reset();
+    }
+
+    // ============================================================
     // CSM: Cascade Split Calculation (PSSM — Practical Split Scheme)
     // ============================================================
 
@@ -3142,6 +3440,12 @@ private:
                     }
 
                     ImGui::EndMenu();
+                }
+
+                ImGui::Separator();
+                if (ImGui::MenuItem("Reload All Shaders", "F5"))
+                {
+                    m_PendingShaderReload = true;
                 }
 
                 ImGui::EndMenu();
@@ -3667,12 +3971,104 @@ private:
         ImGuiViewport* mvp = ImGui::GetMainViewport();
         float vpX = mvp->Pos.x, vpY = mvp->Pos.y;
 
-        // Right-to-left layout: RenderDoc | Stats | ViewMode | Camera
+        // Right-to-left layout: RenderDoc | Stats | ViewMode | Camera | ShaderReload
         float rdocBtnX = windowWidth - btnSize - 12.0f;
         float statsBtnX = rdocBtnX - btnSize - btnGap;
         float viewModeBtnX = statsBtnX - btnSize - btnGap;
         float cameraBtnX = viewModeBtnX - btnSize - btnGap;
+        float shaderBtnX = cameraBtnX - btnSize - btnGap;
 
+        // ---- Shader Reload Button (left of Camera) ----
+        ImGui::SetNextWindowPos(
+            ImVec2(vpX + shaderBtnX, vpY + menuBarHeight + 6.0f),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.0f);
+
+        {
+            ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoCollapse |
+                ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav;
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+            if (ImGui::Begin("##ShaderReloadBtn", nullptr, flags))
+            {
+                ImVec4 btnColor    = ImVec4(0.25f, 0.32f, 0.38f, 0.95f);
+                ImVec4 hoverColor  = ImVec4(0.32f, 0.42f, 0.50f, 1.0f);
+                ImVec4 activeColor = ImVec4(0.18f, 0.25f, 0.30f, 1.0f);
+
+                ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hoverColor);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeColor);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+
+                if (ImGui::Button("##ShaderReloadIcon", ImVec2(btnSize, btnSize)))
+                {
+                    m_PendingShaderReload = true;
+                }
+
+                ImGui::PopStyleVar(1);  // FrameRounding
+                ImGui::PopStyleColor(4);
+
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("Hot-Reload Shaders");
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Recompile modified shaders (F5)");
+                    ImGui::EndTooltip();
+                }
+
+                // Draw refresh/cycle icon on the button
+                ImVec2 btnMin = ImGui::GetItemRectMin();
+                ImVec2 btnMax = ImGui::GetItemRectMax();
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                ImVec2 center = ImVec2((btnMin.x + btnMax.x) * 0.5f, (btnMin.y + btnMax.y) * 0.5f);
+
+                ImU32 iconColor = IM_COL32(200, 200, 200, 255);
+                float radius = 7.0f;
+                float thickness = 1.5f;
+
+                // Draw circular arrow (3/4 circle with arrowhead)
+                // Arc from ~45° to ~315° (leaving a gap at top-right)
+                float segments = 20;
+                float startAngle = -3.14159265f * 0.25f;  // -45°
+                float endAngle = 3.14159265f * 1.25f;     // 225° (= -135°)
+                for (int i = 0; i < segments; i++)
+                {
+                    float t0 = startAngle + (endAngle - startAngle) * ((float)i / segments);
+                    float t1 = startAngle + (endAngle - startAngle) * ((float)(i + 1) / segments);
+                    ImVec2 p0 = ImVec2(center.x + cosf(t0) * radius, center.y + sinf(t0) * radius);
+                    ImVec2 p1 = ImVec2(center.x + cosf(t1) * radius, center.y + sinf(t1) * radius);
+                    drawList->AddLine(p0, p1, iconColor, thickness);
+                }
+
+                // Arrowhead at the end of the arc
+                ImVec2 tipPos = ImVec2(center.x + cosf(endAngle) * radius,
+                                       center.y + sinf(endAngle) * radius);
+                float arrowSize = 3.5f;
+                float arrowAngle1 = endAngle + 2.2f;
+                float arrowAngle2 = endAngle + 0.8f;
+                ImVec2 a1 = ImVec2(tipPos.x + cosf(arrowAngle1) * arrowSize,
+                                   tipPos.y + sinf(arrowAngle1) * arrowSize);
+                ImVec2 a2 = ImVec2(tipPos.x + cosf(arrowAngle2) * arrowSize,
+                                   tipPos.y + sinf(arrowAngle2) * arrowSize);
+                drawList->AddTriangleFilled(tipPos, a1, a2, iconColor);
+
+                ImGui::End();
+            }
+            ImGui::PopStyleVar(2);
+        }
+
+        // ---- Camera Button ----
         ImGui::SetNextWindowPos(
             ImVec2(vpX + cameraBtnX, vpY + menuBarHeight + 6.0f),
             ImGuiCond_Always);
@@ -3873,12 +4269,13 @@ private:
             float statsBtnX    = rdocBtnX  - bigBtn - bigGap;
             float viewModeBtnX = statsBtnX - bigBtn - bigGap;
             float cameraBtnX   = viewModeBtnX - bigBtn - bigGap;
+            float shaderBtnX   = cameraBtnX - bigBtn - bigGap;
 
             // Gizmo group: 3 buttons of 26px with 2px gap = 82px total
             float gizmoBtnSize = 26.0f;
             float gizmoGap     = 2.0f;
             float gizmoGroupW  = gizmoBtnSize * 3 + gizmoGap * 2;
-            float gizmoBtnX    = cameraBtnX - gizmoGroupW - bigGap;
+            float gizmoBtnX    = shaderBtnX - gizmoGroupW - bigGap;
 
             ImGui::SetNextWindowPos(
                 ImVec2(vpX + gizmoBtnX, vpY + menuBarHeight + 6.0f),
@@ -5784,6 +6181,11 @@ private:
 
     // Gizmo state
     EGizmoMode m_GizmoMode = EGizmoMode::Translate;     // Active gizmo mode
+
+    // Shader reload state
+    bool m_PendingShaderReload = false;
+    bool m_FirstShaderLoad = true;  // First load does full recompile to record timestamps
+    std::unordered_map<std::string, std::filesystem::file_time_type> m_DeferredShaderTimestamps;
 
     GizmoMeshData m_GizmoMeshData[3];                    // CPU mesh data for 3 axes (translate)
     std::unique_ptr<RHIBuffer> m_GizmoVB[3];             // GPU vertex buffers

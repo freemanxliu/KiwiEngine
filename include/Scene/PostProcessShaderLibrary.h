@@ -19,6 +19,7 @@ namespace Kiwi
     struct CompiledPostProcessShader
     {
         std::string Name;
+        std::string FilePath;   // Source file path
         std::unique_ptr<RHIShader> VertexShader;  // Shared fullscreen VS
         std::unique_ptr<RHIShader> PixelShader;   // Custom PS
         std::unique_ptr<RHIPipelineState> PSO;     // DX12 PSO / DX11 wrapper
@@ -35,6 +36,8 @@ namespace Kiwi
         // Initialize: compile built-in fullscreen VS, scan folder for PS files.
         void Initialize(const std::string& shaderDir, RHIDevice* device)
         {
+            m_ShaderDir = shaderDir;
+            m_Device = device;
             m_Shaders.clear();
             m_ShaderNames.clear();
 
@@ -86,6 +89,63 @@ namespace Kiwi
 
         RHIShader* GetFullscreenVS() const { return m_FullscreenVS.get(); }
 
+        // Get the source file path for a shader
+        std::string GetShaderFilePath(const std::string& name) const
+        {
+            auto it = m_Shaders.find(name);
+            if (it != m_Shaders.end())
+                return it->second->FilePath;
+            return "";
+        }
+
+        // Reload only shaders whose source files have been modified.
+        // Returns the number of shaders recompiled.
+        int ReloadModifiedShaders()
+        {
+            if (!m_Device || !m_FullscreenVS) return 0;
+
+            int recompiled = 0;
+            namespace fs = std::filesystem;
+
+            for (auto& [name, shader] : m_Shaders)
+            {
+                if (shader->FilePath.empty()) continue;
+
+                auto lastWrite = fs::last_write_time(shader->FilePath);
+                auto it = m_FileTimestamps.find(name);
+                if (it != m_FileTimestamps.end() && it->second == lastWrite)
+                    continue; // Not modified
+
+                // File was modified — recompile
+                std::ifstream file(shader->FilePath);
+                if (!file.is_open())
+                {
+                    std::cerr << "[Kiwi] PostProcessShaderLibrary: Failed to read: "
+                              << shader->FilePath << std::endl;
+                    continue;
+                }
+                std::string hlslSource((std::istreambuf_iterator<char>(file)),
+                                        std::istreambuf_iterator<char>());
+                file.close();
+
+                bool ok = CompilePostProcessPS(shader.get(), hlslSource, m_Device);
+                if (ok)
+                {
+                    m_FileTimestamps[name] = fs::last_write_time(shader->FilePath);
+                    std::cout << "[Kiwi] PostProcessShaderLibrary: Hot-reloaded '"
+                              << name << "'" << std::endl;
+                    recompiled++;
+                }
+                else
+                {
+                    std::cerr << "[Kiwi] PostProcessShaderLibrary: Hot-reload FAILED for '"
+                              << name << "' (keeping old version)" << std::endl;
+                }
+            }
+
+            return recompiled;
+        }
+
     private:
         void ScanAndCompile(const std::string& shaderDir, RHIDevice* device)
         {
@@ -123,12 +183,14 @@ namespace Kiwi
                 // Compile PS
                 auto shader = std::make_unique<CompiledPostProcessShader>();
                 shader->Name = name;
+                shader->FilePath = entry.path().string();
 
                 bool ok = CompilePostProcessPS(shader.get(), hlslSource, device);
                 if (ok)
                 {
                     m_ShaderNames.push_back(name);
                     m_Shaders[name] = std::move(shader);
+                    m_FileTimestamps[name] = fs::last_write_time(entry.path());
                     std::cout << "[Kiwi] PostProcessShaderLibrary: Compiled '"
                               << name << "'" << std::endl;
                 }
@@ -177,6 +239,11 @@ namespace Kiwi
         std::unique_ptr<RHIShader> m_FullscreenVS;
         std::unordered_map<std::string, std::unique_ptr<CompiledPostProcessShader>> m_Shaders;
         std::vector<std::string> m_ShaderNames;
+
+        // Cached state for incremental reload
+        RHIDevice* m_Device = nullptr;
+        std::string m_ShaderDir;
+        std::unordered_map<std::string, std::filesystem::file_time_type> m_FileTimestamps;
     };
 
 } // namespace Kiwi

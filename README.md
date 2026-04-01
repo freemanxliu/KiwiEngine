@@ -44,6 +44,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 
 - **DXC Integration** — `DXCCompiler` singleton wraps `IDxcCompiler3`, runtime-loaded via `LoadLibrary("dxcompiler.dll")`. DXC runtime DLLs (`dxcompiler.dll` + `dxil.dll`) are automatically copied to the output directory by CMake.
 - **ShaderLibrary** auto-selects HLSL (`Shaders/`) or GLSL (`GLShaders/`) source files based on the active RHI backend.
+- **Incremental Shader Hot-Reload** — Shader reloading only recompiles shaders whose source files have been modified (based on `filesystem::file_time_type` comparison). Unchanged shaders are left untouched. Failed compilations keep the old version active. Applies to all shader systems: `ShaderLibrary` (forward), `PostProcessShaderLibrary` (post-process), and per-file deferred/shadow shaders (GBufferPass, DeferredLighting, DeferredAmbient, BufferVisualization, ShadowPass). Triggered via the 🔄 button in the top-right toolbar or the `Rendering` menu (F5).
 
 ### 🔦 Deferred Rendering Pipeline (UE5-Inspired)
 
@@ -299,6 +300,7 @@ A 1280×720 window opens showing a 3D scene editor. You can:
 - **Switch View Mode**: Menu bar → Rendering → View Mode → Lit / Unlit / BaseColor / Roughness / Metallic
 - **Navigate camera**: Hold right mouse button + WASD to fly; right mouse button + drag to look around
 - **Camera settings**: Click 📷 button (top-right) to adjust move speed and FOV
+- **Hot-reload shaders**: Click 🔄 button (top-right) or press F5 to recompile only modified shaders (incremental, zero overhead if nothing changed)
 - **Add objects**: Placer tab → Cube / Sphere / Cylinder / Floor / Post Process
 - **Add lights**: Placer tab → Directional Light / Point Light
 - **Add camera**: Placer tab → Camera
