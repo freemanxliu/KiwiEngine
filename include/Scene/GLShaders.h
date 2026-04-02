@@ -37,8 +37,8 @@ layout(std140, binding = 1) uniform ObjectUB
     float g_Metallic;
     float g_HasBaseColorTex;
     float g_HasNormalTex;
-    float g_VisualizeMode;
-    vec2 g_ObjectPadding;
+    float g_ShadingModelID;
+    vec3 g_ObjectPadding;
 };
 
 layout(location = 0) in vec3 aPosition;
@@ -96,8 +96,8 @@ layout(std140, binding = 1) uniform ObjectUB
     float g_Metallic;
     float g_HasBaseColorTex;
     float g_HasNormalTex;
-    float g_VisualizeMode;
-    vec2 g_ObjectPadding;
+    float g_ShadingModelID;
+    vec3 g_ObjectPadding;
 };
 
 in vec3 vPositionWS;

@@ -2,6 +2,11 @@
 // Unlit Shader
 // Pure color output — no lighting calculations
 // ============================================================
+//
+// @Properties {
+//   _Color ("Base Color", Color) = (1.0, 1.0, 1.0, 1.0)
+//   _BaseColorTex ("Albedo", Texture2D) = "white"
+// }
 
 #include "Common.hlsli"
 

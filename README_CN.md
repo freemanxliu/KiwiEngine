@@ -57,10 +57,10 @@
   | **深度** (t7) | 硬件深度 (`R32_TYPELESS`) → 通过 InvViewProj 重建世界坐标 |
 - **Octahedron 法线编码** — 单位法线使用 Octahedron 映射存储在 2 个通道中，比线性 [0,1] 打包在 R8G8 格式下精度更高。
 - **基于深度的位置重建** — 世界空间位置从硬件深度缓冲 + 逆 ViewProjection 矩阵重建，无需专用位置渲染目标（比 R16F 位置 RT 节省约 40% 带宽）。
-- **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。顶点着色器通过 interpolants 将 per-object 材质数据（粗糙度、金属度、纹理标志、选中状态）传递到像素着色器。
+- **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。顶点着色器通过 interpolants 将 per-object 材质数据（粗糙度、金属度、纹理标志、选中状态、**ShadingModelID**）传递到像素着色器。Unlit 材质跳过法线贴图，写入 emissive-only G-Buffer 数据；DefaultLit 材质走标准 PBR 路径。
 - **Multi-Pass 延迟光照（UE5）** — 光照拆分为多个 Pass，而非单次全屏绘制：
-  - **Ambient pass** — 不透明全屏 Pass，计算环境光/IBL 贡献。
-  - **Per-light additive passes** — 每个光源一次全屏绘制，使用 additive blending (`SrcAlpha ONE`)。无硬性光源数量限制；每个 Pass 绑定独立的 `LightUniformBuffer` (b3)。
+  - **Ambient pass** — 不透明全屏 Pass，计算环境光/IBL 贡献。**Unlit 表面直接输出 BaseColor 作为自发光**（跳过光照计算）。
+  - **Per-light additive passes** — 每个光照表面一次全屏绘制，使用 additive blending (`SrcAlpha ONE`)。**Unlit 表面不接受直接光照**（输出零）。无硬性光源数量限制；每个 Pass 绑定独立的 `LightUniformBuffer` (b3)。
   - **PipelineStateDesc.AdditiveBlend** — 新增 blend state 用于多光源累积。
 - **延迟光照 BRDF** — 对齐 UE5 `DefaultLitBxDF`：**D_GGX**（Trowbridge-Reitz NDF）、**Vis_SmithJointApprox**（联合 Smith 可见性，分母已内置）、**F_Schlick**（含 2% 反射率阴影阈值）、**Diffuse_Burley**（Disney 漫反射，粗糙度相关）、**EnvBRDFApprox**（Lazarov 2013 解析近似，无需 LUT）用于间接高光。支持级联阴影贴图。
 - **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联，所有级联渲染到**单张阴影 Atlas**（2x2 布局）。每个级联占 Atlas 纹理的一个象限（`R32_TYPELESS`，`2*cascadeSize × 2*cascadeSize`）。PSSM 混合对数和均匀分割方案。着色器根据视空间距离选择级联并计算 UV 偏移到 Atlas 对应区域。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
@@ -77,7 +77,7 @@
   | 模式 | 类型 | 描述 |
   |---|---|---|
   | **Lit** | 默认 | 完整延迟渲染 + UE5 风格 PBR 光照 |
-  | **Unlit** | 调试 | 前向渲染，无光照（纯反照率） |
+  | **Unlit** | 调试 | 通过延迟管线的全屏 Pass — 纯反照率，无光照（ShadingModel 感知，经过 G-Buffer） |
   | **BaseColor** | 缓冲区可视化 | G-Buffer BaseColor (GBufferC RGB) |
   | **Roughness** | 缓冲区可视化 | G-Buffer 粗糙度 (GBufferB Blue, 灰度) |
   | **Metallic** | 缓冲区可视化 | G-Buffer 金属度 (GBufferB Red, 灰度) |
@@ -88,10 +88,11 @@
 
 ### 🧱 材质系统
 
-- **材质资产** — `.mat` 文件（JSON 格式），独立于网格数据定义材质属性。每个材质引用一个着色器并定义属性值（浮点数、颜色、贴图）。
+- **材质资产** — `.mat` 文件（JSON 格式），独立于网格数据定义材质属性。每个材质声明其 **ShadingModel**（Unlit / DefaultLit）而非着色器名称。渲染管线根据 ShadingModel 自动选择正确的着色器。向后兼容：旧版 `"shader"` 字段自动映射为 ShadingModel。
 - **MaterialLibrary** — 单例材质管理器。首次运行自动创建 `Default-Material.mat`，启动时扫描 `Materials/` 文件夹。材质通过名称从 `MeshComponent` 引用。
-- **着色器属性元数据** — 着色器可声明 `// @Properties { }` 块定义 UI 可见属性（Float、Range、Color、Texture2D）。材质编辑器解析这些元数据生成动态属性 UI。
-- **材质编辑器** — 在 Content Browser 中双击 `.mat` 文件打开浮动编辑器窗口。功能：着色器选择下拉框、基于 @Properties 的动态 UI（含颜色预览色块）、贴图槽位行（Pick 按钮 + 模态弹窗 + Content Browser 拖放）、Save/Close 按钮。
+- **Shading Model 系统** — UE5 风格 `EShadingModel` 枚举（`ShadingModel.h`）：材质声明着色模型，管线按 Pass 选择对应着色器。当前模型：**Unlit**（仅自发光，无光照）、**DefaultLit**（标准 PBR 金属度/粗糙度）。可扩展：Subsurface、ClearCoat、TwoSidedFoliage 预留占位。
+- **着色器属性元数据** — 着色器可声明 `// @Properties { }` 块定义 UI 可见属性（Float、Range、Color、Texture2D）。材质编辑器解析材质 ShadingModel 对应的着色器文件来生成动态属性 UI。
+- **材质编辑器** — 在 Content Browser 中双击 `.mat` 文件打开浮动编辑器窗口。功能：**Shading Model** 下拉框（Unlit/DefaultLit）、基于 @Properties 的动态 UI（含颜色预览色块）、贴图槽位行（Pick 按钮 + 模态弹窗 + Content Browser 拖放）、Save/Close 按钮。
 - **属性迁移** — 所有外观属性（颜色、粗糙度、金属度、贴图路径）定义在 Material 中，不在 MeshComponent 中。UploadObjectUB 和贴图绑定在渲染时从材质读取。
 
 ### 🖼️ 纹理系统
@@ -134,11 +135,11 @@
   |---|---|
   | **Default** | Phong 光照 — Lambert 漫反射 + Blinn-Phong 高光，支持方向光和点光源（最多 8 盏），二次衰减 |
   | **DefaultLit** | 标准 PBR 风格材质 — 响应粗糙度和金属度属性，新物体默认着色器 |
-  | **Unlit** | 纯色输出，无光照计算 |
+  | **Unlit** | 纯色输出，无光照计算。@Properties: `_Color`, `_BaseColorTex`。ShadingModel=0 |
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
-  | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，**TBN 法线贴图**（切线空间法线→世界空间，Gram-Schmidt 正交化 + handedness），输出法线+PerObjectData、金属度+Specular+粗糙度+ShadingModelID、BaseColor+AO 到 3 个 MRT |
-  | **DeferredAmbient** | 全屏环境光 Pass — 计算环境光/IBL 贡献 |
-  | **DeferredLighting** | Per-light 全屏 additive PBR Pass（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样。每个光源一次全屏绘制，additive blending |
+  | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，**TBN 法线贴图**（切线空间法线→世界空间，Gram-Schmidt 正交化 + handedness），输出法线+PerObjectData、金属度+Specular+粗糙度+ShadingModelID、BaseColor+AO 到 3 个 MRT。**Unlit 路径**：写入中性法线 + emissive BaseColor（无光照）。**DefaultLit 路径**：标准 PBR + 法线贴图 |
+  | **DeferredAmbient** | 全屏环境光 Pass — 计算环境光/IBL 贡献。**Unlit 表面直接输出 BaseColor 作为自发光**（跳过光照计算）。Additive-friendly 输出 |
+  | **DeferredLighting** | Per-light 全屏 additive PBR Pass（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样。每个光源一次全屏绘制，additive blending。**Unlit 表面不接受直接光照**（输出零） |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器）。支持 CB offset（默认）和 SV_InstanceID（USE_GPU_SCENE_INSTANCING）两种顶点着色器路径 |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道（BaseColor、Roughness、Metallic、Normal、Specular、AO） |
   | **Skybox** | 全屏 Pass — 在 depth==1 像素上采样 HDR Equirectangular 环境贴图，逆 ViewProj 方向重建 |
@@ -309,7 +310,7 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 - **编辑属性**：Detail 面板 → Transform / Material / Shader / FOV / 灯光参数
 - **主相机**：Detail 面板 → 勾选 Main Camera（互斥）
 - **后处理**：Detail 面板 → 添加材质、调整顺序、调节强度、启用/禁用
-- **材质编辑器**：Content Browser → 双击 `.mat` 文件 → 编辑着色器、属性、贴图；可从浏览器拖入贴图
+- **材质编辑器**：Content Browser → 双击 `.mat` 文件 → 编辑 ShadingModel、属性、贴图；可从浏览器拖入贴图
 - **内容浏览器**：Window 菜单 → 浏览 Scenes/Shaders/Textures/Materials；拖放贴图；右键打开 Explorer
 - **帧捕获**：点击右上角 🔵 按钮 → 自动打开 RenderDoc
 - **场景管理**：File 菜单 → Create Scene / Open Scene（扫描 `Scenes/` 文件夹） / Save Scene（命名对话框，JSON 格式）
@@ -527,6 +528,7 @@ KiwiEngine/
 │       ├── PostProcessShaderLibrary.h # 后处理着色器扫描与编译
 │       ├── ModelImporter.h           # OBJ/FBX 模型导入（tinyobjloader + ufbx）
 │       ├── ViewMode.h               # 视图模式枚举（Lit、Unlit、BaseColor、Roughness、Metallic）
+│       ├── ShadingModel.h           # EShadingModel 枚举（Unlit、DefaultLit）+ 字符串转换
 │       └── GPUScene.h               # GPU Scene 管理器（batch 分类、CB/StructuredBuffer 上传）
 ├── src/
 │   ├── main.cpp                      # 入口点与场景编辑器（ImGui UI、渲染）

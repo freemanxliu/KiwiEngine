@@ -46,6 +46,7 @@ struct VSOutput
     nointerpolation float  HasBaseColorTex : TEXCOORD7;
     nointerpolation float  HasNormalTex    : TEXCOORD8;
     nointerpolation float  Selected       : TEXCOORD9;
+    nointerpolation float  ShadingModelID : TEXCOORD10;
 };
 
 // UE5-matching G-Buffer MRT output
@@ -89,6 +90,7 @@ VSOutput VSMain(VSInput input)
     float    hasBaseTex  = inst.HasBaseColorTex;
     float    hasNormTex  = inst.HasNormalTex;
     float    selected    = inst.Selected;
+    float    shadingModel = inst.ShadingModelID;
 #else
     // Single draw path: read from ObjectUB (b1) bound via CB offset
     float4x4 world       = g_World;
@@ -98,6 +100,7 @@ VSOutput VSMain(VSInput input)
     float    hasBaseTex  = g_HasBaseColorTex;
     float    hasNormTex  = g_HasNormalTex;
     float    selected    = g_Selected;
+    float    shadingModel = g_ShadingModelID;
 #endif
 
     float4 worldPos = mul(float4(input.Position, 1.0), world);
@@ -133,6 +136,7 @@ VSOutput VSMain(VSInput input)
     output.HasBaseColorTex = hasBaseTex;
     output.HasNormalTex    = hasNormTex;
     output.Selected        = selected;
+    output.ShadingModelID  = shadingModel;
 
     return output;
 }
@@ -148,6 +152,8 @@ GBufferOutput PSMain(VSOutput input)
 {
     GBufferOutput output;
 
+    uint shadingModelId = (uint)(input.ShadingModelID + 0.5);
+
     // ---- BaseColor ----
     float3 baseColor = input.Color.rgb;
     if (input.HasBaseColorTex > 0.5)
@@ -156,7 +162,17 @@ GBufferOutput PSMain(VSOutput input)
         baseColor = texColor.rgb * input.Color.rgb;
     }
 
-    // ---- Normal ----
+    // ---- Unlit path: emissive only, no lighting ----
+    if (shadingModelId == 0)
+    {
+        float3 encodedNormal = EncodeNormal(float3(0, 0, 1)); // neutral normal
+        output.GBufferA = float4(encodedNormal, 0.0);
+        output.GBufferB = float4(0, 0, 0, EncodeShadingModelId(0));
+        output.GBufferC = float4(baseColor, 1.0);
+        return output;
+    }
+
+    // ---- DefaultLit path: standard PBR ----
     float3 normal = normalize(input.NormalWS);
     if (input.HasNormalTex > 0.5)
     {
@@ -176,7 +192,6 @@ GBufferOutput PSMain(VSOutput input)
     output.GBufferA = float4(encodedNormal, perObjectData);
 
     float specular = 0.5;
-    uint shadingModelId = 1; // DefaultLit
     output.GBufferB = float4(input.Metallic, specular, input.Roughness, EncodeShadingModelId(shadingModelId));
 
     float ao = 1.0;

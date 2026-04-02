@@ -104,7 +104,7 @@ namespace Kiwi
             oub.Metallic  = metallic;
             oub.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
             oub.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
-            oub.VisualizeMode = 0.0f;
+            oub.ShadingModelID  = mat ? (float)(uint8_t)mat->ShadingModel : 1.0f;
 
             ++m_NumPrimitives;
         }

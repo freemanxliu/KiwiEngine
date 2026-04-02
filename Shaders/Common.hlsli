@@ -49,9 +49,10 @@ cbuffer ObjectUB : register(b1)
     float  g_Metallic;
     float  g_HasBaseColorTex;
     float  g_HasNormalTex;
-    float  g_VisualizeMode;  // Buffer visualization mode
-    float2 g_ObjectPadding;
-    float4 g_Reserved[9];    // pad to 256 bytes (112 + 9*16 = 256)
+    float  g_ShadingModelID;  // EShadingModel: 0=Unlit, 1=DefaultLit
+    float3 g_ObjectPadding;
+    float4 g_Reserved[8];    // pad to 256 bytes
+    float3 g_Reserved2;      // (116 + 128 + 12 = 256)
 };
 
 // ---- GPU Scene StructuredBuffer (t8) — for instanced draws ----
@@ -66,9 +67,10 @@ struct GPUSceneData
     float  Metallic;
     float  HasBaseColorTex;
     float  HasNormalTex;
-    float  VisualizeMode;
-    float2 Padding;
-    float4 Reserved[9];
+    float  ShadingModelID;
+    float3 Padding;
+    float4 Reserved[8];
+    float3 Reserved2;
 };
 
 StructuredBuffer<GPUSceneData> g_GPUScene : register(t8);

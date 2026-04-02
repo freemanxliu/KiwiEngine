@@ -3,7 +3,7 @@
 // Displays individual G-Buffer channels for debug viewing
 // Uses fullscreen triangle (SV_VertexID)
 //
-// VisualizeMode (g_VisualizeMode in ObjectUB):
+// VisualizeMode (passed via g_ShadingModelID in ObjectUB):
 //   0 = BaseColor   (GBufferC.rgb)
 //   1 = Roughness   (GBufferB.b — grayscale)
 //   2 = Metallic    (GBufferB.r — grayscale)
@@ -63,7 +63,7 @@ float4 PSMain(VSOutput input) : SV_TARGET
         return float4(0.05, 0.05, 0.08, 1.0);
     }
 
-    int mode = (int)(g_VisualizeMode + 0.5);
+    int mode = (int)(g_ShadingModelID + 0.5); // Repurposed: visualize mode for this pass
 
     if (mode == 0) // BaseColor
     {

@@ -61,9 +61,9 @@ namespace Kiwi
         float Metallic;              // g_Metallic      — PBR metallic [0,1]
         float HasBaseColorTex;       // g_HasBaseColorTex — 1.0 if texture bound
         float HasNormalTex;          // g_HasNormalTex    — 1.0 if normal map bound
-        float VisualizeMode;         // g_VisualizeMode   — buffer vis mode (0=BaseColor,1=Roughness,2=Metallic)
-        float ObjectPadding[2];      // pad to 16-byte row
-        float _Reserved[36];         // pad struct to 256 bytes total (112 + 144 = 256)
+        float ShadingModelID;        // g_ShadingModelID  — EShadingModel enum (0=Unlit, 1=DefaultLit)
+        float ObjectPadding[3];      // pad to 16-byte row
+        float _Reserved[35];         // pad struct to 256 bytes total (116 + 140 = 256)
     };
     // Size: 256 bytes (aligned for GPU Scene offset binding)
     static constexpr uint32_t OBJECT_UB_STRIDE = 256;  // per-primitive stride in GPU Scene buffer
@@ -137,8 +137,8 @@ namespace Kiwi
         float  g_Metallic;
         float  g_HasBaseColorTex;
         float  g_HasNormalTex;
-        float  g_VisualizeMode;
-        float2 g_ObjectPadding;
+        float  g_ShadingModelID;
+        float3 g_ObjectPadding;
     };
 
     struct VSInput
@@ -213,8 +213,8 @@ namespace Kiwi
         float  g_Metallic;
         float  g_HasBaseColorTex;
         float  g_HasNormalTex;
-        float  g_VisualizeMode;
-        float2 g_ObjectPadding;
+        float  g_ShadingModelID;
+        float3 g_ObjectPadding;
     };
 
     struct PSInput

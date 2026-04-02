@@ -57,10 +57,10 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **Depth** (t7) | Hardware depth (`R32_TYPELESS`) → world position via InvViewProj |
 - **Octahedron Normal Encoding** — Unit normals stored in 2 channels using octahedron mapping, providing better precision than linear [0,1] packing in R8G8 format.
 - **Depth-Based Position Reconstruction** — World-space position is reconstructed from hardware depth buffer + inverse ViewProjection matrix, eliminating the need for a dedicated position render target (~40% bandwidth savings vs R16F position RT).
-- **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`. Vertex shader passes per-object material data (Roughness, Metallic, texture flags, Selected) to pixel shader via interpolants.
+- **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`. Vertex shader passes per-object material data (Roughness, Metallic, texture flags, Selected, **ShadingModelID**) to pixel shader via interpolants. Unlit materials bypass normal mapping and write emissive-only G-Buffer data; DefaultLit materials follow the standard PBR path.
 - **Multi-Pass Deferred Lighting (UE5)** — Lighting is split into multiple passes instead of a single fullscreen draw:
-  - **Ambient pass** — Opaque fullscreen pass computes ambient/IBL contribution.
-  - **Per-light additive passes** — Each light gets its own fullscreen draw with additive blending (`SrcAlpha ONE`). No hard cap on light count; each pass binds a dedicated `LightUniformBuffer` (b3) with per-light parameters.
+  - **Ambient pass** — Opaque fullscreen pass computes ambient/IBL contribution. Unlit surfaces output their base color directly as emissive (no lighting).
+  - **Per-light additive passes** — Each lit surface gets its own fullscreen draw with additive blending (`SrcAlpha ONE`). Unlit surfaces receive no direct lighting (output zero). No hard cap on light count; each pass binds a dedicated `LightUniformBuffer` (b3) with per-light parameters.
   - **PipelineStateDesc.AdditiveBlend** — New blend state for multi-pass light accumulation.
 - **Deferred Lighting BRDF** — Matches UE5's `DefaultLitBxDF`: **D_GGX** (Trowbridge-Reitz NDF), **Vis_SmithJointApprox** (joint Smith visibility with baked-in denominator), **F_Schlick** (with 2% reflectance shadow threshold), **Diffuse_Burley** (Disney diffuse, roughness-dependent), and **EnvBRDFApprox** (Lazarov 2013 analytical approximation, no LUT needed) for indirect specular. Applies cascaded shadow maps.
 - **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades rendered into a **single shadow atlas** (2x2 layout). Each cascade occupies one quadrant of the atlas texture (`R32_TYPELESS`, `2*cascadeSize × 2*cascadeSize`). PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. Shader selects cascade by view-space distance and computes UV offset into the atlas. 5-tap PCF filtering with comparison sampler for soft shadow edges.
@@ -78,7 +78,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | Mode | Type | Description |
   |---|---|---|
   | **Lit** | Default | Full deferred rendering with UE5-style PBR lighting |
-  | **Unlit** | Debug | Forward rendering with no lighting (pure albedo) |
+  | **Unlit** | Debug | Fullscreen pass via deferred pipeline — pure albedo, no lighting (ShadingModel-aware, goes through G-Buffer) |
   | **BaseColor** | Buffer Visualization | G-Buffer BaseColor (GBufferC RGB) |
   | **Roughness** | Buffer Visualization | G-Buffer Roughness (GBufferB Blue, grayscale) |
   | **Metallic** | Buffer Visualization | G-Buffer Metallic (GBufferB Red, grayscale) |
@@ -89,10 +89,11 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 
 ### 🧱 Material System
 
-- **Material Assets** — `.mat` files (JSON) defining material properties independently from mesh data. Each material references a shader and defines property values (floats, colors, textures).
+- **Material Assets** — `.mat` files (JSON) defining material properties independently from mesh data. Each material declares its **ShadingModel** (Unlit / DefaultLit) instead of a shader name. The rendering pipeline maps ShadingModel to the correct shader per pass. Backward compatible: legacy `"shader"` field auto-maps to ShadingModel.
 - **MaterialLibrary** — Singleton material manager. Auto-creates `Default-Material.mat` on first run, scans `Materials/` folder at startup. Materials are referenced by name from `MeshComponent`.
-- **Shader Properties Metadata** — Shaders can declare a `// @Properties { }` block defining UI-exposed properties (Float, Range, Color, Texture2D). The material editor parses these to generate dynamic property UI.
-- **Material Editor** — Double-click `.mat` files in Content Browser to open a floating editor window. Features: shader selection dropdown, @Properties-driven dynamic UI with color preview swatches, texture slot rows with Pick button (modal popup) + DragDrop from Content Browser, Save/Close buttons.
+- **Shading Model System** — UE5-style `EShadingModel` enum (`ShadingModel.h`): materials declare how they should be shaded, and the pipeline picks the appropriate shaders per pass. Current models: **Unlit** (emissive-only, no lighting), **DefaultLit** (standard PBR metallic/roughness). Extensible: Subsurface, ClearCoat, TwoSidedFoliage placeholders reserved.
+- **Shader Properties Metadata** — Shaders can declare a `// @Properties { }` block defining UI-exposed properties (Float, Range, Color, Texture2D). The material editor parses the shader file associated with the material's ShadingModel to generate dynamic property UI.
+- **Material Editor** — Double-click `.mat` files in Content Browser to open a floating editor window. Features: **Shading Model** combo (Unlit/DefaultLit), @Properties-driven dynamic UI with color preview swatches, texture slot rows with Pick button (modal popup) + DragDrop from Content Browser, Save/Close buttons.
 - **Property Migration** — All appearance properties (color, roughness, metallic, texture paths) live in Material, not MeshComponent. UploadObjectUB and texture binding read from the material at render time.
 
 ### 🖼️ Texture System
@@ -135,11 +136,11 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   |---|---|
   | **Default** | Phong lighting — Lambert diffuse + Blinn-Phong specular, supports directional & point lights (up to 8), quadratic falloff |
   | **DefaultLit** | Standard PBR-style material — responds to Roughness and Metallic properties, default shader for new objects |
-  | **Unlit** | Pure color output, no lighting |
+  | **Unlit** | Pure color output, no lighting. @Properties: `_Color`, `_BaseColorTex`. ShadingModel=0 |
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
-  | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, **TBN normal mapping** (tangent-space normal map → world-space via Gram-Schmidt TBN with handedness), outputs Normal+PerObjectData, Metallic+Specular+Roughness+ShadingModelID, BaseColor+AO to 3 MRT |
-  | **DeferredAmbient** | Fullscreen ambient pass — computes ambient/IBL contribution with additive-friendly output |
-  | **DeferredLighting** | Per-light fullscreen additive PBR pass (UE5 DefaultLitBxDF) — D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox, CSM shadow atlas sampling. One draw call per light with additive blending |
+  | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, **TBN normal mapping** (tangent-space normal map → world-space via Gram-Schmidt TBN with handedness), outputs Normal+PerObjectData, Metallic+Specular+Roughness+ShadingModelID, BaseColor+AO to 3 MRT. **Unlit path**: writes neutral normal + emissive BaseColor (no lighting). **DefaultLit path**: standard PBR with normal mapping |
+  | **DeferredAmbient** | Fullscreen ambient pass — computes ambient/IBL contribution. **Unlit surfaces output BaseColor directly as emissive** (bypass lighting). Additive-friendly output for subsequent light passes |
+  | **DeferredLighting** | Per-light fullscreen additive PBR pass (UE5 DefaultLitBxDF) — D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox, CSM shadow atlas sampling. One draw call per light with additive blending. **Unlit surfaces receive no direct lighting** (output zero) |
   | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader). Supports both CB offset (default) and SV_InstanceID (USE_GPU_SCENE_INSTANCING) vertex shader paths |
   | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels (BaseColor, Roughness, Metallic, Normal, Specular, AO) |
   | **Skybox** | Fullscreen pass — equirectangular HDR environment map sampling on depth==1 pixels, inverse ViewProj direction reconstruction |
@@ -309,7 +310,7 @@ A 1280×720 window opens showing a 3D scene editor. You can:
 - **Edit properties**: Detail tab → Transform / Material / Shader / FOV / Light settings
 - **Main Camera**: Detail tab → toggle Main Camera checkbox (mutual exclusion)
 - **Post-Processing**: Detail tab → Add materials, reorder, adjust intensity, enable/disable
-- **Material Editor**: Content Browser → double-click `.mat` file → edit shader, properties, textures; drag textures from browser to slots
+- **Material Editor**: Content Browser → double-click `.mat` file → edit ShadingModel, properties, textures; drag textures from browser to slots
 - **Content Browser**: Window menu → browse Scenes/Shaders/Textures/Materials; drag textures; right-click for Explorer
 - **Capture frames**: Click 🔵 button (top-right) — auto-opens in RenderDoc
 - **Scene management**: File menu → Create Scene / Open Scene (scans `Scenes/` folder) / Save Scene (naming dialog, JSON format)
@@ -527,6 +528,7 @@ KiwiEngine/
 │       ├── PostProcessShaderLibrary.h # Post-process shader scanning & compilation
 │       ├── ModelImporter.h           # OBJ/FBX model import (tinyobjloader + ufbx)
 │       ├── ViewMode.h               # View mode enum (Lit, Unlit, BaseColor, Roughness, Metallic)
+│       ├── ShadingModel.h           # EShadingModel enum (Unlit, DefaultLit) + string conversion
 │       └── GPUScene.h               # GPU Scene manager (batch classification, CB/StructuredBuffer upload)
 ├── src/
 │   ├── main.cpp                      # Entry point & scene editor (ImGui UI, rendering)

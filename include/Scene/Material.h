@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Math/Math.h"
+#include "Scene/ShadingModel.h"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -51,7 +52,7 @@ namespace Kiwi
     {
     public:
         std::string Name;                    // Material name (also filename stem)
-        std::string ShaderName = "DefaultLit"; // Which shader this material uses
+        EShadingModel ShadingModel = EShadingModel::DefaultLit; // How this surface is shaded
 
         // Property values (keyed by property name like "_Roughness")
         std::unordered_map<std::string, MaterialPropertyValue> Properties;

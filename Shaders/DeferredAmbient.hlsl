@@ -55,9 +55,17 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float4 gB = g_GBufferB.Sample(g_Sampler, input.TexCoord);
     float4 gC = g_GBufferC.Sample(g_Sampler, input.TexCoord);
 
+    // Decode ShadingModel from GBufferB.a
+    uint shadingModelId = (uint(gB.a * 255.0 + 0.5)) >> 4;
+
+    float3 baseColor = gC.rgb;
+
+    // Unlit: output BaseColor directly as emissive (no ambient/lighting)
+    if (shadingModelId == 0)
+        return float4(baseColor, 1.0);
+
     float3 N = DecodeNormal(gA);
     float metallic = gB.r, specular = gB.g, roughness = max(gB.b, 0.04);
-    float3 baseColor = gC.rgb;
     float ao = gC.a;
 
     float3 V = normalize(g_CameraPos);

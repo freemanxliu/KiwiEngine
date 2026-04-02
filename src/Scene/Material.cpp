@@ -21,7 +21,7 @@ namespace Kiwi
 
         file << "{\n";
         file << "  \"name\": \"" << Name << "\",\n";
-        file << "  \"shader\": \"" << ShaderName << "\",\n";
+        file << "  \"shadingModel\": \"" << ShadingModelToString(ShadingModel) << "\",\n";
         file << "  \"properties\": {\n";
 
         size_t count = 0;
@@ -120,8 +120,12 @@ namespace Kiwi
         file.close();
 
         Name = ReadQuotedStr(json, "name");
-        ShaderName = ReadQuotedStr(json, "shader");
-        if (ShaderName.empty()) ShaderName = "DefaultLit";
+
+        // Support both new "shadingModel" and legacy "shader" field
+        std::string smStr = ReadQuotedStr(json, "shadingModel");
+        if (smStr.empty())
+            smStr = ReadQuotedStr(json, "shader"); // Legacy .mat file compat
+        ShadingModel = smStr.empty() ? EShadingModel::DefaultLit : StringToShadingModel(smStr);
 
         // Parse properties block
         auto propsPos = json.find("\"properties\"");
@@ -210,7 +214,7 @@ namespace Kiwi
     {
         Material mat;
         mat.Name = "Default-Material";
-        mat.ShaderName = "DefaultLit";
+        mat.ShadingModel = EShadingModel::DefaultLit;
         mat.SetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
         mat.SetFloat("_Roughness", 0.5f);
         mat.SetFloat("_Metallic", 0.0f);

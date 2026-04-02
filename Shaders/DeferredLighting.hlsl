@@ -186,6 +186,12 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float4 gB = g_GBufferB.Sample(g_Sampler, input.TexCoord);
     float4 gC = g_GBufferC.Sample(g_Sampler, input.TexCoord);
 
+    // Decode ShadingModel from GBufferB.a
+    uint shadingModelId = (uint(gB.a * 255.0 + 0.5)) >> 4;
+
+    // Unlit surfaces receive no direct lighting
+    if (shadingModelId == 0) return float4(0, 0, 0, 0);
+
     float3 N         = DecodeNormal(gA);
     float  metallic  = gB.r;
     float  specular  = gB.g;

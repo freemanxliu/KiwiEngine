@@ -1012,6 +1012,7 @@ protected:
         bool isVulkanBackend = (GetCurrentRHIType() == RHI_API_TYPE::VULKAN);
         bool useDeferredPipeline = !isGLBackend && !isVulkanBackend &&
                                     (m_ViewMode == EViewMode::Lit ||
+                                     m_ViewMode == EViewMode::Unlit ||
                                      m_ViewMode == EViewMode::BaseColor ||
                                      m_ViewMode == EViewMode::Roughness ||
                                      m_ViewMode == EViewMode::Metallic);
@@ -1397,8 +1398,8 @@ protected:
         oub.Metallic  = metallic;
         oub.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
         oub.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
-        oub.VisualizeMode = 0.0f;
-        oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
+        oub.ShadingModelID  = mat ? (float)(uint8_t)mat->ShadingModel : 1.0f;
+        oub.ObjectPadding[0] = oub.ObjectPadding[1] = oub.ObjectPadding[2] = 0.0f;
 
         void* mapped = m_ObjectUB->Map();
         if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
@@ -1568,7 +1569,7 @@ protected:
         }
     }
 
-    // Forward path: Objects rendered with per-object shaders (or forced shader)
+    // Forward path: Legacy fallback for GL/Vulkan backends
     // DC merging: skip redundant PSO/VB/IB/SRV binds
     void DrawSceneMeshesForward(RHICommandContext* ctx, const char* forceShaderName = nullptr)
     {
@@ -1592,7 +1593,11 @@ protected:
             if (!forceShaderName)
             {
                 Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
-                matShaderName = mat ? mat->ShaderName : "DefaultLit";
+                // Map ShadingModel to legacy forward shader name
+                if (mat && mat->ShadingModel == EShadingModel::Unlit)
+                    matShaderName = "Unlit";
+                else
+                    matShaderName = "DefaultLit";
             }
             const std::string& shaderName = forceShaderName
                 ? std::string(forceShaderName)
@@ -1719,15 +1724,15 @@ protected:
         memcpy(oub.WorldMatrix, identity.m, sizeof(identity.m));
         oub.Selected = 0.0f;
 
-        // Use g_VisualizeMode to pass the visualization mode
+        // Use g_ShadingModelID field to pass the visualization mode (repurposed for this pass)
         switch (m_ViewMode)
         {
-        case EViewMode::BaseColor: oub.VisualizeMode = 0.0f; break;
-        case EViewMode::Roughness: oub.VisualizeMode = 1.0f; break;
-        case EViewMode::Metallic:  oub.VisualizeMode = 2.0f; break;
-        default:                   oub.VisualizeMode = 0.0f; break;
+        case EViewMode::BaseColor: oub.ShadingModelID = 0.0f; break;
+        case EViewMode::Roughness: oub.ShadingModelID = 1.0f; break;
+        case EViewMode::Metallic:  oub.ShadingModelID = 2.0f; break;
+        default:                   oub.ShadingModelID = 0.0f; break;
         }
-        oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
+        oub.ObjectPadding[0] = oub.ObjectPadding[1] = oub.ObjectPadding[2] = 0.0f;
 
         mapped = m_ObjectUB->Map();
         if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
@@ -4980,33 +4985,31 @@ private:
 
             ImGui::Separator();
 
-            // ---- Shader Selection ----
-            ImGui::Text("Shader");
+            // ---- Shading Model Selection ----
+            ImGui::Text("Shading Model");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-1.0f);
-            const auto& shaderNames = m_ShaderLibrary.GetShaderNames();
-            if (ImGui::BeginCombo("##MatEdShader", mat->ShaderName.c_str()))
-            {
-                for (const auto& sn : shaderNames)
-                {
-                    bool sel2 = (sn == mat->ShaderName);
-                    if (ImGui::Selectable(sn.c_str(), sel2))
-                        mat->ShaderName = sn;
-                    if (sel2) ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
+            const char* smNames[] = { "Unlit", "DefaultLit" };
+            int smIdx = (int)mat->ShadingModel;
+            if (ImGui::Combo("##MatEdShadingModel", &smIdx, smNames, IM_ARRAYSIZE(smNames)))
+                mat->ShadingModel = (EShadingModel)smIdx;
 
             ImGui::Spacing();
             ImGui::Separator();
 
             // ---- Properties ----
-            // Try to get @Properties from shader source for driven UI
-            CompiledShader* cs = m_ShaderLibrary.GetShader(mat->ShaderName);
+            // Load @Properties from the shader source associated with this ShadingModel
             std::vector<ShaderPropertyDef> propDefs;
-            if (cs)
             {
-                std::string shaderPath = m_ShaderDir + "\\" + mat->ShaderName + ".hlsl";
+                // Map ShadingModel → shader file for property parsing
+                std::string shaderFile;
+                switch (mat->ShadingModel)
+                {
+                case EShadingModel::Unlit:      shaderFile = "Unlit"; break;
+                case EShadingModel::DefaultLit: shaderFile = "DefaultLit"; break;
+                default:                        shaderFile = "DefaultLit"; break;
+                }
+                std::string shaderPath = m_ShaderDir + "\\" + shaderFile + ".hlsl";
                 std::ifstream sf(shaderPath);
                 if (sf.is_open())
                 {
@@ -5191,7 +5194,7 @@ private:
                     Material* activeMat = m_MaterialLibrary.GetMaterial(mesh.MaterialName);
                     if (activeMat)
                     {
-                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Shader: %s", activeMat->ShaderName.c_str());
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Shading Model: %s", ShadingModelToString(activeMat->ShadingModel));
 
                         ImGui::Separator();
                         ImGui::Text("Properties");
