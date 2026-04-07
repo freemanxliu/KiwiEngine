@@ -4,6 +4,7 @@
 #include <imgui_impl_win32.h>
 #include <imgui_impl_dx11.h>
 #include <stdexcept>
+#include <sstream>
 #include <vector>
 
 namespace Kiwi
@@ -125,59 +126,115 @@ namespace Kiwi
     DX11Device::DX11Device(bool enableDebug)
         : m_EnableDebug(enableDebug)
     {
-        UINT createDeviceFlags = 0;
-        if (enableDebug)
-        {
-            createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
-        }
-
         D3D_FEATURE_LEVEL featureLevels[] = {
-            D3D_FEATURE_LEVEL_11_1,
             D3D_FEATURE_LEVEL_11_0,
             D3D_FEATURE_LEVEL_10_1,
             D3D_FEATURE_LEVEL_10_0,
         };
 
         D3D_FEATURE_LEVEL featureLevel;
-        HRESULT hr = D3D11CreateDevice(
-            nullptr,                    // 默认适配器
-            D3D_DRIVER_TYPE_HARDWARE,
-            nullptr,                    // 无软件光栅器
-            createDeviceFlags,
-            featureLevels,
-            _countof(featureLevels),
-            D3D11_SDK_VERSION,
-            &m_Device,
-            &featureLevel,
-            &m_Context);
+
+        // RTX 50 系列 (Blackwell) 可能在某些 driver 版本下不支持 D3D11
+        // 尝试多种策略创建设备
+
+        struct CreateAttempt {
+            const char* name;
+            IDXGIAdapter* adapter;   // nullptr = default
+            D3D_DRIVER_TYPE driverType;
+            UINT flags;
+        };
+
+        // 准备显式 adapter（用于 fallback 尝试）
+        IDXGIAdapter1* explicitAdapter = nullptr;
+        {
+            Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+            CreateDXGIFactory1(__uuidof(IDXGIFactory1), &factory);
+
+            SIZE_T bestVram = 0;
+            for (UINT i = 0; ; ++i)
+            {
+                IDXGIAdapter1* adapter = nullptr;
+                if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND)
+                    break;
+
+                DXGI_ADAPTER_DESC1 desc;
+                adapter->GetDesc1(&desc);
+
+                char descBuf[256];
+                WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descBuf, sizeof(descBuf), nullptr, nullptr);
+                printf("[Kiwi] GPU Adapter %u: %s (VRAM: %.1f GB)\n", i, descBuf,
+                       (double)desc.DedicatedVideoMemory / (1024.0 * 1024.0 * 1024.0));
+
+                if (!(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
+                    desc.DedicatedVideoMemory > bestVram)
+                {
+                    if (explicitAdapter) explicitAdapter->Release();
+                    explicitAdapter = adapter;
+                    bestVram = desc.DedicatedVideoMemory;
+                }
+                else
+                {
+                    adapter->Release();
+                }
+            }
+        }
+
+        UINT debugFlag = enableDebug ? D3D11_CREATE_DEVICE_DEBUG : 0;
+
+        // 按优先级尝试多种创建方式
+        CreateAttempt attempts[] = {
+            { "HARDWARE+nullptr+debug",     nullptr, D3D_DRIVER_TYPE_HARDWARE, debugFlag },
+            { "HARDWARE+nullptr+no-debug",  nullptr, D3D_DRIVER_TYPE_HARDWARE, 0 },
+            { "UNKNOWN+NVIDIA+no-debug",    explicitAdapter, D3D_DRIVER_TYPE_UNKNOWN, 0 },
+            { "WARP+no-debug",              nullptr, D3D_DRIVER_TYPE_WARP, 0 },
+        };
+
+        HRESULT hr = E_FAIL;
+        const char* successMethod = nullptr;
+
+        for (const auto& attempt : attempts)
+        {
+            m_Device.Reset();
+            m_Context.Reset();
+
+            hr = D3D11CreateDevice(
+                attempt.adapter,
+                attempt.driverType,
+                nullptr,
+                attempt.flags,
+                featureLevels,
+                _countof(featureLevels),
+                D3D11_SDK_VERSION,
+                &m_Device,
+                &featureLevel,
+                &m_Context);
+
+            if (SUCCEEDED(hr))
+            {
+                successMethod = attempt.name;
+                break;
+            }
+
+            printf("[Kiwi] Attempt '%s' failed: 0x%08x\n", attempt.name, (unsigned)hr);
+        }
+
+        if (explicitAdapter)
+            explicitAdapter->Release();
 
         if (FAILED(hr))
         {
-            // 如果 debug 层不可用，尝试不用 debug
-            if (enableDebug)
-            {
-                hr = D3D11CreateDevice(
-                    nullptr,
-                    D3D_DRIVER_TYPE_HARDWARE,
-                    nullptr,
-                    0,
-                    featureLevels,
-                    _countof(featureLevels),
-                    D3D11_SDK_VERSION,
-                    &m_Device,
-                    &featureLevel,
-                    &m_Context);
-
-                if (FAILED(hr))
-                {
-                    throw std::runtime_error("Failed to create D3D11 device");
-                }
-            }
-            else
-            {
-                throw std::runtime_error("Failed to create D3D11 device");
-            }
+            std::ostringstream oss;
+            oss << "Failed to create D3D11 device with all strategies (last HRESULT: 0x"
+                << std::hex << hr << ")";
+            throw std::runtime_error(oss.str());
         }
+
+        printf("[Kiwi] D3D11 device created via '%s'", successMethod);
+        if (featureLevel >= D3D_FEATURE_LEVEL_11_0)
+            printf(" (Feature Level 11.%d)", (int)featureLevel - (int)D3D_FEATURE_LEVEL_11_0);
+        else if (featureLevel >= D3D_FEATURE_LEVEL_10_0)
+            printf(" (Feature Level 10.%d)", (int)featureLevel - (int)D3D_FEATURE_LEVEL_10_0);
+        printf("\n");
 
         // 获取 DXGI 设备
         m_Device->QueryInterface(__uuidof(IDXGIDevice), (void**)&m_DXGIDevice);

@@ -32,6 +32,7 @@
 - **资源状态管理** — `EResourceState` 枚举和 `ResourceBarrier()` 用于 DX12 资源状态转换（DX11/GL 为空操作）。
 - **GPU 调试标注** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` 用于 GPU 调试器的 Pass 标记。每个渲染阶段（G-Buffer、Deferred Lighting、Skybox、Buffer Visualization、Gizmo、Post-Process、ImGui）均已标注，在 RenderDoc、PIX 等 GPU 分析工具中清晰可辨。DX12 使用 `ID3D12GraphicsCommandList` 事件 API；DX11 使用 `ID3DUserDefinedAnnotation`。
 - **GPU 资源调试命名** — 所有 GPU 资源（纹理、缓冲区）都携带描述性调试名称，在 RenderDoc 和 PIX 中可见。`TextureDesc::DebugName` 和 `BufferDesc::DebugName` 通过 `SetPrivateData`（DX11）和 `SetName`（DX12）自动应用。
+- **多 GPU 适配器 Fallback** — DX11 设备创建时枚举所有 `IDXGIAdapter1` 适配器，选择 `DedicatedVideoMemory` 最高的独立显卡。通过多种策略依次尝试（HARDWARE+debug → HARDWARE → 显式适配器 → WARP），确保广泛的硬件兼容性，包括 RTX 50 系列（Blackwell，不支持 `D3D_FEATURE_LEVEL_11_1`）。
 
 ### 🔧 着色器编译管线
 

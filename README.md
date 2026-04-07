@@ -32,6 +32,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **Resource State Management** — `EResourceState` enum and `ResourceBarrier()` for DX12 transitions (DX11/GL: no-op).
 - **GPU Debug Annotations** — `RHICommandContext::BeginEvent()` / `EndEvent()` / `SetMarker()` for GPU debugger pass labeling. Each rendering pass (G-Buffer, Deferred Lighting, Gizmo, Post-Process, ImGui) is annotated, making them clearly identifiable in RenderDoc, PIX, and other GPU profilers. DX12 uses `ID3D12GraphicsCommandList` event API; DX11 uses `ID3DUserDefinedAnnotation`.
 - **GPU Resource Debug Names** — All GPU resources (textures, buffers) carry descriptive debug names visible in RenderDoc and PIX. `TextureDesc::DebugName` and `BufferDesc::DebugName` are automatically applied via `SetPrivateData` (DX11) and `SetName` (DX12). Named resources include: G-Buffer RTs, shadow maps, depth buffer, constant buffers, mesh vertex/index buffers (with object names), gizmo buffers, and offscreen render targets.
+- **Multi-GPU Adapter Fallback** — DX11 device creation enumerates all `IDXGIAdapter1` adapters, selects the one with highest `DedicatedVideoMemory` (discrete GPU preferred). Falls back through multiple strategies (HARDWARE+debug → HARDWARE → explicit adapter → WARP) for broad hardware compatibility including RTX 50 series (Blackwell), which does not support `D3D_FEATURE_LEVEL_11_1`.
 
 ### 🔧 Shader Compilation Pipeline
 
