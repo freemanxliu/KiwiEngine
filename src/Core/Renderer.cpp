@@ -55,8 +55,112 @@ void KiwiEngineApp::RenderDeferred(
         ctx->SetInputLayout(m_InputLayout.get());
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
-        // Draw all mesh components with G-Buffer shader
-        DrawSceneMeshesDeferred(ctx);
+        // Draw visible meshes into the G-Buffer.
+        ctx->SetConstantBuffer(0, m_ViewUB.get());
+
+        auto& batches = m_GPUScene.GetInstanceBatches();
+        auto& singles = m_GPUScene.GetSingleDrawItems();
+
+        if (!batches.empty() && m_GBufferVS_Instanced && m_GBufferPSO_Instanced)
+        {
+            ctx->SetPipelineState(m_GBufferPSO_Instanced.get());
+            ctx->SetVertexShader(m_GBufferVS_Instanced.get());
+            ctx->SetPixelShader(m_GBufferPS.get());
+            ctx->SetInputLayout(m_InputLayout.get());
+            m_GPUScene.BindForInstancing(ctx);
+
+            for (const auto& batch : batches)
+            {
+                SharedMeshEntry mesh = {};
+                for (auto& entry : m_SharedMeshPool)
+                    if (entry.MeshID == batch.MeshID) { mesh = entry; break; }
+                if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
+
+                VertexBufferView vbView;
+                vbView.BufferLocation = 0;
+                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                vbView.StrideInBytes = sizeof(Vertex);
+                RHIBuffer* vbPtr = mesh.VertexBuffer;
+                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+                IndexBufferView ibView;
+                ibView.BufferLocation = 0;
+                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                ibView.Format = EFormat::R32_UINT;
+                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+
+                if (!batch.RenderListIndices.empty())
+                {
+                    auto* meshComp = m_RenderList[batch.RenderListIndices[0]].MeshComp;
+                    if (meshComp)
+                    {
+                        ctx->SetCullMode(meshComp->CullMode);
+                        BindMaterialTextures(ctx, meshComp);
+                    }
+                }
+
+                m_GPUScene.SetBatchStartIndex(ctx, batch.StartIndex);
+                ctx->DrawIndexedInstanced(mesh.IndexCount, batch.InstanceCount, 0, 0, 0);
+            }
+
+            ctx->SetPipelineState(m_GBufferPSO.get());
+            ctx->SetVertexShader(m_GBufferVS.get());
+            ctx->SetPixelShader(m_GBufferPS.get());
+        }
+
+        RHIBuffer* lastVB = nullptr;
+        const char* lastMaterial = nullptr;
+        auto drawSingle = [&](uint32_t renderListIndex, uint32_t gpuSceneIndex)
+        {
+            const auto& renderItem = m_RenderList[renderListIndex];
+            auto* meshComp = renderItem.MeshComp;
+            if (!meshComp) return;
+
+            SharedMeshEntry mesh = GetSharedMesh(renderItem.ObjectIndex);
+            if (!mesh.VertexBuffer || mesh.IndexCount == 0) return;
+
+            ctx->SetCullMode(meshComp->CullMode);
+
+            if (mesh.VertexBuffer != lastVB)
+            {
+                VertexBufferView vbView;
+                vbView.BufferLocation = 0;
+                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                vbView.StrideInBytes = sizeof(Vertex);
+                RHIBuffer* vbPtr = mesh.VertexBuffer;
+                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+                IndexBufferView ibView;
+                ibView.BufferLocation = 0;
+                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                ibView.Format = EFormat::R32_UINT;
+                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+                lastVB = mesh.VertexBuffer;
+            }
+
+            m_GPUScene.BindPrimitive(ctx, gpuSceneIndex);
+
+            const char* matName = meshComp->MaterialName.c_str();
+            if (lastMaterial == nullptr || strcmp(matName, lastMaterial) != 0)
+            {
+                BindMaterialTextures(ctx, meshComp);
+                lastMaterial = matName;
+            }
+
+            ctx->DrawIndexed(mesh.IndexCount, 0, 0);
+        };
+
+        if (!m_GBufferVS_Instanced || !m_GBufferPSO_Instanced)
+        {
+            for (const auto& batch : batches)
+            {
+                for (uint32_t renderListIndex : batch.RenderListIndices)
+                    drawSingle(renderListIndex, m_GPUScene.GetGPUSceneIndex(renderListIndex));
+            }
+        }
+
+        for (const auto& single : singles)
+            drawSingle(single.RenderListIndex, single.GPUSceneIndex);
 
         m_PassTimer.End();
         ctx->EndEvent();
@@ -70,6 +174,9 @@ void KiwiEngineApp::RenderDeferred(
         // Transition depth buffer to shader resource for deferred lighting
         ctx->ResourceBarrier(GetDepthTexture(),
             RESOURCE_STATE_DEPTH_WRITE, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+        // Fullscreen lighting does not use the mesh cull override.
+        ctx->ClearCullModeOverride();
 
         // ==== PASS 2: Deferred Lighting / Buffer Visualization ====
         if (m_ViewMode == EViewMode::Lit)
@@ -89,7 +196,7 @@ void KiwiEngineApp::RenderDeferred(
             ctx->SetShaderResourceView(7, GetDepthSRV());
             ctx->SetSampler(0, m_PostProcessSampler.get());
 
-            // Upload ViewUB (b0)
+            ctx->SetConstantBuffer(0, m_ViewUB.get());
             UpdateDeferredLightingCB();
 
             // ---- Step 1: Ambient Pass (opaque first write) ----
@@ -182,7 +289,7 @@ void KiwiEngineApp::RenderDeferred(
 
             ctx->SetSampler(0, m_PostProcessSampler.get());
 
-            // Update CB with visualization mode
+            ctx->SetConstantBuffer(0, m_ViewUB.get());
             UpdateBufferVisualizationCB();
 
             ctx->Draw(3, 0);
@@ -203,16 +310,18 @@ void KiwiEngineApp::RenderDeferred(
         ctx->BeginEvent("Gizmo Pass");
         m_PassTimer.Begin("Gizmo Pass");
 
-        UploadViewUB(ctx);
+        ctx->SetConstantBuffer(0, m_ViewUB.get());
 
         // Re-set render targets for forward gizmo drawing (with depth for correct occlusion)
         ctx->SetRenderTargets(&sceneRTV, 1, GetDSV());
         ctx->SetViewports(&vp, 1);
         ctx->SetScissorRects(&sr, 1);
 
+        ctx->SetCullMode(ECullMode::Back);
         ctx->SetInputLayout(m_InputLayout.get());
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
         DrawGizmo(ctx);
+        ctx->ClearCullModeOverride();
 
         m_PassTimer.End();
         ctx->EndEvent();
@@ -254,15 +363,87 @@ void KiwiEngineApp::RenderForward(
         m_PassTimer.Begin("Forward Pass");
         m_GPUScene.Update(m_Scene, m_MaterialLibrary, m_RenderList);
         m_GPUScene.UploadToGPU();
-        DrawSceneMeshesForward(ctx, forwardShader);
+        ctx->SetConstantBuffer(0, m_ViewUB.get());
+
+        std::string lastShaderName;
+        RHIBuffer* lastVB = nullptr;
+        const char* lastMaterial = nullptr;
+
+        for (const auto& renderItem : m_RenderList)
+        {
+            size_t i = renderItem.ObjectIndex;
+            auto* meshComp = renderItem.MeshComp;
+            if (!meshComp) continue;
+
+            SharedMeshEntry mesh = GetSharedMesh(i);
+            if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
+
+            ctx->SetCullMode(meshComp->CullMode);
+
+            std::string matShaderName;
+            if (!forwardShader)
+            {
+                Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
+                if (mat && mat->ShadingModel == EShadingModel::Unlit)
+                    matShaderName = "Unlit";
+                else
+                    matShaderName = "DefaultLit";
+            }
+            const std::string& shaderName = forwardShader
+                ? std::string(forwardShader)
+                : matShaderName;
+            if (shaderName != lastShaderName)
+            {
+                CompiledShader* shader = m_ShaderLibrary.GetShader(shaderName);
+                if (!shader) shader = m_ShaderLibrary.GetDefault();
+                if (shader)
+                {
+                    if (shader->PSO) ctx->SetPipelineState(shader->PSO.get());
+                    ctx->SetVertexShader(shader->VertexShader.get());
+                    ctx->SetPixelShader(shader->PixelShader.get());
+                    lastShaderName = shaderName;
+                }
+            }
+
+            if (mesh.VertexBuffer != lastVB)
+            {
+                VertexBufferView vbView;
+                vbView.BufferLocation = 0;
+                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
+                vbView.StrideInBytes = sizeof(Vertex);
+                RHIBuffer* vbPtr = mesh.VertexBuffer;
+                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
+
+                IndexBufferView ibView;
+                ibView.BufferLocation = 0;
+                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
+                ibView.Format = EFormat::R32_UINT;
+                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
+                lastVB = mesh.VertexBuffer;
+            }
+
+            uint32_t renderListIdx = (uint32_t)(&renderItem - &m_RenderList[0]);
+            m_GPUScene.BindPrimitive(ctx, m_GPUScene.GetGPUSceneIndex(renderListIdx));
+
+            const char* matName = meshComp->MaterialName.c_str();
+            if (lastMaterial == nullptr || strcmp(matName, lastMaterial) != 0)
+            {
+                BindMaterialTextures(ctx, meshComp);
+                lastMaterial = matName;
+            }
+
+            ctx->DrawIndexed(mesh.IndexCount, 0, 0);
+        }
         m_PassTimer.End();
         ctx->EndEvent();
 
         // ---- Draw Gizmo ----
         ctx->BeginEvent("Gizmo Pass");
         m_PassTimer.Begin("Gizmo Pass");
-        UploadViewUB(ctx);
+        ctx->SetConstantBuffer(0, m_ViewUB.get());
+        ctx->SetCullMode(ECullMode::Back);
         DrawGizmo(ctx);
+        ctx->ClearCullModeOverride();
         m_PassTimer.End();
         ctx->EndEvent();
 }

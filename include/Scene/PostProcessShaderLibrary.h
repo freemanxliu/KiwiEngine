@@ -231,8 +231,14 @@ namespace Kiwi
                 if (!shader->VertexShader) return false;
 
                 // Create PSO without input layout (fullscreen triangle uses SV_VertexID)
-                shader->PSO = device->CreateGraphicsPipelineState(
-                    shader->VertexShader.get(), shader->PixelShader.get(), nullptr);
+                GraphicsPipelineStateInitializer psoInit;
+                psoInit.VertexShader = shader->VertexShader.get();
+                psoInit.PixelShader = shader->PixelShader.get();
+                psoInit.DepthEnabled = false;
+                psoInit.DepthWrite = false;
+                psoInit.RasterizerState = RasterizerStateDesc(
+                    ERasterizerFillMode::Solid, ECullMode::None);
+                shader->PSO = device->CreateGraphicsPipelineState(psoInit);
 
                 return shader->PSO != nullptr;
             }

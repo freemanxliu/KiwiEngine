@@ -103,13 +103,17 @@ VSOutput VSMain(VSInput input)
     float    shadingModel = g_ShadingModelID;
 #endif
 
+    float3 n = input.Normal;
+    if (dot(n, n) < 1e-8)
+        n = float3(0.0, 0.0, 1.0);
+
     float4 worldPos = mul(float4(input.Position, 1.0), world);
     float4 viewPos = mul(worldPos, g_View);
     float4 projPos = mul(viewPos, g_Projection);
 
     output.PositionCS = projPos;
     output.PositionWS = worldPos.xyz;
-    output.NormalWS = normalize(mul(input.Normal, (float3x3)world));
+    output.NormalWS = normalize(mul(n, (float3x3)world));
     output.Color = input.Color * objColor;
     output.TexCoord = input.TexCoord;
 
@@ -173,7 +177,11 @@ GBufferOutput PSMain(VSOutput input)
     }
 
     // ---- DefaultLit path: standard PBR ----
-    float3 normal = normalize(input.NormalWS);
+    float3 normal = input.NormalWS;
+    if (dot(normal, normal) < 1e-8)
+        normal = float3(0.0, 0.0, 1.0);
+    else
+        normal = normalize(normal);
     if (input.HasNormalTex > 0.5)
     {
         float3 tangentNormal = g_NormalTex.Sample(g_LinearWrap, input.TexCoord).rgb;

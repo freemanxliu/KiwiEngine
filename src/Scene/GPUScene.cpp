@@ -76,7 +76,7 @@ namespace Kiwi
             uint32_t gpuIdx = m_NumPrimitives;
             m_RenderListToGPUScene[ri] = gpuIdx;
 
-            ObjectUniformBuffer& oub = m_PrimitiveData[gpuIdx];
+            PrimitiveUniformBuffer& oub = m_PrimitiveData[gpuIdx];
             memset(&oub, 0, sizeof(oub));
 
             // World transform
@@ -85,7 +85,7 @@ namespace Kiwi
 
             // Material properties
             Material* mat = materialLibrary.GetMaterial(meshComp->MaterialName);
-            Vec4  color     = mat ? mat->GetColor("_Color",     { 0.8f, 0.8f, 0.8f, 1.0f }) : Vec4{ 0.8f, 0.8f, 0.8f, 1.0f };
+            Vec4 color = mat ? mat->GetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f }) : Vec4{ 0.8f, 0.8f, 0.8f, 1.0f };
             float roughness = mat ? mat->GetFloat("_Roughness", 0.5f) : 0.5f;
             float metallic  = mat ? mat->GetFloat("_Metallic",  0.0f) : 0.0f;
             std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
@@ -97,8 +97,7 @@ namespace Kiwi
             oub.ObjectColor[3] = color.w;
 
             // Check selection
-            if (item.ObjectIndex < objects.size())
-                oub.Selected = (objects[item.ObjectIndex].get() == selectedObj) ? 1.0f : 0.0f;
+            oub.Selected = (objects[item.ObjectIndex].get() == selectedObj) ? 1.0f : 0.0f;
 
             oub.Roughness = roughness;
             oub.Metallic  = metallic;
@@ -120,29 +119,40 @@ namespace Kiwi
         m_Batches.clear();
         m_SingleDraws.clear();
 
-        if (renderList.empty()) return;
-
+        if (renderList.empty())
+        {
+            return;
+        }
+        
         // RenderList is already sorted by MeshID → MaterialName.
         // Walk through and group consecutive items with same MeshID + MaterialName.
         struct TempGroup
         {
             uint32_t MeshID;
             std::string MaterialName;
+            ECullMode CullMode = ECullMode::Back;
             std::vector<uint32_t> Indices; // RenderList indices
+        };
+
+        auto cullOf = [](const RenderItem& item)
+        {
+            return item.MeshComp ? item.MeshComp->CullMode : ECullMode::Back;
         };
 
         std::vector<TempGroup> groups;
         TempGroup current;
         current.MeshID = renderList[0].MeshID;
         current.MaterialName = renderList[0].MaterialName ? renderList[0].MaterialName : "";
+        current.CullMode = cullOf(renderList[0]);
         current.Indices.push_back(0);
 
         for (uint32_t i = 1; i < (uint32_t)renderList.size(); ++i)
         {
             uint32_t meshID = renderList[i].MeshID;
             const char* matName = renderList[i].MaterialName ? renderList[i].MaterialName : "";
+            ECullMode cull = cullOf(renderList[i]);
 
-            if (meshID == current.MeshID && current.MaterialName == matName)
+            if (meshID == current.MeshID && current.MaterialName == matName && current.CullMode == cull)
             {
                 current.Indices.push_back(i);
             }
@@ -151,6 +161,7 @@ namespace Kiwi
                 groups.push_back(std::move(current));
                 current.MeshID = meshID;
                 current.MaterialName = matName;
+                current.CullMode = cull;
                 current.Indices.clear();
                 current.Indices.push_back(i);
             }
@@ -188,8 +199,11 @@ namespace Kiwi
 
     void GPUScene::UploadToGPU()
     {
-        if (!m_ConstantBuffer || m_NumPrimitives == 0) return;
-
+        if (!m_ConstantBuffer || m_NumPrimitives == 0)
+        {
+            return;
+        }
+        
         // Upload to Constant Buffer (for single-draw CB offset path)
         {
             void* mapped = m_ConstantBuffer->Map();
@@ -198,7 +212,7 @@ namespace Kiwi
                 uint8_t* dst = (uint8_t*)mapped;
                 for (uint32_t i = 0; i < m_NumPrimitives; ++i)
                 {
-                    memcpy(dst + i * OBJECT_UB_STRIDE, &m_PrimitiveData[i], sizeof(ObjectUniformBuffer));
+                    memcpy(dst + i * OBJECT_UB_STRIDE, &m_PrimitiveData[i], sizeof(PrimitiveUniformBuffer));
                 }
                 m_ConstantBuffer->Unmap();
             }
@@ -207,7 +221,7 @@ namespace Kiwi
         // Create/recreate StructuredBuffer for instanced draw path
         if (!m_Batches.empty() && m_Device)
         {
-            uint32_t requiredSize = m_NumPrimitives * sizeof(ObjectUniformBuffer);
+            uint32_t requiredSize = m_NumPrimitives * sizeof(PrimitiveUniformBuffer);
 
             // Recreate if size changed or first time
             if (!m_StructuredBuffer || m_StructuredBuffer->GetDesc().SizeInBytes < requiredSize)
@@ -219,8 +233,8 @@ namespace Kiwi
                 sbDesc.BindFlags = BUFFER_USAGE_STRUCTURED;
                 sbDesc.Usage = EResourceUsage::Dynamic;
                 sbDesc.DebugName = "GPUScene_StructuredBuffer";
-                sbDesc.SizeInBytes = MAX_GPU_SCENE_PRIMITIVES * sizeof(ObjectUniformBuffer);
-                sbDesc.StructByteStride = sizeof(ObjectUniformBuffer);
+                sbDesc.SizeInBytes = MAX_GPU_SCENE_PRIMITIVES * sizeof(PrimitiveUniformBuffer);
+                sbDesc.StructByteStride = sizeof(PrimitiveUniformBuffer);
                 m_StructuredBuffer = m_Device->CreateBuffer(sbDesc);
 
                 if (m_StructuredBuffer)
@@ -228,7 +242,7 @@ namespace Kiwi
                     m_StructuredSRV = m_Device->CreateBufferSRV(
                         m_StructuredBuffer.get(),
                         MAX_GPU_SCENE_PRIMITIVES,
-                        sizeof(ObjectUniformBuffer));
+                        sizeof(PrimitiveUniformBuffer));
                 }
             }
 
@@ -239,7 +253,7 @@ namespace Kiwi
                 if (mapped)
                 {
                     memcpy(mapped, m_PrimitiveData.data(),
-                           m_NumPrimitives * sizeof(ObjectUniformBuffer));
+                           m_NumPrimitives * sizeof(PrimitiveUniformBuffer));
                     m_StructuredBuffer->Unmap();
                 }
             }

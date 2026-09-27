@@ -75,10 +75,7 @@ namespace Kiwi
             RHIShader* vertexShader) override;
         std::unique_ptr<RHIPipelineState> CreatePipelineState() override;
         std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout) override;
-        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
-            const PipelineStateDesc& pipelineDesc) override;
+            const GraphicsPipelineStateInitializer& initializer) override;
         std::unique_ptr<RHISampler> CreateSampler() override;
         std::unique_ptr<RHISampler> CreateComparisonSampler() override;
 
@@ -121,6 +118,8 @@ namespace Kiwi
         void ClearDepthStencilView(RHITextureView* dsv, const ClearDepthStencilValue& value, uint8_t clearFlags) override;
 
         void SetPipelineState(RHIPipelineState* pso) override;
+        void SetCullMode(ECullMode mode) override;
+        void ClearCullModeOverride() override;
 
         void SetPrimitiveTopology(EPrimitiveTopology topology) override;
         void SetVertexBuffers(uint32_t startSlot, RHIBuffer* const* buffers, const VertexBufferView* views, uint32_t count) override;
@@ -155,6 +154,8 @@ namespace Kiwi
         GLShader*      m_CurrentPS = nullptr;
         GLInputLayout* m_CurrentLayout = nullptr;
         GLPipelineState* m_CurrentPSO = nullptr;
+        bool m_CullOverride = false;
+        ECullMode m_CullMode = ECullMode::Back;
 
         // Index buffer state
         GLenum m_IndexFormat = GL_UNSIGNED_INT;

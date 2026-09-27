@@ -42,7 +42,7 @@ using namespace Kiwi;
 
 static bool IsDeferredRHI(RHI_API_TYPE api)
 {
-    return api == RHI_API_TYPE::DX11 || api == RHI_API_TYPE::DX12;
+    return api == RHI_API_TYPE::DX11 || api == RHI_API_TYPE::DX12 || api == RHI_API_TYPE::METAL;
 }
 
 static const char* BuiltinVertexShader(RHI_API_TYPE api)
@@ -968,6 +968,7 @@ protected:
     void OnRender() override
     {
         InitView();
+        UploadViewUB();
 
         auto ctx = GetContext();
         auto swapChain = GetSwapChain();
@@ -1013,11 +1014,10 @@ protected:
         m_PassTimer.BeginFrame();
 
         // ---- Choose rendering path based on ViewMode ----
-        // GL/Vulkan backend: always use forward path (deferred shaders not yet implemented)
+        // GL/Vulkan stay on the forward path. Metal uses the deferred shaders in MetalShaders/.
         bool isGLBackend = (GetCurrentRHIType() == RHI_API_TYPE::OPENGL);
         bool isVulkanBackend = (GetCurrentRHIType() == RHI_API_TYPE::VULKAN);
-        bool isMetalBackend = (GetCurrentRHIType() == RHI_API_TYPE::METAL);
-        bool useDeferredPipeline = !isGLBackend && !isVulkanBackend && !isMetalBackend &&
+        bool useDeferredPipeline = !isGLBackend && !isVulkanBackend &&
                                     (m_ViewMode == EViewMode::Lit ||
                                      m_ViewMode == EViewMode::Unlit ||
                                      m_ViewMode == EViewMode::BaseColor ||
@@ -1108,9 +1108,11 @@ protected:
     // Scene Mesh Drawing
     // ============================================================
 
-    // Helper: Upload per-frame ViewUniformBuffer (call once per frame before draw calls)
-    void UploadViewUB(RHICommandContext* ctx)
+    // Fill the camera ViewUniformBuffer. Binding is a separate SetConstantBuffer(0).
+    void UploadViewUB()
     {
+        if (!m_ViewUB) return;
+
         Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
         Mat4 invViewProj = viewProj.Inverse();
 
@@ -1133,10 +1135,9 @@ protected:
 
         void* mapped = m_ViewUB->Map();
         if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
-        ctx->SetConstantBuffer(0, m_ViewUB.get());
     }
 
-    // Helper: Fill and upload per-object ObjectUniformBuffer
+    // Helper: Fill and upload per-object PrimitiveUniformBuffer
     void UploadObjectUB(RHICommandContext* ctx, MeshComponent* meshComp)
     {
         Mat4 worldMatrix = meshComp->GetWorldMatrix();
@@ -1149,7 +1150,7 @@ protected:
         std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
         std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
 
-        ObjectUniformBuffer oub = {};
+        PrimitiveUniformBuffer oub = {};
         memcpy(oub.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
         oub.ObjectColor[0] = color.x;
         oub.ObjectColor[1] = color.y;
@@ -1220,233 +1221,19 @@ protected:
         }
     }
 
-    // Deferred path: dual-path rendering
-    //   Path 1: Instanced batches (same mesh + same material, count >= 2)
-    //           → DrawIndexedInstanced, shader reads StructuredBuffer via SV_InstanceID
-    //   Path 2: Single draws (unique mesh or material combo)
-    //           → DrawIndexed, shader reads ObjectUB (b1) via CB offset binding
-    void DrawSceneMeshesDeferred(RHICommandContext* ctx)
-    {
-        UploadViewUB(ctx);
-
-        auto& batches = m_GPUScene.GetInstanceBatches();
-        auto& singles = m_GPUScene.GetSingleDrawItems();
-
-        // ---- Path 1: Instanced batches (same mesh + same material) ----
-        // Uses StructuredBuffer (t8) + SV_InstanceID for true GPU instancing.
-        // One DrawIndexedInstanced per batch = one draw call for N identical objects.
-        if (!batches.empty() && m_GBufferVS_Instanced && m_GBufferPSO_Instanced)
-        {
-            // Switch to instanced PSO/VS
-            ctx->SetPipelineState(m_GBufferPSO_Instanced.get());
-            ctx->SetVertexShader(m_GBufferVS_Instanced.get());
-            ctx->SetPixelShader(m_GBufferPS.get());
-            ctx->SetInputLayout(m_InputLayout.get());
-
-            // Bind GPU Scene StructuredBuffer (t8) for all batches
-            m_GPUScene.BindForInstancing(ctx);
-
-            for (const auto& batch : batches)
-            {
-                SharedMeshEntry mesh = {};
-                for (auto& entry : m_SharedMeshPool)
-                    if (entry.MeshID == batch.MeshID) { mesh = entry; break; }
-                if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
-
-                // Bind VB/IB once for entire batch
-                VertexBufferView vbView;
-                vbView.BufferLocation = 0;
-                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
-                vbView.StrideInBytes = sizeof(Vertex);
-                RHIBuffer* vbPtr = mesh.VertexBuffer;
-                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
-
-                IndexBufferView ibView;
-                ibView.BufferLocation = 0;
-                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
-                ibView.Format = EFormat::R32_UINT;
-                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
-
-                // Bind material textures once for entire batch
-                if (!batch.RenderListIndices.empty())
-                {
-                    auto* meshComp = m_RenderList[batch.RenderListIndices[0]].MeshComp;
-                    if (meshComp) BindMaterialTextures(ctx, meshComp);
-                }
-
-                // Set batch start index in GPU Scene buffer (b4)
-                m_GPUScene.SetBatchStartIndex(ctx, batch.StartIndex);
-
-                // TRUE instanced draw: one call for all instances!
-                ctx->DrawIndexedInstanced(mesh.IndexCount, batch.InstanceCount, 0, 0, 0);
-            }
-
-            // Switch back to non-instanced PSO for single draws
-            ctx->SetPipelineState(m_GBufferPSO.get());
-            ctx->SetVertexShader(m_GBufferVS.get());
-            ctx->SetPixelShader(m_GBufferPS.get());
-        }
-
-        // ---- Path 2: Single draws (CB offset binding) ----
-        RHIBuffer* lastVB = nullptr;
-        const char* lastMaterial = nullptr;
-
-        for (const auto& single : singles)
-        {
-            const auto& renderItem = m_RenderList[single.RenderListIndex];
-            auto* meshComp = renderItem.MeshComp;
-            if (!meshComp) continue;
-
-            SharedMeshEntry mesh = GetSharedMesh(renderItem.ObjectIndex);
-            if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
-
-            if (mesh.VertexBuffer != lastVB)
-            {
-                VertexBufferView vbView;
-                vbView.BufferLocation = 0;
-                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
-                vbView.StrideInBytes = sizeof(Vertex);
-                RHIBuffer* vbPtr = mesh.VertexBuffer;
-                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
-
-                IndexBufferView ibView;
-                ibView.BufferLocation = 0;
-                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
-                ibView.Format = EFormat::R32_UINT;
-                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
-                lastVB = mesh.VertexBuffer;
-            }
-
-            // CB offset binding for this primitive
-            m_GPUScene.BindPrimitive(ctx, single.GPUSceneIndex);
-
-            const char* matName = meshComp->MaterialName.c_str();
-            if (lastMaterial == nullptr || strcmp(matName, lastMaterial) != 0)
-            {
-                BindMaterialTextures(ctx, meshComp);
-                lastMaterial = matName;
-            }
-
-            ctx->DrawIndexed(mesh.IndexCount, 0, 0);
-        }
-    }
-
-    // Forward path: Legacy fallback for GL/Vulkan backends
-    // DC merging: skip redundant PSO/VB/IB/SRV binds
-    void DrawSceneMeshesForward(RHICommandContext* ctx, const char* forceShaderName = nullptr)
-    {
-        UploadViewUB(ctx);
-
-        std::string lastShaderName;
-        RHIBuffer* lastVB = nullptr;
-        const char* lastMaterial = nullptr;
-
-        for (const auto& renderItem : m_RenderList)
-        {
-            size_t i = renderItem.ObjectIndex;
-            auto* meshComp = renderItem.MeshComp;
-            if (!meshComp) continue;
-
-            SharedMeshEntry mesh = GetSharedMesh(i);
-            if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
-
-            // --- Per-object shader switching ---
-            std::string matShaderName;
-            if (!forceShaderName)
-            {
-                Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
-                // Map ShadingModel to legacy forward shader name
-                if (mat && mat->ShadingModel == EShadingModel::Unlit)
-                    matShaderName = "Unlit";
-                else
-                    matShaderName = "DefaultLit";
-            }
-            const std::string& shaderName = forceShaderName
-                ? std::string(forceShaderName)
-                : matShaderName;
-            if (shaderName != lastShaderName)
-            {
-                CompiledShader* shader = m_ShaderLibrary.GetShader(shaderName);
-                if (!shader) shader = m_ShaderLibrary.GetDefault();
-                if (shader)
-                {
-                    if (shader->PSO) ctx->SetPipelineState(shader->PSO.get());
-                    ctx->SetVertexShader(shader->VertexShader.get());
-                    ctx->SetPixelShader(shader->PixelShader.get());
-                    lastShaderName = shaderName;
-                }
-            }
-
-            // Skip VB/IB if same mesh
-            if (mesh.VertexBuffer != lastVB)
-            {
-                VertexBufferView vbView;
-                vbView.BufferLocation = 0;
-                vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
-                vbView.StrideInBytes = sizeof(Vertex);
-                RHIBuffer* vbPtr = mesh.VertexBuffer;
-                ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
-
-                IndexBufferView ibView;
-                ibView.BufferLocation = 0;
-                ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
-                ibView.Format = EFormat::R32_UINT;
-                ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
-                lastVB = mesh.VertexBuffer;
-            }
-
-            uint32_t renderListIdx = (uint32_t)(&renderItem - &m_RenderList[0]);
-            m_GPUScene.BindPrimitive(ctx, m_GPUScene.GetGPUSceneIndex(renderListIdx));
-
-            const char* matName = meshComp->MaterialName.c_str();
-            if (lastMaterial == nullptr || strcmp(matName, lastMaterial) != 0)
-            {
-                BindMaterialTextures(ctx, meshComp);
-                lastMaterial = matName;
-            }
-
-            ctx->DrawIndexed(mesh.IndexCount, 0, 0);
-        }
-    }
-
     // Update CBs for deferred lighting fullscreen pass
     void UpdateDeferredLightingCB()
     {
         auto ctx = GetContext();
 
-        // Upload ViewUniformBuffer (contains InvViewProj for position reconstruction)
-        Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
-        Mat4 invViewProj = viewProj.Inverse();
-
-        ViewUniformBuffer vub = {};
-        memcpy(vub.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(vub.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-        memcpy(vub.ViewProjectionMatrix, viewProj.m, sizeof(viewProj.m));
-        memcpy(vub.InvViewProjectionMatrix, invViewProj.m, sizeof(invViewProj.m));
-        vub.CameraPos[0] = m_CameraPosition.x;
-        vub.CameraPos[1] = m_CameraPosition.y;
-        vub.CameraPos[2] = m_CameraPosition.z;
-        vub.ViewPadding1 = 0.0f;
-        vub.ScreenWidth = (float)GetWindow()->GetWidth();
-        vub.ScreenHeight = (float)GetWindow()->GetHeight();
-        vub.NearPlane = 0.1f;
-        vub.FarPlane = 1000.0f;
-        vub.NumLights = m_NumActiveLights;
-        vub.ViewPadding2[0] = vub.ViewPadding2[1] = vub.ViewPadding2[2] = 0.0f;
-        memcpy(vub.Lights, m_LightDataCache, sizeof(m_LightDataCache));
-
-        void* mapped = m_ViewUB->Map();
-        if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
-        ctx->SetConstantBuffer(0, m_ViewUB.get());
-
-        // Upload ObjectUniformBuffer (identity world + no selection)
-        ObjectUniformBuffer oub = {};
+        // Upload PrimitiveUniformBuffer (identity world + no selection)
+        PrimitiveUniformBuffer oub = {};
         Mat4 identity = Mat4::Identity();
         memcpy(oub.WorldMatrix, identity.m, sizeof(identity.m));
         oub.Selected = 0.0f;
         oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
 
-        mapped = m_ObjectUB->Map();
+        void* mapped = m_ObjectUB->Map();
         if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
         ctx->SetConstantBuffer(1, m_ObjectUB.get());
     }
@@ -1456,32 +1243,8 @@ protected:
     {
         auto ctx = GetContext();
 
-        // Upload ViewUniformBuffer
-        Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
-        Mat4 invViewProj = viewProj.Inverse();
-
-        ViewUniformBuffer vub = {};
-        memcpy(vub.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
-        memcpy(vub.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
-        memcpy(vub.ViewProjectionMatrix, viewProj.m, sizeof(viewProj.m));
-        memcpy(vub.InvViewProjectionMatrix, invViewProj.m, sizeof(invViewProj.m));
-        vub.CameraPos[0] = m_CameraPosition.x;
-        vub.CameraPos[1] = m_CameraPosition.y;
-        vub.CameraPos[2] = m_CameraPosition.z;
-        vub.ViewPadding1 = 0.0f;
-        vub.ScreenWidth = (float)GetWindow()->GetWidth();
-        vub.ScreenHeight = (float)GetWindow()->GetHeight();
-        vub.NearPlane = 0.1f;
-        vub.FarPlane = 1000.0f;
-        vub.NumLights = 0;
-        vub.ViewPadding2[0] = vub.ViewPadding2[1] = vub.ViewPadding2[2] = 0.0f;
-
-        void* mapped = m_ViewUB->Map();
-        if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
-        ctx->SetConstantBuffer(0, m_ViewUB.get());
-
-        // Upload ObjectUniformBuffer with visualize mode
-        ObjectUniformBuffer oub = {};
+        // Upload PrimitiveUniformBuffer with visualize mode
+        PrimitiveUniformBuffer oub = {};
         Mat4 identity = Mat4::Identity();
         memcpy(oub.WorldMatrix, identity.m, sizeof(identity.m));
         oub.Selected = 0.0f;
@@ -1496,7 +1259,7 @@ protected:
         }
         oub.ObjectPadding[0] = oub.ObjectPadding[1] = oub.ObjectPadding[2] = 0.0f;
 
-        mapped = m_ObjectUB->Map();
+        void* mapped = m_ObjectUB->Map();
         if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
         ctx->SetConstantBuffer(1, m_ObjectUB.get());
     }
@@ -1736,6 +1499,8 @@ protected:
                 int matCmp = strcmp(a.MaterialName, b.MaterialName);
                 if (matCmp != 0)
                     return matCmp < 0;                     // Group same material
+                if (a.MeshComp->CullMode != b.MeshComp->CullMode)
+                    return (int)a.MeshComp->CullMode < (int)b.MeshComp->CullMode;
                 return a.DistToCamera < b.DistToCamera;   // Front-to-back (Early-Z)
             });
     }
@@ -1840,6 +1605,7 @@ protected:
         // Release all GPU resources
         m_GPUMeshes.clear();
         m_ViewUB.reset();
+        m_ShadowViewUB.reset();
         m_GPUScene.Release();
         m_ObjectUB.reset();
         m_LightCB.reset();
@@ -1940,13 +1706,16 @@ private:
         cbDesc.SizeInBytes = sizeof(ViewUniformBuffer);
         m_ViewUB = device->CreateBuffer(cbDesc);
 
+        cbDesc.DebugName = "ShadowViewUniformBuffer";
+        m_ShadowViewUB = device->CreateBuffer(cbDesc);
+
         // GPU Scene Buffer: managed by GPUScene class (UE5 FPrimitiveSceneData pattern)
         // Supports dirty-flag incremental updates, one Map/Unmap per frame.
         m_GPUScene.Initialize(device);
 
         // Small per-draw ObjectUB for fullscreen passes and gizmos (not part of scene)
         cbDesc.DebugName = "ObjectUB_Aux";
-        cbDesc.SizeInBytes = sizeof(ObjectUniformBuffer);
+        cbDesc.SizeInBytes = sizeof(PrimitiveUniformBuffer);
         m_ObjectUB = device->CreateBuffer(cbDesc);
 
         // Per-light CB for multi-pass deferred lighting (b3)
@@ -1963,7 +1732,6 @@ private:
         // Initialize post-process resources
         InitPostProcessResources(device);
 
-        // Deferred and shadow shaders are implemented for DX11/DX12.
         if (IsDeferredRHI(api))
         {
             CompileDeferredShaders(device);
@@ -1974,11 +1742,11 @@ private:
 
             // Record timestamps for deferred + shadow shaders (for incremental reload)
             namespace fs = std::filesystem;
-            m_DeferredShaderTimestamps["GBufferPass"] = fs::last_write_time(m_ShaderDir + "/GBufferPass.hlsl");
-            m_DeferredShaderTimestamps["DeferredLighting"] = fs::last_write_time(m_ShaderDir + "/DeferredLighting.hlsl");
-            m_DeferredShaderTimestamps["DeferredAmbient"] = fs::last_write_time(m_ShaderDir + "/DeferredAmbient.hlsl");
-            m_DeferredShaderTimestamps["BufferVisualization"] = fs::last_write_time(m_ShaderDir + "/BufferVisualization.hlsl");
-            m_DeferredShaderTimestamps["ShadowPass"] = fs::last_write_time(m_ShaderDir + "/ShadowPass.hlsl");
+            m_DeferredShaderTimestamps["GBufferPass"] = fs::last_write_time(DeferredShaderPath(api, "GBufferPass"));
+            m_DeferredShaderTimestamps["DeferredLighting"] = fs::last_write_time(DeferredShaderPath(api, "DeferredLighting"));
+            m_DeferredShaderTimestamps["DeferredAmbient"] = fs::last_write_time(DeferredShaderPath(api, "DeferredAmbient"));
+            m_DeferredShaderTimestamps["BufferVisualization"] = fs::last_write_time(DeferredShaderPath(api, "BufferVisualization"));
+            m_DeferredShaderTimestamps["ShadowPass"] = fs::last_write_time(DeferredShaderPath(api, "ShadowPass"));
         }
 
         // Mark first load complete — future reloads will be incremental
@@ -2027,8 +1795,14 @@ private:
             EShaderType::Pixel, ppPSSrc, "PSMain", "ps_5_0");
         if (m_PassthroughVS && m_PassthroughPS)
         {
-            m_PassthroughPSO = device->CreateGraphicsPipelineState(
-                m_PassthroughVS.get(), m_PassthroughPS.get(), nullptr);
+            GraphicsPipelineStateInitializer passthroughInit;
+            passthroughInit.VertexShader = m_PassthroughVS.get();
+            passthroughInit.PixelShader = m_PassthroughPS.get();
+            passthroughInit.DepthEnabled = false;
+            passthroughInit.DepthWrite = false;
+            passthroughInit.RasterizerState = RasterizerStateDesc(
+                ERasterizerFillMode::Solid, ECullMode::None);
+            m_PassthroughPSO = device->CreateGraphicsPipelineState(passthroughInit);
         }
 
         // Create offscreen render targets
@@ -2215,10 +1989,20 @@ private:
         return result;
     }
 
+    std::string DeferredShaderPath(RHI_API_TYPE api, const char* name) const
+    {
+        if (api == RHI_API_TYPE::METAL)
+            return ForwardShaderDirectory(api, m_ShaderDir) + "/" + name + ".metal";
+        return m_ShaderDir + "/" + std::string(name) + ".hlsl";
+    }
+
     void CompileDeferredShaders(RHIDevice* device)
     {
+        auto api = device->GetApiType();
+        const bool compileInstanced = api != RHI_API_TYPE::METAL;
+
         // --- Compile G-Buffer Pass shader ---
-        std::string gbufferPath = m_ShaderDir + "/GBufferPass.hlsl";
+        std::string gbufferPath = DeferredShaderPath(api, "GBufferPass");
         std::string gbufferSrc = ReadShaderFile(gbufferPath);
         if (!gbufferSrc.empty())
         {
@@ -2230,26 +2014,32 @@ private:
             if (m_GBufferVS && m_GBufferPS)
             {
                 // Create MRT PSO for G-Buffer (3 render targets, UE5-inspired layout)
-                PipelineStateDesc gbufferPSODesc;
-                gbufferPSODesc.NumRenderTargets = 3;
-                gbufferPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM; // GBufferA: Normal + Metallic
-                gbufferPSODesc.RTVFormats[1] = EFormat::R8G8B8A8_UNORM; // GBufferB: BaseColor + Roughness
-                gbufferPSODesc.RTVFormats[2] = EFormat::R8G8B8A8_UNORM; // GBufferC: Emissive + Specular
-                gbufferPSODesc.DSVFormat = EFormat::D32_FLOAT;
+                GraphicsPipelineStateInitializer gbufferPSODesc;
+                gbufferPSODesc.RenderTargetsEnabled = 3;
+                gbufferPSODesc.RenderTargetFormats[0] = EFormat::R8G8B8A8_UNORM; // GBufferA: Normal + Metallic
+                gbufferPSODesc.RenderTargetFormats[1] = EFormat::R8G8B8A8_UNORM; // GBufferB: BaseColor + Roughness
+                gbufferPSODesc.RenderTargetFormats[2] = EFormat::R8G8B8A8_UNORM; // GBufferC: Emissive + Specular
+                gbufferPSODesc.DepthStencilTargetFormat = EFormat::D32_FLOAT;
                 gbufferPSODesc.DepthEnabled = true;
                 gbufferPSODesc.DepthWrite = true;
+                gbufferPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::Back);
 
-                m_GBufferPSO = device->CreateGraphicsPipelineState(
-                    m_GBufferVS.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+                gbufferPSODesc.VertexShader = m_GBufferVS.get();
+                gbufferPSODesc.PixelShader = m_GBufferPS.get();
+                gbufferPSODesc.VertexDeclaration = m_InputLayout.get();
+                m_GBufferPSO = device->CreateGraphicsPipelineState(gbufferPSODesc);
 
-                // Compile instanced variant (USE_GPU_SCENE_INSTANCING defined)
-                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-                m_GBufferVS_Instanced = device->CompileShader(
-                    EShaderType::Vertex, gbufferSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-                if (m_GBufferVS_Instanced)
+                if (compileInstanced)
                 {
-                    m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(
-                        m_GBufferVS_Instanced.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+                    ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                    m_GBufferVS_Instanced = device->CompileShader(
+                        EShaderType::Vertex, gbufferSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                    if (m_GBufferVS_Instanced)
+                    {
+                        GraphicsPipelineStateInitializer gbufferInstanced = gbufferPSODesc;
+                        gbufferInstanced.VertexShader = m_GBufferVS_Instanced.get();
+                        m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(gbufferInstanced);
+                    }
                 }
 
                 std::cout << "[Kiwi] G-Buffer shader compiled successfully" << std::endl;
@@ -2261,7 +2051,7 @@ private:
         }
 
         // --- Compile Deferred Lighting shader ---
-        std::string lightingPath = m_ShaderDir + "/DeferredLighting.hlsl";
+        std::string lightingPath = DeferredShaderPath(api, "DeferredLighting");
         std::string lightingSrc = ReadShaderFile(lightingPath);
         if (!lightingSrc.empty())
         {
@@ -2273,15 +2063,16 @@ private:
             if (m_DeferredLightingVS && m_DeferredLightingPS)
             {
                 // Fullscreen pass: no input layout, no depth
-                PipelineStateDesc lightingPSODesc;
-                lightingPSODesc.NumRenderTargets = 1;
-                lightingPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
+                GraphicsPipelineStateInitializer lightingPSODesc;
+                lightingPSODesc.RenderTargetsEnabled = 1;
+                lightingPSODesc.RenderTargetFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
                 lightingPSODesc.DepthEnabled = false;
                 lightingPSODesc.DepthWrite = false;
+                lightingPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
 
-                m_DeferredLightingPSO = device->CreateGraphicsPipelineState(
-                    m_DeferredLightingVS.get(), m_DeferredLightingPS.get(),
-                    nullptr, lightingPSODesc);
+                lightingPSODesc.VertexShader = m_DeferredLightingVS.get();
+                lightingPSODesc.PixelShader = m_DeferredLightingPS.get();
+                m_DeferredLightingPSO = device->CreateGraphicsPipelineState(lightingPSODesc);
 
                 std::cout << "[Kiwi] Deferred Lighting shader compiled successfully" << std::endl;
             }
@@ -2292,7 +2083,7 @@ private:
         }
 
         // --- Compile Deferred Ambient shader ---
-        std::string ambientPath = m_ShaderDir + "/DeferredAmbient.hlsl";
+        std::string ambientPath = DeferredShaderPath(api, "DeferredAmbient");
         std::string ambientSrc = ReadShaderFile(ambientPath);
         if (!ambientSrc.empty())
         {
@@ -2303,15 +2094,16 @@ private:
 
             if (m_DeferredAmbientVS && m_DeferredAmbientPS)
             {
-                PipelineStateDesc ambientPSODesc;
-                ambientPSODesc.NumRenderTargets = 1;
-                ambientPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
+                GraphicsPipelineStateInitializer ambientPSODesc;
+                ambientPSODesc.RenderTargetsEnabled = 1;
+                ambientPSODesc.RenderTargetFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
                 ambientPSODesc.DepthEnabled = false;
                 ambientPSODesc.DepthWrite = false;
+                ambientPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
 
-                m_DeferredAmbientPSO = device->CreateGraphicsPipelineState(
-                    m_DeferredAmbientVS.get(), m_DeferredAmbientPS.get(),
-                    nullptr, ambientPSODesc);
+                ambientPSODesc.VertexShader = m_DeferredAmbientVS.get();
+                ambientPSODesc.PixelShader = m_DeferredAmbientPS.get();
+                m_DeferredAmbientPSO = device->CreateGraphicsPipelineState(ambientPSODesc);
 
                 std::cout << "[Kiwi] Deferred Ambient shader compiled successfully" << std::endl;
             }
@@ -2320,22 +2112,23 @@ private:
         // --- Create additive blend PSO for per-light passes ---
         if (m_DeferredLightingVS && m_DeferredLightingPS)
         {
-            PipelineStateDesc additivePSODesc;
-            additivePSODesc.NumRenderTargets = 1;
-            additivePSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
+            GraphicsPipelineStateInitializer additivePSODesc;
+            additivePSODesc.RenderTargetsEnabled = 1;
+            additivePSODesc.RenderTargetFormats[0] = EFormat::R16G16B16A16_FLOAT;  // HDR output
             additivePSODesc.DepthEnabled = false;
             additivePSODesc.DepthWrite = false;
+            additivePSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
             additivePSODesc.AdditiveBlend = true;
 
-            m_DeferredLightingAdditivePSO = device->CreateGraphicsPipelineState(
-                m_DeferredLightingVS.get(), m_DeferredLightingPS.get(),
-                nullptr, additivePSODesc);
+            additivePSODesc.VertexShader = m_DeferredLightingVS.get();
+            additivePSODesc.PixelShader = m_DeferredLightingPS.get();
+            m_DeferredLightingAdditivePSO = device->CreateGraphicsPipelineState(additivePSODesc);
 
             std::cout << "[Kiwi] Deferred Lighting additive PSO created" << std::endl;
         }
 
         // --- Compile Buffer Visualization shader ---
-        std::string bufferVisPath = m_ShaderDir + "/BufferVisualization.hlsl";
+        std::string bufferVisPath = DeferredShaderPath(api, "BufferVisualization");
         std::string bufferVisSrc = ReadShaderFile(bufferVisPath);
         if (!bufferVisSrc.empty())
         {
@@ -2346,15 +2139,16 @@ private:
 
             if (m_BufferVisVS && m_BufferVisPS)
             {
-                PipelineStateDesc visPSODesc;
-                visPSODesc.NumRenderTargets = 1;
-                visPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                GraphicsPipelineStateInitializer visPSODesc;
+                visPSODesc.RenderTargetsEnabled = 1;
+                visPSODesc.RenderTargetFormats[0] = EFormat::R8G8B8A8_UNORM;
                 visPSODesc.DepthEnabled = false;
                 visPSODesc.DepthWrite = false;
+                visPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
 
-                m_BufferVisPSO = device->CreateGraphicsPipelineState(
-                    m_BufferVisVS.get(), m_BufferVisPS.get(),
-                    nullptr, visPSODesc);
+                visPSODesc.VertexShader = m_BufferVisVS.get();
+                visPSODesc.PixelShader = m_BufferVisPS.get();
+                m_BufferVisPSO = device->CreateGraphicsPipelineState(visPSODesc);
 
                 std::cout << "[Kiwi] Buffer Visualization shader compiled successfully" << std::endl;
             }
@@ -2388,7 +2182,7 @@ private:
 
     void CompileShadowShader(RHIDevice* device)
     {
-        std::string shadowPath = m_ShaderDir + "/ShadowPass.hlsl";
+        std::string shadowPath = DeferredShaderPath(device->GetApiType(), "ShadowPass");
         std::string shadowSrc = ReadShaderFile(shadowPath);
         if (!shadowSrc.empty())
         {
@@ -2398,24 +2192,36 @@ private:
             if (m_ShadowPassVS)
             {
                 // Shadow pass PSO: depth-only, no color output
-                PipelineStateDesc shadowPSODesc;
-                shadowPSODesc.NumRenderTargets = 0;
-                shadowPSODesc.RTVFormats[0] = EFormat::Unknown;
-                shadowPSODesc.DSVFormat = EFormat::D32_FLOAT;
+                GraphicsPipelineStateInitializer shadowPSODesc;
+                shadowPSODesc.RenderTargetsEnabled = 0;
+                shadowPSODesc.RenderTargetFormats[0] = EFormat::Unknown;
+                shadowPSODesc.DepthStencilTargetFormat = EFormat::D32_FLOAT;
                 shadowPSODesc.DepthEnabled = true;
                 shadowPSODesc.DepthWrite = true;
+                shadowPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::Back, 100.0f, 1.5f);
 
-                m_ShadowPassPSO = device->CreateGraphicsPipelineState(
-                    m_ShadowPassVS.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
-
-                // Compile instanced variant (USE_GPU_SCENE_INSTANCING defined)
-                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-                m_ShadowPassVS_Instanced = device->CompileShader(
-                    EShaderType::Vertex, shadowSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-                if (m_ShadowPassVS_Instanced)
+                shadowPSODesc.VertexShader = m_ShadowPassVS.get();
+                shadowPSODesc.VertexDeclaration = m_InputLayout.get();
+                std::unique_ptr<RHIShader> shadowPS;
+                if (device->GetApiType() == RHI_API_TYPE::METAL)
                 {
-                    m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(
-                        m_ShadowPassVS_Instanced.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
+                    shadowPS = device->CompileShader(
+                        EShaderType::Pixel, shadowSrc.c_str(), "PSMain", "ps_5_0");
+                    shadowPSODesc.PixelShader = shadowPS.get();
+                }
+                m_ShadowPassPSO = device->CreateGraphicsPipelineState(shadowPSODesc);
+
+                if (device->GetApiType() != RHI_API_TYPE::METAL)
+                {
+                    ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                    m_ShadowPassVS_Instanced = device->CompileShader(
+                        EShaderType::Vertex, shadowSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                    if (m_ShadowPassVS_Instanced)
+                    {
+                        GraphicsPipelineStateInitializer shadowInstanced = shadowPSODesc;
+                        shadowInstanced.VertexShader = m_ShadowPassVS_Instanced.get();
+                        m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
+                    }
                 }
 
                 std::cout << "[Kiwi] Shadow Pass shader compiled successfully" << std::endl;
@@ -2502,7 +2308,7 @@ private:
         // 3. Recompile post-process shaders
         InitPostProcessResources(device);
 
-        // 4. Recompile deferred + shadow shaders (DX11/DX12 only)
+        // 4. Recompile deferred + shadow shaders
         if (IsDeferredRHI(api))
         {
             CompileDeferredShaders(device);
@@ -2510,11 +2316,11 @@ private:
 
             // Record timestamps for deferred shaders
             namespace fs = std::filesystem;
-            m_DeferredShaderTimestamps["GBufferPass"] = fs::last_write_time(m_ShaderDir + "/GBufferPass.hlsl");
-            m_DeferredShaderTimestamps["DeferredLighting"] = fs::last_write_time(m_ShaderDir + "/DeferredLighting.hlsl");
-            m_DeferredShaderTimestamps["DeferredAmbient"] = fs::last_write_time(m_ShaderDir + "/DeferredAmbient.hlsl");
-            m_DeferredShaderTimestamps["BufferVisualization"] = fs::last_write_time(m_ShaderDir + "/BufferVisualization.hlsl");
-            m_DeferredShaderTimestamps["ShadowPass"] = fs::last_write_time(m_ShaderDir + "/ShadowPass.hlsl");
+            m_DeferredShaderTimestamps["GBufferPass"] = fs::last_write_time(DeferredShaderPath(api, "GBufferPass"));
+            m_DeferredShaderTimestamps["DeferredLighting"] = fs::last_write_time(DeferredShaderPath(api, "DeferredLighting"));
+            m_DeferredShaderTimestamps["DeferredAmbient"] = fs::last_write_time(DeferredShaderPath(api, "DeferredAmbient"));
+            m_DeferredShaderTimestamps["BufferVisualization"] = fs::last_write_time(DeferredShaderPath(api, "BufferVisualization"));
+            m_DeferredShaderTimestamps["ShadowPass"] = fs::last_write_time(DeferredShaderPath(api, "ShadowPass"));
         }
 
         m_FirstShaderLoad = false;
@@ -2547,10 +2353,11 @@ private:
         // 3. Deferred shaders (GBufferPass, DeferredLighting, DeferredAmbient, BufferVisualization)
         if (IsDeferredRHI(device->GetApiType()))
         {
-            total += ReloadDeferredShaderIfModified(device, "GBufferPass", m_ShaderDir + "/GBufferPass.hlsl");
-            total += ReloadDeferredShaderIfModified(device, "DeferredLighting", m_ShaderDir + "/DeferredLighting.hlsl");
-            total += ReloadDeferredShaderIfModified(device, "DeferredAmbient", m_ShaderDir + "/DeferredAmbient.hlsl");
-            total += ReloadDeferredShaderIfModified(device, "BufferVisualization", m_ShaderDir + "/BufferVisualization.hlsl");
+            auto api = device->GetApiType();
+            total += ReloadDeferredShaderIfModified(device, "GBufferPass", DeferredShaderPath(api, "GBufferPass"));
+            total += ReloadDeferredShaderIfModified(device, "DeferredLighting", DeferredShaderPath(api, "DeferredLighting"));
+            total += ReloadDeferredShaderIfModified(device, "DeferredAmbient", DeferredShaderPath(api, "DeferredAmbient"));
+            total += ReloadDeferredShaderIfModified(device, "BufferVisualization", DeferredShaderPath(api, "BufferVisualization"));
             total += ReloadShadowShaderIfModified(device);
         }
 
@@ -2590,25 +2397,32 @@ private:
             m_GBufferPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
             if (m_GBufferVS && m_GBufferPS)
             {
-                PipelineStateDesc gbufferPSODesc;
-                gbufferPSODesc.NumRenderTargets = 3;
-                gbufferPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
-                gbufferPSODesc.RTVFormats[1] = EFormat::R8G8B8A8_UNORM;
-                gbufferPSODesc.RTVFormats[2] = EFormat::R8G8B8A8_UNORM;
-                gbufferPSODesc.DSVFormat = EFormat::D32_FLOAT;
+                GraphicsPipelineStateInitializer gbufferPSODesc;
+                gbufferPSODesc.RenderTargetsEnabled = 3;
+                gbufferPSODesc.RenderTargetFormats[0] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.RenderTargetFormats[1] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.RenderTargetFormats[2] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.DepthStencilTargetFormat = EFormat::D32_FLOAT;
                 gbufferPSODesc.DepthEnabled = true;
                 gbufferPSODesc.DepthWrite = true;
+                gbufferPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::Back);
 
-                m_GBufferPSO = device->CreateGraphicsPipelineState(
-                    m_GBufferVS.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+                gbufferPSODesc.VertexShader = m_GBufferVS.get();
+                gbufferPSODesc.PixelShader = m_GBufferPS.get();
+                gbufferPSODesc.VertexDeclaration = m_InputLayout.get();
+                m_GBufferPSO = device->CreateGraphicsPipelineState(gbufferPSODesc);
 
-                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-                m_GBufferVS_Instanced = device->CompileShader(
-                    EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-                if (m_GBufferVS_Instanced)
+                if (device->GetApiType() != RHI_API_TYPE::METAL)
                 {
-                    m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(
-                        m_GBufferVS_Instanced.get(), m_GBufferPS.get(), m_InputLayout.get(), gbufferPSODesc);
+                    ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                    m_GBufferVS_Instanced = device->CompileShader(
+                        EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                    if (m_GBufferVS_Instanced)
+                    {
+                        GraphicsPipelineStateInitializer gbufferInstanced = gbufferPSODesc;
+                        gbufferInstanced.VertexShader = m_GBufferVS_Instanced.get();
+                        m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(gbufferInstanced);
+                    }
                 }
             }
             timestamps[shaderName] = fs::last_write_time(filePath);
@@ -2625,20 +2439,23 @@ private:
             m_DeferredLightingPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
             if (m_DeferredLightingVS && m_DeferredLightingPS)
             {
-                PipelineStateDesc lightingPSODesc;
-                lightingPSODesc.NumRenderTargets = 1;
-                lightingPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;
+                GraphicsPipelineStateInitializer lightingPSODesc;
+                lightingPSODesc.RenderTargetsEnabled = 1;
+                lightingPSODesc.RenderTargetFormats[0] = EFormat::R16G16B16A16_FLOAT;
                 lightingPSODesc.DepthEnabled = false;
                 lightingPSODesc.DepthWrite = false;
+                lightingPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
 
-                m_DeferredLightingPSO = device->CreateGraphicsPipelineState(
-                    m_DeferredLightingVS.get(), m_DeferredLightingPS.get(), nullptr, lightingPSODesc);
+                lightingPSODesc.VertexShader = m_DeferredLightingVS.get();
+                lightingPSODesc.PixelShader = m_DeferredLightingPS.get();
+                m_DeferredLightingPSO = device->CreateGraphicsPipelineState(lightingPSODesc);
 
                 // Recreate additive blend PSO
-                PipelineStateDesc additivePSODesc = lightingPSODesc;
+                GraphicsPipelineStateInitializer additivePSODesc = lightingPSODesc;
                 additivePSODesc.AdditiveBlend = true;
-                m_DeferredLightingAdditivePSO = device->CreateGraphicsPipelineState(
-                    m_DeferredLightingVS.get(), m_DeferredLightingPS.get(), nullptr, additivePSODesc);
+                additivePSODesc.VertexShader = m_DeferredLightingVS.get();
+                additivePSODesc.PixelShader = m_DeferredLightingPS.get();
+                m_DeferredLightingAdditivePSO = device->CreateGraphicsPipelineState(additivePSODesc);
             }
             timestamps[shaderName] = fs::last_write_time(filePath);
             return 1;
@@ -2653,13 +2470,15 @@ private:
             m_DeferredAmbientPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
             if (m_DeferredAmbientVS && m_DeferredAmbientPS)
             {
-                PipelineStateDesc ambientPSODesc;
-                ambientPSODesc.NumRenderTargets = 1;
-                ambientPSODesc.RTVFormats[0] = EFormat::R16G16B16A16_FLOAT;
+                GraphicsPipelineStateInitializer ambientPSODesc;
+                ambientPSODesc.RenderTargetsEnabled = 1;
+                ambientPSODesc.RenderTargetFormats[0] = EFormat::R16G16B16A16_FLOAT;
                 ambientPSODesc.DepthEnabled = false;
                 ambientPSODesc.DepthWrite = false;
-                m_DeferredAmbientPSO = device->CreateGraphicsPipelineState(
-                    m_DeferredAmbientVS.get(), m_DeferredAmbientPS.get(), nullptr, ambientPSODesc);
+                ambientPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
+                ambientPSODesc.VertexShader = m_DeferredAmbientVS.get();
+                ambientPSODesc.PixelShader = m_DeferredAmbientPS.get();
+                m_DeferredAmbientPSO = device->CreateGraphicsPipelineState(ambientPSODesc);
             }
             timestamps[shaderName] = fs::last_write_time(filePath);
             return 1;
@@ -2674,13 +2493,15 @@ private:
             m_BufferVisPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
             if (m_BufferVisVS && m_BufferVisPS)
             {
-                PipelineStateDesc visPSODesc;
-                visPSODesc.NumRenderTargets = 1;
-                visPSODesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
+                GraphicsPipelineStateInitializer visPSODesc;
+                visPSODesc.RenderTargetsEnabled = 1;
+                visPSODesc.RenderTargetFormats[0] = EFormat::R8G8B8A8_UNORM;
                 visPSODesc.DepthEnabled = false;
                 visPSODesc.DepthWrite = false;
-                m_BufferVisPSO = device->CreateGraphicsPipelineState(
-                    m_BufferVisVS.get(), m_BufferVisPS.get(), nullptr, visPSODesc);
+                visPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
+                visPSODesc.VertexShader = m_BufferVisVS.get();
+                visPSODesc.PixelShader = m_BufferVisPS.get();
+                m_BufferVisPSO = device->CreateGraphicsPipelineState(visPSODesc);
             }
             timestamps[shaderName] = fs::last_write_time(filePath);
             return 1;
@@ -2693,7 +2514,7 @@ private:
     int ReloadShadowShaderIfModified(RHIDevice* device)
     {
         namespace fs = std::filesystem;
-        const std::string shadowPath = m_ShaderDir + "/ShadowPass.hlsl";
+        const std::string shadowPath = DeferredShaderPath(device->GetApiType(), "ShadowPass");
         const std::string shaderName = "ShadowPass";
 
         auto lastWrite = fs::last_write_time(shadowPath);
@@ -2714,23 +2535,36 @@ private:
         m_ShadowPassVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
         if (m_ShadowPassVS)
         {
-            PipelineStateDesc shadowPSODesc;
-            shadowPSODesc.NumRenderTargets = 0;
-            shadowPSODesc.RTVFormats[0] = EFormat::Unknown;
-            shadowPSODesc.DSVFormat = EFormat::D32_FLOAT;
+            GraphicsPipelineStateInitializer shadowPSODesc;
+            shadowPSODesc.RenderTargetsEnabled = 0;
+            shadowPSODesc.RenderTargetFormats[0] = EFormat::Unknown;
+            shadowPSODesc.DepthStencilTargetFormat = EFormat::D32_FLOAT;
             shadowPSODesc.DepthEnabled = true;
             shadowPSODesc.DepthWrite = true;
+            shadowPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::Back, 100.0f, 1.5f);
 
-            m_ShadowPassPSO = device->CreateGraphicsPipelineState(
-                m_ShadowPassVS.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
-
-            ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-            m_ShadowPassVS_Instanced = device->CompileShader(
-                EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-            if (m_ShadowPassVS_Instanced)
+            shadowPSODesc.VertexShader = m_ShadowPassVS.get();
+            shadowPSODesc.VertexDeclaration = m_InputLayout.get();
+            std::unique_ptr<RHIShader> shadowPS;
+            if (device->GetApiType() == RHI_API_TYPE::METAL)
             {
-                m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(
-                    m_ShadowPassVS_Instanced.get(), nullptr, m_InputLayout.get(), shadowPSODesc);
+                shadowPS = device->CompileShader(
+                    EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
+                shadowPSODesc.PixelShader = shadowPS.get();
+            }
+            m_ShadowPassPSO = device->CreateGraphicsPipelineState(shadowPSODesc);
+
+            if (device->GetApiType() != RHI_API_TYPE::METAL)
+            {
+                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                m_ShadowPassVS_Instanced = device->CompileShader(
+                    EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                if (m_ShadowPassVS_Instanced)
+                {
+                    GraphicsPipelineStateInitializer shadowInstanced = shadowPSODesc;
+                    shadowInstanced.VertexShader = m_ShadowPassVS_Instanced.get();
+                    m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
+                }
             }
         }
 
@@ -2777,7 +2611,8 @@ private:
         const Vec3& lightDir,
         const Mat4& cameraView, const Mat4& cameraProj,
         float cascadeNear, float cascadeFar,
-        float cameraNear, float cameraFar, float fovY, float aspect)
+        float cameraNear, float cameraFar, float fovY, float aspect,
+        Mat4* outLightView = nullptr, Mat4* outLightProj = nullptr)
     {
         // 1. Compute the frustum corners for this cascade slice in world space
         float tanHalfFov = tanf(fovY * 0.5f);
@@ -2850,6 +2685,8 @@ private:
         // 4. Build orthographic projection that encompasses the frustum
         Mat4 lightProj = Mat4::Orthographic(radius * 2.0f, radius * 2.0f, 0.0f, radius * 2.0f);
 
+        if (outLightView) *outLightView = lightView;
+        if (outLightProj) *outLightProj = lightProj;
         return lightView * lightProj;
     }
 
@@ -2928,7 +2765,8 @@ private:
 
             m_LightViewProjMatrices[i] = ComputeLightViewProjForCascade(
                 lightDir, m_ViewMatrix, m_ProjectionMatrix,
-                cascadeNear, cascadeFar, nearZ, farZ, fovY, aspect);
+                cascadeNear, cascadeFar, nearZ, farZ, fovY, aspect,
+                &m_LightViewMatrices[i], &m_LightProjMatrices[i]);
 
             memcpy(m_ShadowUBData.LightViewProj[i],
                 m_LightViewProjMatrices[i].m, sizeof(float) * 16);
@@ -3015,6 +2853,22 @@ private:
             shadowSR.Bottom = (int32_t)(oy + m_ShadowCascadeSize);
             ctx->SetScissorRects(&shadowSR, 1);
 
+            // Shadow VS reads the light view and projection from b0.
+            // This buffer is separate from the camera ViewUB uploaded after InitView.
+            ViewUniformBuffer lightViewUB = {};
+            memcpy(lightViewUB.ViewMatrix, m_LightViewMatrices[cascade].m, sizeof(float) * 16);
+            memcpy(lightViewUB.ProjectionMatrix, m_LightProjMatrices[cascade].m, sizeof(float) * 16);
+            if (m_ShadowViewUB)
+            {
+                void* mapped = m_ShadowViewUB->Map();
+                if (mapped)
+                {
+                    memcpy(mapped, &lightViewUB, sizeof(lightViewUB));
+                    m_ShadowViewUB->Unmap();
+                }
+                ctx->SetConstantBuffer(0, m_ShadowViewUB.get());
+            }
+
             // Draw all mesh objects -- instanced batches first, then single draws
             auto& batches = m_GPUScene.GetInstanceBatches();
             auto& singles = m_GPUScene.GetSingleDrawItems();
@@ -3034,6 +2888,13 @@ private:
                     for (auto& entry : m_SharedMeshPool)
                         if (entry.MeshID == batch.MeshID) { mesh = entry; break; }
                     if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
+
+                    if (!batch.RenderListIndices.empty())
+                    {
+                        auto* meshComp = m_RenderList[batch.RenderListIndices[0]].MeshComp;
+                        if (meshComp)
+                            ctx->SetCullMode(meshComp->CullMode);
+                    }
 
                     VertexBufferView vbView;
                     vbView.BufferLocation = 0;
@@ -3058,18 +2919,20 @@ private:
                 ctx->SetPixelShader(nullptr);
             }
 
-            // Single draws (CB offset)
+            // Single draws (CB offset). Without an instanced shadow shader, draw each
+            // batched object on its own so those meshes still cast shadows.
             RHIBuffer* lastShadowVB = nullptr;
-            for (const auto& single : singles)
+            auto drawShadowSingle = [&](uint32_t renderListIndex, uint32_t gpuSceneIndex)
             {
-                const auto& renderItem = m_RenderList[single.RenderListIndex];
+                const auto& renderItem = m_RenderList[renderListIndex];
                 auto* meshComp = renderItem.MeshComp;
-                if (!meshComp) continue;
+                if (!meshComp) return;
 
                 SharedMeshEntry mesh = GetSharedMesh(renderItem.ObjectIndex);
-                if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
+                if (!mesh.VertexBuffer || mesh.IndexCount == 0) return;
 
-                m_GPUScene.BindPrimitive(ctx, single.GPUSceneIndex);
+                ctx->SetCullMode(meshComp->CullMode);
+                m_GPUScene.BindPrimitive(ctx, gpuSceneIndex);
 
                 if (mesh.VertexBuffer != lastShadowVB)
                 {
@@ -3089,7 +2952,19 @@ private:
                 }
 
                 ctx->DrawIndexed(mesh.IndexCount, 0, 0);
+            };
+
+            if (!m_ShadowPassVS_Instanced || !m_ShadowPassPSO_Instanced)
+            {
+                for (const auto& batch : batches)
+                {
+                    for (uint32_t renderListIndex : batch.RenderListIndices)
+                        drawShadowSingle(renderListIndex, m_GPUScene.GetGPUSceneIndex(renderListIndex));
+                }
             }
+
+            for (const auto& single : singles)
+                drawShadowSingle(single.RenderListIndex, single.GPUSceneIndex);
         }
 
         // Transition atlas to shader resource for lighting pass
@@ -3262,6 +3137,14 @@ private:
         }
     }
 
+    // ImGui positions are in points. GetWidth() is framebuffer pixels, which
+    // is 2x on a Retina display and would place these overlays off-screen.
+    float OverlayWidth() const
+    {
+        const float displayWidth = ImGui::GetIO().DisplaySize.x;
+        return displayWidth > 0.0f ? displayWidth : (float)GetWindow()->GetWidth();
+    }
+
     // ============================================================
     // RenderDoc Capture Button (compact, top-right corner)
     // ============================================================
@@ -3274,7 +3157,7 @@ private:
         if (GetCurrentRHIType() == RHI_API_TYPE::VULKAN) return;
 
         float menuBarHeight = ImGui::GetFrameHeight();
-        float windowWidth = (float)GetWindow()->GetWidth();
+        float windowWidth = OverlayWidth();
 
         // Main viewport position for Multi-Viewport offset
         ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -3385,7 +3268,7 @@ private:
     void DrawStatsOverlay()
     {
         float menuBarHeight = ImGui::GetFrameHeight();
-        float windowWidth = (float)GetWindow()->GetWidth();
+        float windowWidth = OverlayWidth();
         float btnSize = 32.0f;
         float btnGap = 6.0f;
 
@@ -3486,7 +3369,7 @@ private:
     void DrawStatsPanel()
     {
         float menuBarHeight = ImGui::GetFrameHeight();
-        float windowWidth = (float)GetWindow()->GetWidth();
+        float windowWidth = OverlayWidth();
         float panelWidth = 240.0f;
 
         ImGuiViewport* mvp = ImGui::GetMainViewport();
@@ -3607,7 +3490,7 @@ private:
     void DrawViewModeButton()
     {
         float menuBarHeight = ImGui::GetFrameHeight();
-        float windowWidth = (float)GetWindow()->GetWidth();
+        float windowWidth = OverlayWidth();
         float btnSize = 32.0f;
         float btnGap = 6.0f;
 
@@ -3725,7 +3608,7 @@ private:
     void DrawCameraButton()
     {
         float menuBarHeight = ImGui::GetFrameHeight();
-        float windowWidth = (float)GetWindow()->GetWidth();
+        float windowWidth = OverlayWidth();
         float btnSize = 32.0f;
         float btnGap = 6.0f;
 
@@ -4025,7 +3908,7 @@ private:
         // Layout (right-to-left): RenderDoc(32) | Stats(32) | ViewMode(32) | Camera(32) | [Gizmo x3]
         {
             float bigBtn = 32.0f, bigGap = 6.0f;
-            float windowWidth = (float)GetWindow()->GetWidth();
+            float windowWidth = OverlayWidth();
             float rdocBtnX     = windowWidth - bigBtn - 12.0f;
             float statsBtnX    = rdocBtnX  - bigBtn - bigGap;
             float viewModeBtnX = statsBtnX - bigBtn - bigGap;
@@ -5008,6 +4891,14 @@ private:
 
                     ImGui::Separator();
                     ImGui::Text("Rendering");
+                    {
+                        const char* cullItems[] = { "Back", "Front", "None" };
+                        const ECullMode cullValues[] = { ECullMode::Back, ECullMode::Front, ECullMode::None };
+                        int cullIndex = mesh.CullMode == ECullMode::Front ? 1
+                            : mesh.CullMode == ECullMode::None ? 2 : 0;
+                        if (ImGui::Combo(("Culling Mode##" + std::to_string(ci)).c_str(), &cullIndex, cullItems, 3))
+                            mesh.CullMode = cullValues[cullIndex];
+                    }
                     ImGui::DragInt(("Sort Order##" + std::to_string(ci)).c_str(), &mesh.SortOrder, 0.5f, -1000, 1000);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Higher values are rendered first.\nObjects with same order are sorted back-to-front.");
@@ -5545,7 +5436,7 @@ private:
             ibView.Format         = EFormat::R32_UINT;
             ctx->SetIndexBuffer(ib, &ibView);
 
-            ObjectUniformBuffer oub = {};
+            PrimitiveUniformBuffer oub = {};
             memcpy(oub.WorldMatrix, world.m, sizeof(world.m));
             oub.ObjectColor[0] = color.x;
             oub.ObjectColor[1] = color.y;
@@ -5919,9 +5810,10 @@ private:
 
     // RHI resources (shared interface)
     std::unique_ptr<RHIInputLayout>   m_InputLayout;
-    std::unique_ptr<RHIBuffer>        m_ViewUB;      // b0: ViewUniformBuffer (per-frame)
+    std::unique_ptr<RHIBuffer>        m_ViewUB;      // b0: camera ViewUniformBuffer, uploaded once per frame
+    std::unique_ptr<RHIBuffer>        m_ShadowViewUB; // b0 during the shadow pass only
     GPUScene                          m_GPUScene;       // b1: GPU Scene Buffer (all primitives, per-frame upload)
-    std::unique_ptr<RHIBuffer>        m_ObjectUB;    // b1: ObjectUniformBuffer (aux: fullscreen/gizmo)
+    std::unique_ptr<RHIBuffer>        m_ObjectUB;    // b1: PrimitiveUniformBuffer (aux: fullscreen/gizmo)
     std::unique_ptr<RHIBuffer>        m_LightCB;     // b3: LightUniformBuffer (per-light pass)
     std::unique_ptr<RHIPipelineState> m_PipelineState;  // DX11
 
@@ -6074,4 +5966,6 @@ private:
     // Cached CSM data (computed each frame)
     ShadowUniformBuffer m_ShadowUBData = {};
     Mat4 m_LightViewProjMatrices[MAX_SHADOW_CASCADES];
+    Mat4 m_LightViewMatrices[MAX_SHADOW_CASCADES];
+    Mat4 m_LightProjMatrices[MAX_SHADOW_CASCADES];
 };

@@ -9,6 +9,17 @@
 
 namespace Kiwi
 {
+    // FrontCounterClockwise = FALSE: clockwise triangles are front faces.
+    static ERasterizerCullMode DX12DiscardWinding(ECullMode mode)
+    {
+        switch (mode)
+        {
+        case ECullMode::Front: return ERasterizerCullMode::CW;
+        case ECullMode::Back:  return ERasterizerCullMode::CCW;
+        default:               return ERasterizerCullMode::None;
+        }
+    }
+
 
     // ============================================================
     // DX12SwapChain
@@ -217,7 +228,7 @@ namespace Kiwi
         // Root parameter layout (UE5-inspired split uniform buffers):
         //   Slot 0: CBV b0 — ViewUniformBuffer (per-frame)
         //   Slot 1: Descriptor table with 16 SRVs at t0-t15 (t0-t7 textures, t8 GPU Scene StructuredBuffer)
-        //   Slot 2: CBV b1 — ObjectUniformBuffer (per-draw)
+        //   Slot 2: CBV b1 — PrimitiveUniformBuffer (per-draw)
         //   Slot 3: CBV b2 — ShadowUniformBuffer (per-frame)
         //   Slot 4: CBV b3 — LightUniformBuffer (per-light pass)
         //   Slot 5: CBV b4 — BatchUB (GPU Scene batch start index)
@@ -824,11 +835,13 @@ namespace Kiwi
     }
 
     std::unique_ptr<RHIPipelineState> DX12Device::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
+        const GraphicsPipelineStateInitializer& initializer)
     {
-        auto dx12InputLayout = static_cast<DX12InputLayout*>(inputLayout);
-        auto vsShader = static_cast<DX12Shader*>(vertexShader);
-        auto psShader = static_cast<DX12Shader*>(pixelShader);
+        auto dx12InputLayout = static_cast<DX12InputLayout*>(initializer.VertexDeclaration);
+        auto vsShader = static_cast<DX12Shader*>(initializer.VertexShader);
+        auto psShader = static_cast<DX12Shader*>(initializer.PixelShader);
+        if (!vsShader || !vsShader->GetBlob())
+            throw std::runtime_error("CreateGraphicsPipelineState: null vertex shader");
 
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
         psoDesc.pRootSignature = m_RootSignature.Get();
@@ -860,83 +873,25 @@ namespace Kiwi
             psoDesc.InputLayout.NumElements = 0;
         }
 
-        psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        psoDesc.RasterizerState.CullMode = dx12InputLayout ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
+        const RasterizerStateDesc& raster = initializer.RasterizerState;
+        psoDesc.RasterizerState.FillMode = raster.FillMode == ERasterizerFillMode::Wireframe
+            ? D3D12_FILL_MODE_WIREFRAME : D3D12_FILL_MODE_SOLID;
+        switch (DX12DiscardWinding(raster.CullMode))
+        {
+        case ERasterizerCullMode::CW:  psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT; break;
+        case ERasterizerCullMode::CCW: psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK; break;
+        default:                       psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; break;
+        }
         psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+        psoDesc.RasterizerState.DepthBias = (INT)raster.DepthBias;
+        psoDesc.RasterizerState.SlopeScaledDepthBias = raster.SlopeScaleDepthBias;
         psoDesc.RasterizerState.DepthClipEnable = TRUE;
+        psoDesc.RasterizerState.MultisampleEnable = raster.AllowMSAA ? TRUE : FALSE;
+        psoDesc.RasterizerState.AntialiasedLineEnable = raster.EnableLineAA ? TRUE : FALSE;
 
-        psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
-        psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-
-        psoDesc.DepthStencilState.DepthEnable = (dx12InputLayout != nullptr); // 后处理不需要深度测试
-        psoDesc.DepthStencilState.DepthWriteMask = (dx12InputLayout != nullptr) ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
-        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-        psoDesc.DepthStencilState.StencilEnable = FALSE;
-
-        psoDesc.SampleMask = UINT_MAX;
-        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        psoDesc.NumRenderTargets = 1;
-        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-        psoDesc.DSVFormat = dx12InputLayout ? DXGI_FORMAT_D24_UNORM_S8_UINT : DXGI_FORMAT_UNKNOWN;
-        psoDesc.SampleDesc.Count = 1;
-
-        ComPtr<ID3D12PipelineState> pso;
-        HRESULT hr = m_Device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso));
-        if (FAILED(hr))
+        for (uint32_t i = 0; i < initializer.RenderTargetsEnabled; i++)
         {
-            char msg[256];
-            snprintf(msg, sizeof(msg), "Failed to create DX12 PSO (HRESULT: 0x%08X)", hr);
-            throw std::runtime_error(msg);
-        }
-
-        return std::make_unique<DX12PipelineState>(pso.Get());
-    }
-
-    std::unique_ptr<RHIPipelineState> DX12Device::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
-        const PipelineStateDesc& pipelineDesc)
-    {
-        auto dx12InputLayout = static_cast<DX12InputLayout*>(inputLayout);
-        auto vsShader = static_cast<DX12Shader*>(vertexShader);
-        auto psShader = static_cast<DX12Shader*>(pixelShader);
-
-        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-        psoDesc.pRootSignature = m_RootSignature.Get();
-
-        psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
-        psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
-
-        if (psShader && psShader->GetBlob())
-        {
-            psoDesc.PS.pShaderBytecode = psShader->GetBlob()->GetBufferPointer();
-            psoDesc.PS.BytecodeLength = psShader->GetBlob()->GetBufferSize();
-        }
-        else
-        {
-            psoDesc.PS.pShaderBytecode = nullptr;
-            psoDesc.PS.BytecodeLength = 0;
-        }
-
-        if (dx12InputLayout)
-        {
-            const auto& elements = dx12InputLayout->GetElements();
-            psoDesc.InputLayout.pInputElementDescs = elements.data();
-            psoDesc.InputLayout.NumElements = (UINT)elements.size();
-        }
-        else
-        {
-            psoDesc.InputLayout.pInputElementDescs = nullptr;
-            psoDesc.InputLayout.NumElements = 0;
-        }
-
-        psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-        psoDesc.RasterizerState.CullMode = dx12InputLayout ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
-        psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
-        psoDesc.RasterizerState.DepthClipEnable = TRUE;
-
-        for (uint32_t i = 0; i < pipelineDesc.NumRenderTargets; i++)
-        {
-            if (pipelineDesc.AdditiveBlend)
+            if (initializer.AdditiveBlend)
             {
                 psoDesc.BlendState.RenderTarget[i].BlendEnable = TRUE;
                 psoDesc.BlendState.RenderTarget[i].SrcBlend = D3D12_BLEND_ONE;
@@ -953,17 +908,18 @@ namespace Kiwi
             psoDesc.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         }
 
-        psoDesc.DepthStencilState.DepthEnable = pipelineDesc.DepthEnabled;
-        psoDesc.DepthStencilState.DepthWriteMask = pipelineDesc.DepthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+        psoDesc.DepthStencilState.DepthEnable = initializer.DepthEnabled;
+        psoDesc.DepthStencilState.DepthWriteMask = initializer.DepthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
         psoDesc.DepthStencilState.StencilEnable = FALSE;
 
         psoDesc.SampleMask = UINT_MAX;
         psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-        psoDesc.NumRenderTargets = pipelineDesc.NumRenderTargets;
-        for (uint32_t i = 0; i < pipelineDesc.NumRenderTargets; i++)
-            psoDesc.RTVFormats[i] = DX12ToDXGIFormat(pipelineDesc.RTVFormats[i]);
-        psoDesc.DSVFormat = pipelineDesc.DepthEnabled ? DX12ToDXGIFormat(pipelineDesc.DSVFormat) : DXGI_FORMAT_UNKNOWN;
+        psoDesc.NumRenderTargets = initializer.RenderTargetsEnabled;
+        for (uint32_t i = 0; i < initializer.RenderTargetsEnabled; i++)
+            psoDesc.RTVFormats[i] = DX12ToDXGIFormat(initializer.RenderTargetFormats[i]);
+        psoDesc.DSVFormat = initializer.DepthEnabled
+            ? DX12ToDXGIFormat(initializer.DepthStencilTargetFormat) : DXGI_FORMAT_UNKNOWN;
         psoDesc.SampleDesc.Count = 1;
 
         ComPtr<ID3D12PipelineState> pso;
@@ -971,7 +927,7 @@ namespace Kiwi
         if (FAILED(hr))
         {
             char msg[256];
-            snprintf(msg, sizeof(msg), "Failed to create DX12 MRT PSO (HRESULT: 0x%08X)", hr);
+            snprintf(msg, sizeof(msg), "Failed to create DX12 PSO (HRESULT: 0x%08X)", hr);
             throw std::runtime_error(msg);
         }
 

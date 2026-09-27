@@ -59,12 +59,12 @@ namespace Kiwi
     // GPUScene — Unified GPU Scene Manager
     //
     // Responsibilities:
-    //   1. Collect all primitive data from scene (ObjectUniformBuffer)
+    //   1. Collect all primitive data from scene (PrimitiveUniformBuffer)
     //   2. Upload to GPU: CB (for single draws) + StructuredBuffer (for instanced draws)
     //   3. Build InstanceBatch[] and SingleDrawItem[] lists
     //   4. Provide Draw APIs for both paths
     //
-    // The caller (DrawSceneMeshesDeferred) does:
+    // RenderDeferred draws these lists:
     //   1. For each InstanceBatch: bind VB/IB, bind SRV textures, DrawIndexedInstanced
     //   2. For each SingleDrawItem: bind VB/IB, bind CB offset, bind textures, DrawIndexed
     // ============================================================
@@ -117,7 +117,7 @@ namespace Kiwi
         RHIDevice* m_Device = nullptr;
 
         // CPU data
-        std::vector<ObjectUniformBuffer> m_PrimitiveData;
+        std::vector<PrimitiveUniformBuffer> m_PrimitiveData;
         uint32_t m_NumPrimitives = 0;
 
         // RenderList index → GPU Scene index mapping

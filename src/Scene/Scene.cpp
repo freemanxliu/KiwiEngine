@@ -287,7 +287,11 @@ namespace Kiwi
                     file << ",\n";
                     file << "          \"materialName\": \"" << EscapeString(mesh.MaterialName) << "\",\n";
                     file << "          \"primitiveType\": \"" << PrimitiveTypeToString(mesh.PrimitiveType) << "\",\n";
-                    file << "          \"sortOrder\": " << mesh.SortOrder << "\n";
+                    file << "          \"sortOrder\": " << mesh.SortOrder << ",\n";
+                    const char* cullName = "Back";
+                    if (mesh.CullMode == ECullMode::Front) cullName = "Front";
+                    else if (mesh.CullMode == ECullMode::None) cullName = "None";
+                    file << "          \"cullMode\": \"" << cullName << "\"\n";
                 }
                 else if (comp.GetType() == EComponentType::Camera)
                 {
@@ -568,6 +572,11 @@ namespace Kiwi
                         int32_t sortOrder = 0;
                         if (ReadInt(compStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;
 
+                        std::string cullName = ReadQuotedString(compStr, "cullMode");
+                        if (cullName == "Front") mesh->CullMode = ECullMode::Front;
+                        else if (cullName == "None") mesh->CullMode = ECullMode::None;
+                        else mesh->CullMode = ECullMode::Back;
+
                         // Read primitive type and rebuild mesh geometry
                         std::string primTypeStr = ReadQuotedString(compStr, "primitiveType");
                         EPrimitiveType primType = primTypeStr.empty()
@@ -708,6 +717,10 @@ namespace Kiwi
 
                     int32_t sortOrder = 0;
                     if (ReadInt(objStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;
+
+                    std::string cullName = ReadQuotedString(objStr, "cullMode");
+                    if (cullName == "Front") mesh->CullMode = ECullMode::Front;
+                    else if (cullName == "None") mesh->CullMode = ECullMode::None;
                 }
             }
         }

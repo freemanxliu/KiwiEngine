@@ -11,6 +11,17 @@
 
 namespace Kiwi
 {
+    // VK_FRONT_FACE_CLOCKWISE: clockwise triangles are front faces.
+    static ERasterizerCullMode VulkanDiscardWinding(ECullMode mode)
+    {
+        switch (mode)
+        {
+        case ECullMode::Front: return ERasterizerCullMode::CW;
+        case ECullMode::Back:  return ERasterizerCullMode::CCW;
+        default:               return ERasterizerCullMode::None;
+        }
+    }
+
 
     // ============================================================
     // VulkanBuffer
@@ -1283,22 +1294,12 @@ namespace Kiwi
     // ============================================================
 
     std::unique_ptr<RHIPipelineState> VulkanDevice::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
+        const GraphicsPipelineStateInitializer& initializer)
     {
-        PipelineStateDesc defaultDesc;
-        defaultDesc.NumRenderTargets = 1;
-        defaultDesc.RTVFormats[0] = EFormat::R8G8B8A8_UNORM;
-        defaultDesc.DSVFormat = EFormat::D32_FLOAT;
-        return CreateGraphicsPipelineState(vertexShader, pixelShader, inputLayout, defaultDesc);
-    }
-
-    std::unique_ptr<RHIPipelineState> VulkanDevice::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader,
-        RHIInputLayout* inputLayout, const PipelineStateDesc& pipelineDesc)
-    {
-        auto* vkVS = static_cast<VulkanShader*>(vertexShader);
-        auto* vkPS = pixelShader ? static_cast<VulkanShader*>(pixelShader) : nullptr;
-        auto* vkLayout = inputLayout ? static_cast<VulkanInputLayout*>(inputLayout) : nullptr;
+        auto* vkVS = static_cast<VulkanShader*>(initializer.VertexShader);
+        auto* vkPS = initializer.PixelShader ? static_cast<VulkanShader*>(initializer.PixelShader) : nullptr;
+        auto* vkLayout = initializer.VertexDeclaration
+            ? static_cast<VulkanInputLayout*>(initializer.VertexDeclaration) : nullptr;
 
         // Check for null shader modules
         if (!vkVS || vkVS->GetVkShaderModule() == VK_NULL_HANDLE)
@@ -1356,11 +1357,20 @@ namespace Kiwi
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterizer.depthClampEnable = VK_FALSE;
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        const RasterizerStateDesc& raster = initializer.RasterizerState;
+        rasterizer.polygonMode = raster.FillMode == ERasterizerFillMode::Wireframe
+            ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;  // Left-handed like DX
-        rasterizer.depthBiasEnable = VK_FALSE;
+        switch (VulkanDiscardWinding(raster.CullMode))
+        {
+        case ERasterizerCullMode::CW:  rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT; break;
+        case ERasterizerCullMode::CCW: rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; break;
+        default:                       rasterizer.cullMode = VK_CULL_MODE_NONE; break;
+        }
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.depthBiasEnable = (raster.DepthBias != 0.0f || raster.SlopeScaleDepthBias != 0.0f) ? VK_TRUE : VK_FALSE;
+        rasterizer.depthBiasConstantFactor = raster.DepthBias;
+        rasterizer.depthBiasSlopeFactor = raster.SlopeScaleDepthBias;
 
         // Multisampling
         VkPipelineMultisampleStateCreateInfo multisampling = {};
@@ -1371,25 +1381,34 @@ namespace Kiwi
         // Depth stencil
         VkPipelineDepthStencilStateCreateInfo depthStencil = {};
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depthStencil.depthTestEnable = pipelineDesc.DepthEnabled ? VK_TRUE : VK_FALSE;
-        depthStencil.depthWriteEnable = pipelineDesc.DepthWrite ? VK_TRUE : VK_FALSE;
+        depthStencil.depthTestEnable = initializer.DepthEnabled ? VK_TRUE : VK_FALSE;
+        depthStencil.depthWriteEnable = initializer.DepthWrite ? VK_TRUE : VK_FALSE;
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
         depthStencil.depthBoundsTestEnable = VK_FALSE;
         depthStencil.stencilTestEnable = VK_FALSE;
 
         // Color blending
-        std::vector<VkPipelineColorBlendAttachmentState> colorAttachments(pipelineDesc.NumRenderTargets);
-        for (uint32_t i = 0; i < pipelineDesc.NumRenderTargets; i++)
+        std::vector<VkPipelineColorBlendAttachmentState> colorAttachments(initializer.RenderTargetsEnabled);
+        for (uint32_t i = 0; i < initializer.RenderTargetsEnabled; i++)
         {
             colorAttachments[i].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                                   VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-            colorAttachments[i].blendEnable = VK_FALSE;
+            colorAttachments[i].blendEnable = initializer.AdditiveBlend ? VK_TRUE : VK_FALSE;
+            if (initializer.AdditiveBlend)
+            {
+                colorAttachments[i].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                colorAttachments[i].dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                colorAttachments[i].colorBlendOp = VK_BLEND_OP_ADD;
+                colorAttachments[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                colorAttachments[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                colorAttachments[i].alphaBlendOp = VK_BLEND_OP_ADD;
+            }
         }
 
         VkPipelineColorBlendStateCreateInfo colorBlending = {};
         colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         colorBlending.logicOpEnable = VK_FALSE;
-        colorBlending.attachmentCount = pipelineDesc.NumRenderTargets;
+        colorBlending.attachmentCount = initializer.RenderTargetsEnabled;
         colorBlending.pAttachments = colorAttachments.data();
 
         // Dynamic state (viewport + scissor)

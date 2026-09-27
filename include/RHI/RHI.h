@@ -69,6 +69,24 @@ namespace Kiwi
         virtual void* GetNativeHandle() const = 0;
     };
 
+    // UE5 FGraphicsPipelineStateInitializer. One object describes the whole graphics PSO.
+    struct GraphicsPipelineStateInitializer
+    {
+        RHIShader* VertexShader = nullptr;
+        RHIShader* PixelShader = nullptr;
+        RHIInputLayout* VertexDeclaration = nullptr;
+
+        RasterizerStateDesc RasterizerState;
+
+        bool DepthEnabled = true;
+        bool DepthWrite = true;
+        bool AdditiveBlend = false;
+
+        uint32_t RenderTargetsEnabled = 1;
+        EFormat RenderTargetFormats[8] = { EFormat::R8G8B8A8_UNORM };
+        EFormat DepthStencilTargetFormat = EFormat::D32_FLOAT;
+    };
+
     // 采样器
     class RHISampler
     {
@@ -165,18 +183,9 @@ namespace Kiwi
         // 创建空管线状态（DX11 用）
         virtual std::unique_ptr<RHIPipelineState> CreatePipelineState() = 0;
 
-        // 创建图形管线状态（带 VS + PS，DX12 创建完整 PSO，DX11 返回轻量包装）
+        // 用一份 initializer 创建图形管线（UE5 RHICreateGraphicsPipelineState）
         virtual std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader,
-            RHIShader* pixelShader,
-            RHIInputLayout* inputLayout) = 0;
-
-        // 创建图形管线状态（MRT — 指定渲染目标格式，用于延迟渲染 G-Buffer 等）
-        virtual std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader,
-            RHIShader* pixelShader,
-            RHIInputLayout* inputLayout,
-            const PipelineStateDesc& pipelineDesc) = 0;
+            const GraphicsPipelineStateInitializer& initializer) = 0;
 
         // 创建采样器
         virtual std::unique_ptr<RHISampler> CreateSampler() = 0;
@@ -188,7 +197,7 @@ namespace Kiwi
 
         // 创建 Buffer SRV（StructuredBuffer 用于 GPU Scene instanced drawing）
         // numElements: number of elements in the buffer
-        // structByteStride: byte size of each element (e.g., 256 for ObjectUniformBuffer)
+        // structByteStride: byte size of each element (e.g., 256 for PrimitiveUniformBuffer)
         virtual std::unique_ptr<RHITextureView> CreateBufferSRV(
             RHIBuffer* buffer, uint32_t numElements, uint32_t structByteStride) { return nullptr; }
 
@@ -240,6 +249,11 @@ namespace Kiwi
 
         // ---- 管线状态 ----
         virtual void SetPipelineState(RHIPipelineState* pso) = 0;
+
+        // Overrides the cull mode baked into the current PSO until cleared.
+        // Front/Back are resolved to CW/CCW inside each backend.
+        virtual void SetCullMode(ECullMode mode) { (void)mode; }
+        virtual void ClearCullModeOverride() {}
 
         // ---- 图形管线 ----
         virtual void SetPrimitiveTopology(EPrimitiveTopology topology) = 0;

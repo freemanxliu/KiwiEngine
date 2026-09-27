@@ -19,7 +19,7 @@ namespace Kiwi
         Vec4 Color;
         Vec2 TexCoord;    // UV coordinates for texture sampling
 
-        Vertex() : Position{}, Normal{}, Tangent{}, Color{}, TexCoord{} {}
+        Vertex() : Position{}, Normal{ 0, 0, 1 }, Tangent{ 0, 0, 0, 1 }, Color{}, TexCoord{} {}
         Vertex(Vec3 pos, Vec3 norm, Vec4 col)
             : Position(pos), Normal(norm), Tangent{0,0,0,1}, Color(col), TexCoord{0,0} {}
         Vertex(Vec3 pos, Vec3 norm, Vec3 tan, Vec4 col, Vec2 uv)

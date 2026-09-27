@@ -177,6 +177,8 @@ namespace Kiwi
         ID3D11RasterizerState* GetRasterizerState() const { return m_RasterizerState.Get(); }
         ID3D11DepthStencilState* GetDepthStencilState() const { return m_DepthStencilState.Get(); }
 
+        RasterizerStateDesc Rasterizer;
+
         void* GetNativeHandle() const override { return nullptr; } // DX11 没有 PSO 对象
 
     private:

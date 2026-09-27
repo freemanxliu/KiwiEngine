@@ -192,15 +192,58 @@ namespace Kiwi
         uint8_t Stencil;
     };
 
-    // 管线状态描述（用于 MRT PSO 创建）
-    struct PipelineStateDesc
+    // UE5 ERasterizerFillMode
+    enum class ERasterizerFillMode
     {
-        uint32_t NumRenderTargets = 1;
-        EFormat RTVFormats[8] = { EFormat::R8G8B8A8_UNORM };
-        EFormat DSVFormat = EFormat::D32_FLOAT;
-        bool DepthEnabled = true;
-        bool DepthWrite = true;
-        bool AdditiveBlend = false;  // SrcColor ONE + DstColor ONE (for multi-pass lighting)
+        Solid,
+        Wireframe,
+    };
+
+    // Which side of a primitive to cull. Each RHI maps Front/Back onto CW/CCW
+    // from that backend's front-face winding.
+    enum class ECullMode
+    {
+        None,
+        Front,
+        Back,
+    };
+
+    // Screen-space winding to discard, after a backend has chosen its front face.
+    enum class ERasterizerCullMode
+    {
+        None,
+        CW,
+        CCW,
+    };
+
+    // UE5 FRasterizerStateInitializerRHI. Construct with fill mode and cull mode
+    // instead of a use-site preset (mesh / fullscreen / shadow).
+    struct RasterizerStateDesc
+    {
+        ERasterizerFillMode FillMode = ERasterizerFillMode::Solid;
+        ECullMode CullMode = ECullMode::Back;
+        float DepthBias = 0.0f;
+        float SlopeScaleDepthBias = 0.0f;
+        bool AllowMSAA = false;
+        bool EnableLineAA = false;
+
+        RasterizerStateDesc() = default;
+
+        RasterizerStateDesc(
+            ERasterizerFillMode InFillMode,
+            ECullMode InCullMode,
+            float InDepthBias = 0.0f,
+            float InSlopeScaleDepthBias = 0.0f,
+            bool InAllowMSAA = false,
+            bool InEnableLineAA = false)
+            : FillMode(InFillMode)
+            , CullMode(InCullMode)
+            , DepthBias(InDepthBias)
+            , SlopeScaleDepthBias(InSlopeScaleDepthBias)
+            , AllowMSAA(InAllowMSAA)
+            , EnableLineAA(InEnableLineAA)
+        {
+        }
     };
 
 } // namespace Kiwi

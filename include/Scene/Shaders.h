@@ -9,7 +9,7 @@ namespace Kiwi
     // Constant Buffer Structures (UE5-inspired layered design)
     //
     // b0 = ViewUniformBuffer   — per-frame view/camera/lights data
-    // b1 = ObjectUniformBuffer — per-draw object/material data
+    // b1 = PrimitiveUniformBuffer — per-draw object/material data
     // b2 = ShadowUniformBuffer — per-frame CSM shadow data
     //
     // This separation minimizes GPU uploads:
@@ -52,7 +52,7 @@ namespace Kiwi
 
     // ---- Object Uniform Buffer (b1) — per-draw call ----
     // Reference: UE5 FPrimitiveUniformShaderData
-    struct ObjectUniformBuffer
+    struct PrimitiveUniformBuffer
     {
         float WorldMatrix[16];       // g_World         — object world transform
         float ObjectColor[4];        // g_ObjectColor   — object tint color (RGBA)

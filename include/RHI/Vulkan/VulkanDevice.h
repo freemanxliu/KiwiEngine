@@ -274,15 +274,8 @@ namespace Kiwi
             const char* shaderModel, const ShaderMacro* macros = nullptr,
             uint32_t macroCount = 0) override;
 
-        // CreateGraphicsPipelineState — creates real VkPipeline
         std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader, RHIShader* pixelShader,
-            RHIInputLayout* inputLayout) override;
-
-        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader, RHIShader* pixelShader,
-            RHIInputLayout* inputLayout,
-            const PipelineStateDesc& pipelineDesc) override;
+            const GraphicsPipelineStateInitializer& initializer) override;
 
         bool IsFeatureSupported(const char* feature) const override { return true; }
 

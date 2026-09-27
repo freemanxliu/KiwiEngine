@@ -60,7 +60,7 @@ namespace Kiwi
         {
             float len = Length();
             if (len > 0.0001f) return *this / len;
-            return { 0, 0, 0 };
+            return { 0, 0, 1 };
         }
 
         Vec3 Negate() const { return { -x, -y, -z }; }

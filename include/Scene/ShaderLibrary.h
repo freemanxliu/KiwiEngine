@@ -174,8 +174,16 @@ namespace Kiwi
                 EShaderType::Pixel, psSrc, psEntry, "ps_5_0");
 
             // Create PSO through unified interface
-            shader->PSO = device->CreateGraphicsPipelineState(
-                shader->VertexShader.get(), shader->PixelShader.get(), inputLayout);
+            GraphicsPipelineStateInitializer psoInit;
+            psoInit.VertexShader = shader->VertexShader.get();
+            psoInit.PixelShader = shader->PixelShader.get();
+            psoInit.VertexDeclaration = inputLayout;
+            psoInit.DepthEnabled = inputLayout != nullptr;
+            psoInit.DepthWrite = inputLayout != nullptr;
+            psoInit.RasterizerState = RasterizerStateDesc(
+                ERasterizerFillMode::Solid,
+                inputLayout ? ECullMode::Back : ECullMode::None);
+            shader->PSO = device->CreateGraphicsPipelineState(psoInit);
 
             m_ShaderNames.push_back("Default");
             m_Shaders["Default"] = std::move(shader);
@@ -209,7 +217,8 @@ namespace Kiwi
 
                 // Skip deferred rendering shaders — they are compiled separately
                 // with specialized PSO configurations (MRT, no input layout, etc.)
-                if (name == "GBufferPass" || name == "DeferredLighting" || name == "BufferVisualization" || name == "ShadowPass" || name == "Skybox" || name == "Common")
+                if (name == "GBufferPass" || name == "DeferredLighting" || name == "DeferredAmbient" ||
+                    name == "BufferVisualization" || name == "ShadowPass" || name == "Skybox" || name == "Common")
                     continue;
 
                 // Read file content
@@ -260,8 +269,16 @@ namespace Kiwi
                 if (!shader->VertexShader || !shader->PixelShader) return false;
 
                 // Create PSO through unified interface
-                shader->PSO = device->CreateGraphicsPipelineState(
-                    shader->VertexShader.get(), shader->PixelShader.get(), inputLayout);
+                GraphicsPipelineStateInitializer psoInit;
+                psoInit.VertexShader = shader->VertexShader.get();
+                psoInit.PixelShader = shader->PixelShader.get();
+                psoInit.VertexDeclaration = inputLayout;
+                psoInit.DepthEnabled = inputLayout != nullptr;
+                psoInit.DepthWrite = inputLayout != nullptr;
+                psoInit.RasterizerState = RasterizerStateDesc(
+                    ERasterizerFillMode::Solid,
+                    inputLayout ? ECullMode::Back : ECullMode::None);
+                shader->PSO = device->CreateGraphicsPipelineState(psoInit);
 
                 return shader->PSO != nullptr;
             }

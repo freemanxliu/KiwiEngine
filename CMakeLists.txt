@@ -53,7 +53,7 @@ set(GLAD_SOURCES ${GLAD_DIR}/src/gl.c)
 # ---- 源文件 ----
 set(SOURCES
     src/main.cpp
-    src/Renderer.cpp
+    src/Core/Renderer.cpp
     src/Core/Application.cpp
     src/Core/EngineConfig.cpp
     src/Core/Platform.cpp
@@ -100,6 +100,7 @@ set(HEADERS
     include/RHI/Vulkan/VulkanDevice.h
     include/Core/Window.h
     include/Core/Application.h
+    include/KiwiEngineApp.h
     include/Core/EngineConfig.h
     include/Math/Math.h
     include/Scene/Mesh.h
@@ -111,6 +112,7 @@ set(HEADERS
     include/Scene/LightComponent.h
     include/Scene/SceneObject.h
     include/Scene/Scene.h
+    include/Scene/GPUScene.h
     include/Scene/PostProcessComponent.h
     include/Scene/PostProcessShaders.h
     include/Scene/PostProcessShaderLibrary.h

@@ -56,7 +56,7 @@ cbuffer ObjectUB : register(b1)
 };
 
 // ---- GPU Scene StructuredBuffer (t8) — for instanced draws ----
-// Each element = one ObjectUniformBuffer (16 floats4 = 256 bytes)
+// Each element = one PrimitiveUniformBuffer (16 floats4 = 256 bytes)
 // Shader reads: g_GPUScene[batchStartIndex + SV_InstanceID]
 struct GPUSceneData
 {

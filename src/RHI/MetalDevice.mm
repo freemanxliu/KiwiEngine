@@ -18,6 +18,17 @@
 
 namespace Kiwi
 {
+    // MTLWindingClockwise: clockwise triangles are front faces.
+    static ERasterizerCullMode MetalDiscardWinding(ECullMode mode)
+    {
+        switch (mode)
+        {
+        case ECullMode::Front: return ERasterizerCullMode::CW;
+        case ECullMode::Back:  return ERasterizerCullMode::CCW;
+        default:               return ERasterizerCullMode::None;
+        }
+    }
+
 
     namespace
     {
@@ -259,8 +270,7 @@ namespace Kiwi
     public:
         id<MTLFunction> VertexFunction;
         id<MTLFunction> FragmentFunction;
-        PipelineStateDesc Desc;
-        bool CullEnabled = true;
+        GraphicsPipelineStateInitializer Initializer;
         std::vector<InputElementDesc> Elements;
         uint32_t LayoutStride = 0;
 
@@ -284,7 +294,7 @@ namespace Kiwi
 
             uint64_t key = stride;
             key = key * 131u + colorCount + ((uint64_t)depthFormat << 8);
-            key = key * 131u + (Desc.AdditiveBlend ? 1u : 0u);
+            key = key * 131u + (Initializer.AdditiveBlend ? 1u : 0u);
             for (uint32_t i = 0; i < colorCount; ++i)
                 key = key * 131u + (uint64_t)colors[i];
 
@@ -316,7 +326,7 @@ namespace Kiwi
             {
                 auto* attachment = desc.colorAttachments[i];
                 attachment.pixelFormat = colors[i];
-                if (Desc.AdditiveBlend)
+                if (Initializer.AdditiveBlend)
                 {
                     attachment.blendingEnabled = YES;
                     attachment.rgbBlendOperation = MTLBlendOperationAdd;
@@ -359,6 +369,12 @@ namespace Kiwi
         void ClearRenderTargetView(RHITextureView* rtv, const ClearColorValue& color) override;
         void ClearDepthStencilView(RHITextureView*, const ClearDepthStencilValue& value, uint8_t clearFlags) override;
         void SetPipelineState(RHIPipelineState* pso) override { m_PSO = dynamic_cast<MetalPipelineState*>(pso); }
+        void SetCullMode(ECullMode mode) override
+        {
+            m_CullOverride = true;
+            m_CullMode = mode;
+        }
+        void ClearCullModeOverride() override { m_CullOverride = false; }
         void SetPrimitiveTopology(EPrimitiveTopology topology) override { m_Topology = ToPrimitive(topology); }
         void SetVertexBuffers(uint32_t, RHIBuffer* const* buffers, const VertexBufferView* views, uint32_t count) override;
         void SetIndexBuffer(RHIBuffer* buffer, const IndexBufferView* view) override;
@@ -393,6 +409,8 @@ namespace Kiwi
 
         std::shared_ptr<MetalState> m_State;
         MetalPipelineState* m_PSO = nullptr;
+        bool m_CullOverride = false;
+        ECullMode m_CullMode = ECullMode::Back;
         MTLPrimitiveType m_Topology = MTLPrimitiveTypeTriangle;
         id<MTLBuffer> m_VertexBuffer;
         uint32_t m_VertexStride = 0;
@@ -626,25 +644,16 @@ namespace Kiwi
             return std::make_unique<MetalPipelineState>();
         }
 
-        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout) override
-        {
-            PipelineStateDesc desc;
-            desc.DepthEnabled = true;
-            desc.DepthWrite = true;
-            return CreateGraphicsPipelineState(vertexShader, pixelShader, inputLayout, desc);
-        }
-
-        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(RHIShader* vertexShader, RHIShader* pixelShader,
-            RHIInputLayout* inputLayout, const PipelineStateDesc& pipelineDesc) override
+        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
+            const GraphicsPipelineStateInitializer& initializer) override
         {
             auto pso = std::make_unique<MetalPipelineState>();
-            pso->Desc = pipelineDesc;
-            pso->CullEnabled = inputLayout != nullptr;
-            if (auto* shader = dynamic_cast<MetalShader*>(vertexShader))
+            pso->Initializer = initializer;
+            if (auto* shader = dynamic_cast<MetalShader*>(initializer.VertexShader))
                 pso->VertexFunction = shader->GetFunction();
-            if (auto* shader = dynamic_cast<MetalShader*>(pixelShader))
+            if (auto* shader = dynamic_cast<MetalShader*>(initializer.PixelShader))
                 pso->FragmentFunction = shader->GetFunction();
-            if (auto* layout = dynamic_cast<MetalInputLayout*>(inputLayout))
+            if (auto* layout = dynamic_cast<MetalInputLayout*>(initializer.VertexDeclaration))
             {
                 pso->Elements = layout->GetElements();
                 pso->LayoutStride = layout->GetStride();
@@ -995,10 +1004,22 @@ namespace Kiwi
             return false;
 
         [m_State->encoder setRenderPipelineState:pipeline];
-        [m_State->encoder setCullMode:m_PSO->CullEnabled ? MTLCullModeBack : MTLCullModeNone];
-        [m_State->encoder setFrontFacingWinding:MTLWindingCounterClockwise];
-        if (m_State->depth && m_PSO->Desc.DepthEnabled)
-            [m_State->encoder setDepthStencilState:m_PSO->Desc.DepthWrite ? m_State->depthWrite : m_State->depthRead];
+        const RasterizerStateDesc& raster = m_PSO->Initializer.RasterizerState;
+        ERasterizerCullMode winding = MetalDiscardWinding(m_CullOverride ? m_CullMode : raster.CullMode);
+        [m_State->encoder setFrontFacingWinding:MTLWindingClockwise];
+        MTLCullMode cullMode = MTLCullModeNone;
+        switch (winding)
+        {
+        case ERasterizerCullMode::CW:  cullMode = MTLCullModeFront; break;
+        case ERasterizerCullMode::CCW: cullMode = MTLCullModeBack; break;
+        default: break;
+        }
+        [m_State->encoder setCullMode:cullMode];
+        [m_State->encoder setTriangleFillMode:raster.FillMode == ERasterizerFillMode::Wireframe
+            ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
+        [m_State->encoder setDepthBias:raster.DepthBias slopeScale:raster.SlopeScaleDepthBias clamp:0.0f];
+        if (m_State->depth && m_PSO->Initializer.DepthEnabled)
+            [m_State->encoder setDepthStencilState:m_PSO->Initializer.DepthWrite ? m_State->depthWrite : m_State->depthRead];
         else
             [m_State->encoder setDepthStencilState:m_State->depthOff];
 

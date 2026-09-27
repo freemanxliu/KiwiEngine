@@ -107,18 +107,8 @@ namespace Kiwi
         // enableBackCull=true for geometry passes, false for fullscreen passes
         std::unique_ptr<RHIPipelineState> CreatePipelineStateWithCull(bool enableBackCull);
 
-        // Graphics Pipeline State (DX11: stores VS+PS references for binding)
         std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader,
-            RHIShader* pixelShader,
-            RHIInputLayout* inputLayout) override;
-
-        // MRT variant (DX11: same as above, RTV formats handled by SetRenderTargets)
-        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader,
-            RHIShader* pixelShader,
-            RHIInputLayout* inputLayout,
-            const PipelineStateDesc& pipelineDesc) override;
+            const GraphicsPipelineStateInitializer& initializer) override;
 
         // Sampler
         std::unique_ptr<RHISampler> CreateSampler() override;
@@ -180,6 +170,8 @@ namespace Kiwi
 
         // Pipeline State
         void SetPipelineState(RHIPipelineState* pso) override;
+        void SetCullMode(ECullMode mode) override;
+        void ClearCullModeOverride() override;
 
         // Graphics Pipeline
         void SetPrimitiveTopology(EPrimitiveTopology topology) override;
@@ -223,7 +215,12 @@ namespace Kiwi
         void Flush() override;
 
     private:
+        void ApplyCullOverride();
+
         ComPtr<ID3D11DeviceContext> m_Context;
+        DX11PipelineState* m_CurrentPSO = nullptr;
+        bool m_CullOverride = false;
+        ECullMode m_CullMode = ECullMode::Back;
         ComPtr<ID3D11DeviceContext1> m_Context1;  // Cached DX11.1 context for offset CB binding
         ComPtr<ID3DUserDefinedAnnotation> m_Annotation;
     };

@@ -3,6 +3,7 @@
 #include "Scene/Component.h"
 #include "Scene/Mesh.h"
 #include "Scene/PrimitiveType.h"
+#include "RHI/RHITypes.h"
 #include <string>
 
 namespace Kiwi
@@ -32,6 +33,7 @@ namespace Kiwi
         // Material reference
         std::string MaterialName = "Default-Material";          // Material asset name (references a .mat file)
         int32_t     SortOrder  = 0;                             // Render sort priority (higher = rendered first)
+        ECullMode   CullMode   = ECullMode::Back;
     };
 
 } // namespace Kiwi

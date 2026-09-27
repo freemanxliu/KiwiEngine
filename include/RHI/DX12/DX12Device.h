@@ -121,18 +121,8 @@ namespace Kiwi
             const char* entryPoint, const char* shaderModel,
             const ShaderMacro* macros = nullptr, uint32_t macroCount = 0) override;
 
-        // 创建图形管线状态（完整 DX12 PSO）
         std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader,
-            RHIShader* pixelShader,
-            RHIInputLayout* inputLayout) override;
-
-        // 创建图形管线状态（MRT — 指定渲染目标格式）
-        std::unique_ptr<RHIPipelineState> CreateGraphicsPipelineState(
-            RHIShader* vertexShader,
-            RHIShader* pixelShader,
-            RHIInputLayout* inputLayout,
-            const PipelineStateDesc& pipelineDesc) override;
+            const GraphicsPipelineStateInitializer& initializer) override;
 
         // ---- ImGui 集成 ----
         void InitImGui(void* windowHandle) override;

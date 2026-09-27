@@ -177,7 +177,7 @@ namespace Kiwi
 
         bool DepthEnabled = true;
         bool DepthWrite = true;
-        bool CullEnabled = true;
+        RasterizerStateDesc Rasterizer;
 
     private:
         GLuint m_Program = 0;

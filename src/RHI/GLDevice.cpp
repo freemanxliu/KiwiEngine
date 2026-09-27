@@ -12,6 +12,17 @@
 
 namespace Kiwi
 {
+    // glFrontFace(GL_CW): clockwise triangles are front faces.
+    static ERasterizerCullMode GLDiscardWinding(ECullMode mode)
+    {
+        switch (mode)
+        {
+        case ECullMode::Front: return ERasterizerCullMode::CW;
+        case ECullMode::Back:  return ERasterizerCullMode::CCW;
+        default:               return ERasterizerCullMode::None;
+        }
+    }
+
 
     // ============================================================
     // GL Format Helpers
@@ -423,15 +434,15 @@ namespace Kiwi
     }
 
     std::unique_ptr<RHIPipelineState> GLDevice::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
+        const GraphicsPipelineStateInitializer& initializer)
     {
         auto pso = std::make_unique<GLPipelineState>();
 
         GLuint program = glCreateProgram();
-        if (vertexShader)
-            glAttachShader(program, static_cast<GLShader*>(vertexShader)->GetShaderID());
-        if (pixelShader)
-            glAttachShader(program, static_cast<GLShader*>(pixelShader)->GetShaderID());
+        if (initializer.VertexShader)
+            glAttachShader(program, static_cast<GLShader*>(initializer.VertexShader)->GetShaderID());
+        if (initializer.PixelShader)
+            glAttachShader(program, static_cast<GLShader*>(initializer.PixelShader)->GetShaderID());
 
         glLinkProgram(program);
 
@@ -443,22 +454,13 @@ namespace Kiwi
             glGetProgramInfoLog(program, sizeof(log), nullptr, log);
             std::cerr << "[Kiwi GL] Program link error: " << log << std::endl;
             glDeleteProgram(program);
-            return pso; // Return empty PSO
+            return pso;
         }
 
         pso->SetProgram(program);
-        pso->CullEnabled = (inputLayout != nullptr);
-        return pso;
-    }
-
-    std::unique_ptr<RHIPipelineState> GLDevice::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
-        const PipelineStateDesc& pipelineDesc)
-    {
-        auto pso = CreateGraphicsPipelineState(vertexShader, pixelShader, inputLayout);
-        auto* glPSO = static_cast<GLPipelineState*>(pso.get());
-        glPSO->DepthEnabled = pipelineDesc.DepthEnabled;
-        glPSO->DepthWrite = pipelineDesc.DepthWrite;
+        pso->DepthEnabled = initializer.DepthEnabled;
+        pso->DepthWrite = initializer.DepthWrite;
+        pso->Rasterizer = initializer.RasterizerState;
         return pso;
     }
 
@@ -621,6 +623,29 @@ namespace Kiwi
         glClear(mask);
     }
 
+    void GLCommandContext::SetCullMode(ECullMode mode)
+    {
+        m_CullOverride = true;
+        m_CullMode = mode;
+
+        ERasterizerCullMode winding = GLDiscardWinding(mode);
+        glFrontFace(GL_CW);
+        if (winding == ERasterizerCullMode::None)
+        {
+            glDisable(GL_CULL_FACE);
+        }
+        else
+        {
+            glEnable(GL_CULL_FACE);
+            glCullFace(winding == ERasterizerCullMode::CW ? GL_FRONT : GL_BACK);
+        }
+    }
+
+    void GLCommandContext::ClearCullModeOverride()
+    {
+        m_CullOverride = false;
+    }
+
     void GLCommandContext::SetPipelineState(RHIPipelineState* pso)
     {
         auto* glPSO = static_cast<GLPipelineState*>(pso);
@@ -641,13 +666,36 @@ namespace Kiwi
                 glDisable(GL_DEPTH_TEST);
             }
 
-            if (glPSO->CullEnabled)
+            const RasterizerStateDesc& raster = glPSO->Rasterizer;
+            ERasterizerCullMode winding = GLDiscardWinding(m_CullOverride ? m_CullMode : raster.CullMode);
+            glFrontFace(GL_CW);
+            if (winding == ERasterizerCullMode::None)
             {
-                glEnable(GL_CULL_FACE);
+                glDisable(GL_CULL_FACE);
             }
             else
             {
-                glDisable(GL_CULL_FACE);
+                glEnable(GL_CULL_FACE);
+                glCullFace(winding == ERasterizerCullMode::CW ? GL_FRONT : GL_BACK);
+            }
+            glPolygonMode(GL_FRONT_AND_BACK,
+                raster.FillMode == ERasterizerFillMode::Wireframe ? GL_LINE : GL_FILL);
+            if (raster.EnableLineAA)
+                glEnable(GL_LINE_SMOOTH);
+            else
+                glDisable(GL_LINE_SMOOTH);
+            if (raster.AllowMSAA)
+                glEnable(GL_MULTISAMPLE);
+            else
+                glDisable(GL_MULTISAMPLE);
+            if (raster.DepthBias != 0.0f || raster.SlopeScaleDepthBias != 0.0f)
+            {
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(raster.SlopeScaleDepthBias, raster.DepthBias);
+            }
+            else
+            {
+                glDisable(GL_POLYGON_OFFSET_FILL);
             }
         }
     }

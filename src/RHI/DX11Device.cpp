@@ -9,6 +9,27 @@
 
 namespace Kiwi
 {
+    // FrontCounterClockwise = FALSE: clockwise triangles are front faces.
+    static ERasterizerCullMode DX11DiscardWinding(ECullMode mode)
+    {
+        switch (mode)
+        {
+        case ECullMode::Front: return ERasterizerCullMode::CW;
+        case ECullMode::Back:  return ERasterizerCullMode::CCW;
+        default:               return ERasterizerCullMode::None;
+        }
+    }
+
+    static D3D11_CULL_MODE DX11CullMode(ERasterizerCullMode winding)
+    {
+        switch (winding)
+        {
+        case ERasterizerCullMode::CW:  return D3D11_CULL_FRONT;
+        case ERasterizerCullMode::CCW: return D3D11_CULL_BACK;
+        default:                       return D3D11_CULL_NONE;
+        }
+    }
+
 
     // ============================================================
     // DX11SwapChain 实现
@@ -925,15 +946,57 @@ namespace Kiwi
         m_Context->ClearDepthStencilView(dxView->AsDSV(), flags, value.Depth, value.Stencil);
     }
 
+    void DX11CommandContext::ApplyCullOverride()
+    {
+        if (!m_CullOverride || !m_Context)
+            return;
+
+        ComPtr<ID3D11Device> device;
+        m_Context->GetDevice(&device);
+        if (!device)
+            return;
+
+        const RasterizerStateDesc& src = m_CurrentPSO ? m_CurrentPSO->Rasterizer : RasterizerStateDesc{};
+        D3D11_RASTERIZER_DESC rasterDesc = {};
+        rasterDesc.FillMode = src.FillMode == ERasterizerFillMode::Wireframe
+            ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
+        rasterDesc.CullMode = DX11CullMode(DX11DiscardWinding(m_CullMode));
+        rasterDesc.FrontCounterClockwise = FALSE;
+        rasterDesc.DepthBias = (INT)src.DepthBias;
+        rasterDesc.SlopeScaledDepthBias = src.SlopeScaleDepthBias;
+        rasterDesc.DepthClipEnable = TRUE;
+        rasterDesc.MultisampleEnable = src.AllowMSAA ? TRUE : FALSE;
+        rasterDesc.AntialiasedLineEnable = src.EnableLineAA ? TRUE : FALSE;
+
+        ComPtr<ID3D11RasterizerState> state;
+        if (SUCCEEDED(device->CreateRasterizerState(&rasterDesc, &state)))
+            m_Context->RSSetState(state.Get());
+    }
+
+    void DX11CommandContext::SetCullMode(ECullMode mode)
+    {
+        m_CullOverride = true;
+        m_CullMode = mode;
+        ApplyCullOverride();
+    }
+
+    void DX11CommandContext::ClearCullModeOverride()
+    {
+        m_CullOverride = false;
+    }
+
     void DX11CommandContext::SetPipelineState(RHIPipelineState* pso)
     {
         auto dxPSO = static_cast<DX11PipelineState*>(pso);
+        m_CurrentPSO = dxPSO;
 
         if (dxPSO->GetBlendState())
             m_Context->OMSetBlendState(dxPSO->GetBlendState(), nullptr, 0xFFFFFFFF);
 
         if (dxPSO->GetRasterizerState())
             m_Context->RSSetState(dxPSO->GetRasterizerState());
+        if (m_CullOverride)
+            ApplyCullOverride();
 
         if (dxPSO->GetDepthStencilState())
             m_Context->OMSetDepthStencilState(dxPSO->GetDepthStencilState(), 0);
@@ -1159,24 +1222,16 @@ namespace Kiwi
     // ============================================================
 
     std::unique_ptr<RHIPipelineState> DX11Device::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout)
-    {
-        // DX11 doesn't bundle pipeline state like DX12.
-        // Return a PSO with appropriate cull mode — no InputLayout means fullscreen pass, disable culling.
-        return CreatePipelineStateWithCull(inputLayout != nullptr);
-    }
-
-    std::unique_ptr<RHIPipelineState> DX11Device::CreateGraphicsPipelineState(
-        RHIShader* vertexShader, RHIShader* pixelShader, RHIInputLayout* inputLayout,
-        const PipelineStateDesc& pipelineDesc)
+        const GraphicsPipelineStateInitializer& initializer)
     {
         auto pso = std::make_unique<DX11PipelineState>();
+        pso->Rasterizer = initializer.RasterizerState;
 
         // Blend state
         D3D11_BLEND_DESC blendDesc = {};
         blendDesc.AlphaToCoverageEnable = FALSE;
         blendDesc.IndependentBlendEnable = FALSE;
-        if (pipelineDesc.AdditiveBlend)
+        if (initializer.AdditiveBlend)
         {
             blendDesc.RenderTarget[0].BlendEnable = TRUE;
             blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
@@ -1196,12 +1251,17 @@ namespace Kiwi
         m_Device->CreateBlendState(&blendDesc, &blendState);
         pso->SetBlendState(blendState.Get());
 
-        // Rasterizer state
+        const RasterizerStateDesc& raster = initializer.RasterizerState;
         D3D11_RASTERIZER_DESC rasterDesc = {};
-        rasterDesc.FillMode = D3D11_FILL_SOLID;
-        rasterDesc.CullMode = inputLayout ? D3D11_CULL_BACK : D3D11_CULL_NONE;
+        rasterDesc.FillMode = raster.FillMode == ERasterizerFillMode::Wireframe
+            ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
+        rasterDesc.CullMode = DX11CullMode(DX11DiscardWinding(raster.CullMode));
         rasterDesc.FrontCounterClockwise = FALSE;
+        rasterDesc.DepthBias = (INT)raster.DepthBias;
+        rasterDesc.SlopeScaledDepthBias = raster.SlopeScaleDepthBias;
         rasterDesc.DepthClipEnable = TRUE;
+        rasterDesc.MultisampleEnable = raster.AllowMSAA ? TRUE : FALSE;
+        rasterDesc.AntialiasedLineEnable = raster.EnableLineAA ? TRUE : FALSE;
 
         ComPtr<ID3D11RasterizerState> rasterState;
         m_Device->CreateRasterizerState(&rasterDesc, &rasterState);
@@ -1209,8 +1269,8 @@ namespace Kiwi
 
         // Depth stencil state
         D3D11_DEPTH_STENCIL_DESC dsDesc = {};
-        dsDesc.DepthEnable = pipelineDesc.DepthEnabled;
-        dsDesc.DepthWriteMask = pipelineDesc.DepthWrite ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+        dsDesc.DepthEnable = initializer.DepthEnabled;
+        dsDesc.DepthWriteMask = initializer.DepthWrite ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
         dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
         dsDesc.StencilEnable = FALSE;
 
