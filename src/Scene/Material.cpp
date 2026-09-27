@@ -21,6 +21,7 @@ namespace Kiwi
 
         file << "{\n";
         file << "  \"name\": \"" << Name << "\",\n";
+        file << "  \"surfaceShader\": \"" << SurfaceShader << "\",\n";
         file << "  \"shadingModel\": \"" << ShadingModelToString(ShadingModel) << "\",\n";
         file << "  \"properties\": {\n";
 
@@ -126,6 +127,9 @@ namespace Kiwi
         if (smStr.empty())
             smStr = ReadQuotedStr(json, "shader"); // Legacy .mat file compat
         ShadingModel = smStr.empty() ? EShadingModel::DefaultLit : StringToShadingModel(smStr);
+        SurfaceShader = ReadQuotedStr(json, "surfaceShader");
+        if (SurfaceShader.empty())
+            SurfaceShader = "DefaultSurface";
 
         // Parse properties block
         auto propsPos = json.find("\"properties\"");
@@ -214,7 +218,9 @@ namespace Kiwi
     {
         Material mat;
         mat.Name = "Default-Material";
+        mat.SurfaceShader = "DefaultSurface";
         mat.ShadingModel = EShadingModel::DefaultLit;
+        mat.SetColor("_Emissive", { 0.0f, 0.0f, 0.0f, 1.0f });
         mat.SetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
         mat.SetFloat("_Roughness", 0.5f);
         mat.SetFloat("_Metallic", 0.0f);

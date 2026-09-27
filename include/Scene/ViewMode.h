@@ -9,11 +9,18 @@ namespace Kiwi
 
     enum class EViewMode
     {
-        Lit,           // Default: Full deferred rendering with lighting
+        Lit,           // Full lighting
         Unlit,         // No lighting — pure albedo color
         BaseColor,     // Buffer Visualization: G-Buffer Albedo
         Roughness,     // Buffer Visualization: G-Buffer Roughness
         Metallic,      // Buffer Visualization: G-Buffer Metallic
+    };
+
+    enum class ERenderPath
+    {
+        Deferred,
+        Forward,
+        RayTracing,
     };
 
     inline const char* GetViewModeName(EViewMode mode)
@@ -27,6 +34,24 @@ namespace Kiwi
         case EViewMode::Metallic:  return "Metallic";
         default:                   return "Unknown";
         }
+    }
+
+    inline const char* GetRenderPathName(ERenderPath path)
+    {
+        switch (path)
+        {
+        case ERenderPath::Deferred:   return "Deferred";
+        case ERenderPath::Forward:    return "Forward";
+        case ERenderPath::RayTracing: return "Ray Tracing";
+        default:                      return "Unknown";
+        }
+    }
+
+    inline bool IsBufferVisualization(EViewMode mode)
+    {
+        return mode == EViewMode::BaseColor
+            || mode == EViewMode::Roughness
+            || mode == EViewMode::Metallic;
     }
 
 } // namespace Kiwi

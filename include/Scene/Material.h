@@ -52,6 +52,7 @@ namespace Kiwi
     {
     public:
         std::string Name;                    // Material name (also filename stem)
+        std::string SurfaceShader = "DefaultSurface"; // EvaluateMaterial implementation
         EShadingModel ShadingModel = EShadingModel::DefaultLit; // How this surface is shaded
 
         // Property values (keyed by property name like "_Roughness")
@@ -105,6 +106,57 @@ namespace Kiwi
 
         // ---- Create default material ----
         static Material CreateDefault();
+    };
+
+    // Per-primitive reference to a material asset. Overrides do not modify the parent.
+    class MaterialInstance
+    {
+    public:
+        std::string Parent = "Default-Material";
+        std::unordered_map<std::string, MaterialPropertyValue> Overrides;
+
+        void SetParent(const std::string& name)
+        {
+            if (Parent == name)
+                return;
+            Parent = name;
+            Overrides.clear();
+        }
+
+        void ClearOverrides() { Overrides.clear(); }
+
+        bool HasOverride(const std::string& name) const
+        {
+            return Overrides.find(name) != Overrides.end();
+        }
+
+        float GetFloat(const Material* parent, const std::string& name, float fallback = 0.0f) const
+        {
+            auto it = Overrides.find(name);
+            if (it != Overrides.end() && std::holds_alternative<float>(it->second))
+                return std::get<float>(it->second);
+            return parent ? parent->GetFloat(name, fallback) : fallback;
+        }
+
+        Vec4 GetColor(const Material* parent, const std::string& name, Vec4 fallback = { 1, 1, 1, 1 }) const
+        {
+            auto it = Overrides.find(name);
+            if (it != Overrides.end() && std::holds_alternative<Vec4>(it->second))
+                return std::get<Vec4>(it->second);
+            return parent ? parent->GetColor(name, fallback) : fallback;
+        }
+
+        std::string GetTexture(const Material* parent, const std::string& name, const std::string& fallback = "") const
+        {
+            auto it = Overrides.find(name);
+            if (it != Overrides.end() && std::holds_alternative<std::string>(it->second))
+                return std::get<std::string>(it->second);
+            return parent ? parent->GetTexture(name, fallback) : fallback;
+        }
+
+        void SetFloat(const std::string& name, float value) { Overrides[name] = value; }
+        void SetColor(const std::string& name, const Vec4& value) { Overrides[name] = value; }
+        void SetTexture(const std::string& name, const std::string& path) { Overrides[name] = path; }
     };
 
     // ============================================================

@@ -216,11 +216,19 @@ namespace Kiwi
     {
     public:
         explicit MetalTextureView(MetalTexture* texture) : m_Texture(texture) {}
-        void* GetNativeHandle() const override { return m_Texture ? m_Texture->GetNativeHandle() : nullptr; }
+        explicit MetalTextureView(id<MTLBuffer> buffer) : m_Buffer(buffer) {}
+        void* GetNativeHandle() const override
+        {
+            if (m_Buffer)
+                return (__bridge void*)m_Buffer;
+            return m_Texture ? m_Texture->GetNativeHandle() : nullptr;
+        }
         id<MTLTexture> GetTexture() const { return m_Texture ? m_Texture->GetTexture() : nil; }
+        id<MTLBuffer> GetBuffer() const { return m_Buffer; }
 
     private:
         MetalTexture* m_Texture = nullptr;
+        id<MTLBuffer> m_Buffer = nil;
     };
 
     class MetalShader : public RHIShader
@@ -418,6 +426,7 @@ namespace Kiwi
         MTLIndexType m_IndexType = MTLIndexTypeUInt32;
         uint32_t m_IndexStride = 4;
         BoundBytes m_Constants[kMaxSlots];
+        id<MTLBuffer> m_StorageBuffers[kMaxSlots] = {};
         id<MTLTexture> m_Textures[kMaxSlots] = {};
         id<MTLSamplerState> m_Samplers[kMaxSlots] = {};
         bool m_ViewportValid = false;
@@ -617,6 +626,13 @@ namespace Kiwi
         std::unique_ptr<RHITextureView> CreateTextureView(RHITexture* texture, EDescriptorHeapType, EFormat, int, int) override
         {
             return std::make_unique<MetalTextureView>(static_cast<MetalTexture*>(texture));
+        }
+
+        std::unique_ptr<RHITextureView> CreateBufferSRV(RHIBuffer* buffer, uint32_t, uint32_t) override
+        {
+            if (!buffer)
+                return nullptr;
+            return std::make_unique<MetalTextureView>(static_cast<MetalBuffer*>(buffer)->GetBuffer());
         }
 
         std::unique_ptr<RHIShader> CreateShader(EShaderType type, const void* byteCode, size_t byteCodeSize) override
@@ -877,7 +893,15 @@ namespace Kiwi
     {
         if (slot >= kMaxSlots)
             return;
-        m_Textures[slot] = srv ? static_cast<MetalTextureView*>(srv)->GetTexture() : nil;
+        if (!srv)
+        {
+            m_Textures[slot] = nil;
+            m_StorageBuffers[slot] = nil;
+            return;
+        }
+        auto* view = static_cast<MetalTextureView*>(srv);
+        m_Textures[slot] = view->GetTexture();
+        m_StorageBuffers[slot] = view->GetBuffer();
     }
 
     void MetalCommandContext::SetSampler(uint32_t slot, RHISampler* sampler)
@@ -1032,6 +1056,8 @@ namespace Kiwi
                 [m_State->encoder setVertexBuffer:m_State->constantHeap offset:m_Constants[slot].Offset atIndex:slot];
                 [m_State->encoder setFragmentBuffer:m_State->constantHeap offset:m_Constants[slot].Offset atIndex:slot];
             }
+            if (m_StorageBuffers[slot])
+                [m_State->encoder setVertexBuffer:m_StorageBuffers[slot] offset:0 atIndex:slot];
             if (m_Textures[slot])
             {
                 [m_State->encoder setVertexTexture:m_Textures[slot] atIndex:slot];

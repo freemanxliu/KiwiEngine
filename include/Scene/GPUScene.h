@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <string>
 #include "Scene/Shaders.h"
+#include "Scene/MeshBatch.h"
 #include "RHI/RHI.h"
 #include "RHI/RHITypes.h"
 
@@ -28,45 +29,17 @@ namespace Kiwi
         // Batching sort keys (set during InitView)
         uint32_t       MeshID;        // Shared mesh pool ID (EPrimitiveType)
         const char*    MaterialName;  // Material name (for SRV batching)
+        MeshBatchKey   BatchKey;
     };
 
-    // ============================================================
-    // InstanceBatch — a group of objects sharing the same mesh + material
-    // that can be drawn in one DrawIndexedInstanced call.
-    // ============================================================
-    struct InstanceBatch
-    {
-        uint32_t MeshID;            // SharedMeshPool ID (EPrimitiveType)
-        std::string MaterialName;   // Material name (for texture binding)
-        uint32_t StartIndex;        // Start index in GPU Scene StructuredBuffer
-        uint32_t InstanceCount;     // Number of instances in this batch
-        // Indices into the original RenderList (to access MeshComponent for texture binding)
-        std::vector<uint32_t> RenderListIndices;
-    };
+    MeshBatchKey MakeMeshBatchKey(const RenderItem& item, MaterialLibrary& materialLibrary);
 
     // ============================================================
-    // SingleDrawItem — an object that can't be batched (unique mesh or
-    // unique mesh+material combo with count == 1).
-    // Drawn with ordinary DrawIndexed + CB offset binding.
-    // ============================================================
-    struct SingleDrawItem
-    {
-        uint32_t RenderListIndex;   // Index in m_RenderList
-        uint32_t GPUSceneIndex;     // Index in GPU Scene Buffer (for CB offset bind)
-    };
-
-    // ============================================================
-    // GPUScene — Unified GPU Scene Manager
+    // GPUScene — primitive data for the frame.
     //
-    // Responsibilities:
-    //   1. Collect all primitive data from scene (PrimitiveUniformBuffer)
-    //   2. Upload to GPU: CB (for single draws) + StructuredBuffer (for instanced draws)
-    //   3. Build InstanceBatch[] and SingleDrawItem[] lists
-    //   4. Provide Draw APIs for both paths
-    //
-    // RenderDeferred draws these lists:
-    //   1. For each InstanceBatch: bind VB/IB, bind SRV textures, DrawIndexedInstanced
-    //   2. For each SingleDrawItem: bind VB/IB, bind CB offset, bind textures, DrawIndexed
+    //   1. Collect PrimitiveUniformBuffer data
+    //   2. Upload the constant buffer and the instancing structured buffer
+    //   3. Build MeshBatch list (pass-agnostic; passes turn it into draw commands)
     // ============================================================
 
     class GPUScene
@@ -94,8 +67,8 @@ namespace Kiwi
         void SetBatchStartIndex(RHICommandContext* ctx, uint32_t startIndex) const;
 
         // ---- Accessors ----
-        const std::vector<InstanceBatch>& GetInstanceBatches() const { return m_Batches; }
-        const std::vector<SingleDrawItem>& GetSingleDrawItems() const { return m_SingleDraws; }
+        std::vector<MeshBatch>& GetMeshBatches() { return m_MeshBatches; }
+        const std::vector<MeshBatch>& GetMeshBatches() const { return m_MeshBatches; }
         uint32_t GetNumPrimitives() const { return m_NumPrimitives; }
 
         // Get the GPU Scene index for a given RenderList index
@@ -107,7 +80,9 @@ namespace Kiwi
         }
 
     private:
-        void BuildBatches(const std::vector<struct RenderItem>& renderList);
+        void BuildBatches(const std::vector<struct RenderItem>& renderList,
+                          const std::vector<uint32_t>& primitiveRenderIndices,
+                          MaterialLibrary& materialLibrary);
 
         // GPU resources
         std::unique_ptr<RHIBuffer> m_ConstantBuffer;        // CB for single-draw offset binding (b1)
@@ -123,9 +98,7 @@ namespace Kiwi
         // RenderList index → GPU Scene index mapping
         std::vector<uint32_t> m_RenderListToGPUScene;
 
-        // Classified draw lists
-        std::vector<InstanceBatch> m_Batches;       // Instanced batches (count >= 2)
-        std::vector<SingleDrawItem> m_SingleDraws;  // Single draws (count == 1 or unique mesh)
+        std::vector<MeshBatch> m_MeshBatches;
 
         bool m_Dirty = true;
     };

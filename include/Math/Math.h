@@ -344,54 +344,53 @@ namespace Kiwi
     {
         Plane Planes[6]; // Left, Right, Bottom, Top, Near, Far
 
-        // Extract frustum planes from a row-major ViewProjection matrix
-        // For row-major (v * M convention), a point p is inside when:
-        //   clip = p * VP => clip.x = dot(row0, p4), clip.w = dot(row3, p4)
-        //   Left:   clip.w + clip.x >= 0  =>  row3 + row0
-        //   Right:  clip.w - clip.x >= 0  =>  row3 - row0
-        //   Bottom: clip.w + clip.y >= 0  =>  row3 + row1
-        //   Top:    clip.w - clip.y >= 0  =>  row3 - row1
-        //   Near:   clip.z >= 0           =>  row2        (DX: z in [0,1])
-        //   Far:    clip.w - clip.z >= 0  =>  row3 - row2
+        // Extract frustum planes from a row-major ViewProjection matrix.
+        // Points transform as clip = p * VP, so clip.x is column 0 and clip.w is column 3.
+        // Inside the DX clip volume (z in [0, 1]):
+        //   Left:   clip.w + clip.x >= 0  =>  col3 + col0
+        //   Right:  clip.w - clip.x >= 0  =>  col3 - col0
+        //   Bottom: clip.w + clip.y >= 0  =>  col3 + col1
+        //   Top:    clip.w - clip.y >= 0  =>  col3 - col1
+        //   Near:   clip.z >= 0           =>  col2
+        //   Far:    clip.w - clip.z >= 0  =>  col3 - col2
         void ExtractFromViewProjection(const Mat4& vp)
         {
-            // Row-major: row i = vp.m[i][0..3]
-            // Left = row3 + row0
+            // Left = col3 + col0
             Planes[0] = Plane(
-                vp.m[3][0] + vp.m[0][0],
-                vp.m[3][1] + vp.m[0][1],
-                vp.m[3][2] + vp.m[0][2],
-                vp.m[3][3] + vp.m[0][3]);
-            // Right = row3 - row0
+                vp.m[0][3] + vp.m[0][0],
+                vp.m[1][3] + vp.m[1][0],
+                vp.m[2][3] + vp.m[2][0],
+                vp.m[3][3] + vp.m[3][0]);
+            // Right = col3 - col0
             Planes[1] = Plane(
-                vp.m[3][0] - vp.m[0][0],
-                vp.m[3][1] - vp.m[0][1],
-                vp.m[3][2] - vp.m[0][2],
-                vp.m[3][3] - vp.m[0][3]);
-            // Bottom = row3 + row1
+                vp.m[0][3] - vp.m[0][0],
+                vp.m[1][3] - vp.m[1][0],
+                vp.m[2][3] - vp.m[2][0],
+                vp.m[3][3] - vp.m[3][0]);
+            // Bottom = col3 + col1
             Planes[2] = Plane(
-                vp.m[3][0] + vp.m[1][0],
-                vp.m[3][1] + vp.m[1][1],
-                vp.m[3][2] + vp.m[1][2],
-                vp.m[3][3] + vp.m[1][3]);
-            // Top = row3 - row1
+                vp.m[0][3] + vp.m[0][1],
+                vp.m[1][3] + vp.m[1][1],
+                vp.m[2][3] + vp.m[2][1],
+                vp.m[3][3] + vp.m[3][1]);
+            // Top = col3 - col1
             Planes[3] = Plane(
-                vp.m[3][0] - vp.m[1][0],
-                vp.m[3][1] - vp.m[1][1],
-                vp.m[3][2] - vp.m[1][2],
-                vp.m[3][3] - vp.m[1][3]);
-            // Near = row2 (DX convention: z >= 0)
+                vp.m[0][3] - vp.m[0][1],
+                vp.m[1][3] - vp.m[1][1],
+                vp.m[2][3] - vp.m[2][1],
+                vp.m[3][3] - vp.m[3][1]);
+            // Near = col2 (DX: clip.z >= 0)
             Planes[4] = Plane(
-                vp.m[2][0],
-                vp.m[2][1],
+                vp.m[0][2],
+                vp.m[1][2],
                 vp.m[2][2],
-                vp.m[2][3]);
-            // Far = row3 - row2
+                vp.m[3][2]);
+            // Far = col3 - col2
             Planes[5] = Plane(
-                vp.m[3][0] - vp.m[2][0],
-                vp.m[3][1] - vp.m[2][1],
-                vp.m[3][2] - vp.m[2][2],
-                vp.m[3][3] - vp.m[2][3]);
+                vp.m[0][3] - vp.m[0][2],
+                vp.m[1][3] - vp.m[1][2],
+                vp.m[2][3] - vp.m[2][2],
+                vp.m[3][3] - vp.m[3][2]);
 
             // Normalize all planes
             for (int i = 0; i < 6; i++)

@@ -50,8 +50,7 @@ namespace Kiwi
         m_StructuredSRV.reset();
         m_BatchUB.reset();
         m_PrimitiveData.clear();
-        m_Batches.clear();
-        m_SingleDraws.clear();
+        m_MeshBatches.clear();
         m_RenderListToGPUScene.clear();
         m_NumPrimitives = 0;
         m_Device = nullptr;
@@ -65,8 +64,10 @@ namespace Kiwi
 
         m_NumPrimitives = 0;
         m_RenderListToGPUScene.resize(renderList.size());
+        std::vector<uint32_t> primitiveRenderIndices;
+        primitiveRenderIndices.reserve(renderList.size());
 
-        // Fill primitive data in RenderList order (matches sort order for batching)
+        // Fill primitive data in RenderList order. BuildBatches reorders it to match MeshBatchKey.
         for (uint32_t ri = 0; ri < (uint32_t)renderList.size() && m_NumPrimitives < MAX_GPU_SCENE_PRIMITIVES; ++ri)
         {
             const auto& item = renderList[ri];
@@ -83,13 +84,14 @@ namespace Kiwi
             Mat4 worldMatrix = meshComp->GetWorldMatrix();
             memcpy(oub.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
 
-            // Material properties
-            Material* mat = materialLibrary.GetMaterial(meshComp->MaterialName);
-            Vec4 color = mat ? mat->GetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f }) : Vec4{ 0.8f, 0.8f, 0.8f, 1.0f };
-            float roughness = mat ? mat->GetFloat("_Roughness", 0.5f) : 0.5f;
-            float metallic  = mat ? mat->GetFloat("_Metallic",  0.0f) : 0.0f;
-            std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
-            std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
+            // Material instance parameters, falling back to the parent asset.
+            Material* mat = materialLibrary.GetMaterial(meshComp->Material.Parent);
+            const MaterialInstance& instance = meshComp->Material;
+            Vec4 color = instance.GetColor(mat, "_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
+            float roughness = instance.GetFloat(mat, "_Roughness", 0.5f);
+            float metallic  = instance.GetFloat(mat, "_Metallic",  0.0f);
+            std::string baseColorTex = instance.GetTexture(mat, "_BaseColorTex");
+            std::string normalTex    = instance.GetTexture(mat, "_NormalTex");
 
             oub.ObjectColor[0] = color.x;
             oub.ObjectColor[1] = color.y;
@@ -104,97 +106,125 @@ namespace Kiwi
             oub.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
             oub.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
             oub.ShadingModelID  = mat ? (float)(uint8_t)mat->ShadingModel : 1.0f;
+            Vec4 emissive = instance.GetColor(mat, "_Emissive", { 0, 0, 0, 1 });
+            oub.ObjectPadding[0] = emissive.x;
+            oub.ObjectPadding[1] = emissive.y;
+            oub.ObjectPadding[2] = emissive.z;
 
+            primitiveRenderIndices.push_back(ri);
             ++m_NumPrimitives;
         }
 
-        // Build batches from the sorted RenderList
-        BuildBatches(renderList);
+        BuildBatches(renderList, primitiveRenderIndices, materialLibrary);
 
         m_Dirty = true;
     }
 
-    void GPUScene::BuildBatches(const std::vector<RenderItem>& renderList)
+    MeshBatchKey MakeMeshBatchKey(const RenderItem& item, MaterialLibrary& materialLibrary)
     {
-        m_Batches.clear();
-        m_SingleDraws.clear();
-
-        if (renderList.empty())
+        MeshBatchKey key;
+        key.SortOrder = item.SortOrder;
+        key.MeshId = item.MeshID;
+        key.CullMode = item.MeshComp ? item.MeshComp->CullMode : ECullMode::Back;
+        key.Topology = EPrimitiveTopology::TriangleList;
+        key.bCastShadow = true;
+        key.bUseForMaterial = true;
+        key.bUseForDepthPass = true;
+        if (item.MeshComp)
         {
+            key.Material = materialLibrary.GetMaterial(item.MeshComp->Material.Parent);
+            key.BaseColorTex = item.MeshComp->Material.GetTexture(key.Material, "_BaseColorTex");
+            key.NormalTex = item.MeshComp->Material.GetTexture(key.Material, "_NormalTex");
+            key.MetallicRoughnessTex = item.MeshComp->Material.GetTexture(key.Material, "_MetallicRoughnessTex");
+        }
+        return key;
+    }
+
+    void GPUScene::BuildBatches(const std::vector<RenderItem>& renderList,
+                                const std::vector<uint32_t>& primitiveRenderIndices,
+                                MaterialLibrary& materialLibrary)
+    {
+        m_MeshBatches.clear();
+        if (primitiveRenderIndices.empty())
             return;
-        }
-        
-        // RenderList is already sorted by MeshID → MaterialName.
-        // Walk through and group consecutive items with same MeshID + MaterialName.
-        struct TempGroup
+
+        struct Entry
         {
-            uint32_t MeshID;
-            std::string MaterialName;
-            ECullMode CullMode = ECullMode::Back;
-            std::vector<uint32_t> Indices; // RenderList indices
+            MeshBatchKey Key;
+            uint32_t RenderListIndex = 0;
         };
 
-        auto cullOf = [](const RenderItem& item)
+        std::vector<Entry> entries;
+        entries.reserve(primitiveRenderIndices.size());
+        for (uint32_t renderListIndex : primitiveRenderIndices)
         {
-            return item.MeshComp ? item.MeshComp->CullMode : ECullMode::Back;
-        };
-
-        std::vector<TempGroup> groups;
-        TempGroup current;
-        current.MeshID = renderList[0].MeshID;
-        current.MaterialName = renderList[0].MaterialName ? renderList[0].MaterialName : "";
-        current.CullMode = cullOf(renderList[0]);
-        current.Indices.push_back(0);
-
-        for (uint32_t i = 1; i < (uint32_t)renderList.size(); ++i)
-        {
-            uint32_t meshID = renderList[i].MeshID;
-            const char* matName = renderList[i].MaterialName ? renderList[i].MaterialName : "";
-            ECullMode cull = cullOf(renderList[i]);
-
-            if (meshID == current.MeshID && current.MaterialName == matName && current.CullMode == cull)
-            {
-                current.Indices.push_back(i);
-            }
-            else
-            {
-                groups.push_back(std::move(current));
-                current.MeshID = meshID;
-                current.MaterialName = matName;
-                current.CullMode = cull;
-                current.Indices.clear();
-                current.Indices.push_back(i);
-            }
+            Entry entry;
+            entry.Key = MakeMeshBatchKey(renderList[renderListIndex], materialLibrary);
+            entry.RenderListIndex = renderListIndex;
+            entries.push_back(entry);
         }
-        groups.push_back(std::move(current));
 
-        // Classify: count >= 2 → InstanceBatch, count == 1 → SingleDrawItem
-        for (auto& group : groups)
+        std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
         {
-            if (group.Indices.size() >= 2)
+            return a.Key.Compare(b.Key) < 0;
+        });
+
+        // Instancing reads a contiguous range, so pack primitive data into key order.
+        std::vector<PrimitiveUniformBuffer> packed(entries.size());
+        for (uint32_t newIndex = 0; newIndex < (uint32_t)entries.size(); ++newIndex)
+        {
+            uint32_t renderListIndex = entries[newIndex].RenderListIndex;
+            uint32_t oldIndex = m_RenderListToGPUScene[renderListIndex];
+            packed[newIndex] = m_PrimitiveData[oldIndex];
+            m_RenderListToGPUScene[renderListIndex] = newIndex;
+        }
+        std::copy(packed.begin(), packed.end(), m_PrimitiveData.begin());
+        m_NumPrimitives = (uint32_t)entries.size();
+
+        uint32_t instancedCount = 0;
+        uint32_t runStart = 0;
+        while (runStart < entries.size())
+        {
+            uint32_t runEnd = runStart + 1;
+            while (runEnd < entries.size() && entries[runEnd].Key.Compare(entries[runStart].Key) == 0)
+                ++runEnd;
+
+            const Entry& first = entries[runStart];
+            const RenderItem& firstItem = renderList[first.RenderListIndex];
+            MeshBatch batch;
+            batch.MeshId = first.Key.MeshId;
+            batch.MaterialName = firstItem.MeshComp ? firstItem.MeshComp->Material.Parent : "";
+            batch.SurfaceShader = (first.Key.Material && !first.Key.Material->SurfaceShader.empty())
+                ? first.Key.Material->SurfaceShader
+                : "DefaultSurface";
+            batch.CullMode = first.Key.CullMode;
+            batch.Type = first.Key.Topology;
+            batch.bCastShadow = first.Key.bCastShadow;
+            batch.bUseForMaterial = first.Key.bUseForMaterial;
+            batch.bUseForDepthPass = first.Key.bUseForDepthPass;
+            batch.bCanBeInstanced = (runEnd - runStart) >= 2;
+            batch.InstanceOffset = runStart;
+            if (batch.bCanBeInstanced)
+                ++instancedCount;
+
+            batch.Elements.reserve(runEnd - runStart);
+            for (uint32_t index = runStart; index < runEnd; ++index)
             {
-                InstanceBatch batch;
-                batch.MeshID = group.MeshID;
-                batch.MaterialName = group.MaterialName;
-                // GPU Scene indices for this batch are contiguous (because renderList is sorted
-                // and we fill GPU Scene in renderList order)
-                batch.StartIndex = m_RenderListToGPUScene[group.Indices[0]];
-                batch.InstanceCount = (uint32_t)group.Indices.size();
-                batch.RenderListIndices = std::move(group.Indices);
-                m_Batches.push_back(std::move(batch));
+                const RenderItem& item = renderList[entries[index].RenderListIndex];
+                MeshBatchElement element;
+                element.PrimitiveId = index;
+                element.ObjectIndex = item.ObjectIndex;
+                element.Mesh = item.MeshComp;
+                element.NumInstances = 1;
+                batch.Elements.push_back(element);
             }
-            else
-            {
-                SingleDrawItem item;
-                item.RenderListIndex = group.Indices[0];
-                item.GPUSceneIndex = m_RenderListToGPUScene[group.Indices[0]];
-                m_SingleDraws.push_back(item);
-            }
+            m_MeshBatches.push_back(std::move(batch));
+            runStart = runEnd;
         }
 
         std::cout << "[Kiwi] GPUScene: " << m_NumPrimitives << " primitives → "
-                  << m_Batches.size() << " instanced batches + "
-                  << m_SingleDraws.size() << " single draws" << std::endl;
+                  << m_MeshBatches.size() << " mesh batches ("
+                  << instancedCount << " instanced)" << std::endl;
     }
 
     void GPUScene::UploadToGPU()
@@ -219,7 +249,17 @@ namespace Kiwi
         }
 
         // Create/recreate StructuredBuffer for instanced draw path
-        if (!m_Batches.empty() && m_Device)
+        bool hasInstancedBatch = false;
+        for (const MeshBatch& batch : m_MeshBatches)
+        {
+            if (batch.bCanBeInstanced)
+            {
+                hasInstancedBatch = true;
+                break;
+            }
+        }
+
+        if (hasInstancedBatch && m_Device)
         {
             uint32_t requiredSize = m_NumPrimitives * sizeof(PrimitiveUniformBuffer);
 

@@ -54,6 +54,7 @@ set(GLAD_SOURCES ${GLAD_DIR}/src/gl.c)
 set(SOURCES
     src/main.cpp
     src/Core/Renderer.cpp
+    src/Core/RayTracing.cpp
     src/Core/Application.cpp
     src/Core/EngineConfig.cpp
     src/Core/Platform.cpp
@@ -61,8 +62,10 @@ set(SOURCES
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
     src/Scene/GPUScene.cpp
+    src/Scene/MeshPassProcessor.cpp
     src/Scene/TextureManager.cpp
     src/Scene/Material.cpp
+    src/Scene/MaterialShaderCache.cpp
     src/Scene/stb_image_impl.cpp
     src/Debug/RenderDocIntegration.cpp
 )
@@ -113,11 +116,14 @@ set(HEADERS
     include/Scene/SceneObject.h
     include/Scene/Scene.h
     include/Scene/GPUScene.h
+    include/Scene/MeshBatch.h
+    include/Scene/MeshPassProcessor.h
     include/Scene/PostProcessComponent.h
     include/Scene/PostProcessShaders.h
     include/Scene/PostProcessShaderLibrary.h
     include/Scene/TextureManager.h
     include/Scene/Material.h
+    include/Scene/MaterialShaderCache.h
     include/Debug/RenderDocIntegration.h
 )
 
@@ -227,6 +233,13 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         ${CMAKE_SOURCE_DIR}/MetalShaders
         ${KIWI_ASSET_DIR}/MetalShaders
     COMMENT "Copying MetalShaders/ to output directory"
+)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/SurfaceShaders
+        ${KIWI_ASSET_DIR}/SurfaceShaders
+    COMMENT "Copying SurfaceShaders/ to output directory"
 )
 
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

@@ -10,8 +10,10 @@
 #include "Scene/MetalShaders.h"
 #include "Core/Platform.h"
 #include "Scene/ShaderLibrary.h"
+#include "Scene/MaterialShaderCache.h"
 #include "Scene/Scene.h"
 #include "Scene/GPUScene.h"
+#include "Scene/MeshPassProcessor.h"
 #include "Scene/SceneObject.h"
 #include "Scene/MeshComponent.h"
 #include "Scene/CameraComponent.h"
@@ -960,11 +962,28 @@ protected:
         }
     }
 
-    void RenderDeferred(RHICommandContext* ctx, RHITextureView* sceneRTV,
-                        const Viewport& vp, const ScissorRect& sr);
-    void RenderForward(RHICommandContext* ctx, RHITextureView* sceneRTV,
-                       const Viewport& vp, const ScissorRect& sr);
+    void PrepareMeshBatches();
+    void SubmitMeshDrawCommands(RHICommandContext* ctx, const std::vector<MeshDrawCommand>& commands);
+    void RenderShadowPass(RHICommandContext* ctx, const std::vector<MeshDrawCommand>& commands);
+    void RenderDeferred(RHICommandContext* ctx,
+                        RHITextureView* sceneRTV,
+                        const Viewport& vp,
+                        const ScissorRect& sr);
+    
+    void RenderForward(RHICommandContext* ctx,
+                       RHITextureView* sceneRTV,
+                       const Viewport& vp,
+                       const ScissorRect& sr);
+    void RenderRayTracing(RHICommandContext* ctx,
+                          RHITextureView* sceneRTV,
+                          const Viewport& vp,
+                          const ScissorRect& sr);
 
+    void RenderBasePass(RHICommandContext* ctx);
+    
+    void RenderLightingPass(RHICommandContext* ctx);
+    
+    
     void OnRender() override
     {
         InitView();
@@ -1013,16 +1032,15 @@ protected:
 
         m_PassTimer.BeginFrame();
 
-        // ---- Choose rendering path based on ViewMode ----
-        // GL/Vulkan stay on the forward path. Metal uses the deferred shaders in MetalShaders/.
-        bool isGLBackend = (GetCurrentRHIType() == RHI_API_TYPE::OPENGL);
-        bool isVulkanBackend = (GetCurrentRHIType() == RHI_API_TYPE::VULKAN);
-        bool useDeferredPipeline = !isGLBackend && !isVulkanBackend &&
-                                    (m_ViewMode == EViewMode::Lit ||
-                                     m_ViewMode == EViewMode::Unlit ||
-                                     m_ViewMode == EViewMode::BaseColor ||
-                                     m_ViewMode == EViewMode::Roughness ||
-                                     m_ViewMode == EViewMode::Metallic);
+        // GL/Vulkan have no G-Buffer. Buffer visualization needs the deferred path.
+        bool canDeferred = IsDeferredRHI(GetCurrentRHIType());
+        if (!canDeferred)
+            m_RenderPath = ERenderPath::Forward;
+        if (m_RenderPath == ERenderPath::Forward && IsBufferVisualization(m_ViewMode))
+            m_ViewMode = EViewMode::Lit;
+        bool useDeferredPipeline = canDeferred && m_RenderPath == ERenderPath::Deferred;
+        if (m_RenderPath == ERenderPath::RayTracing && IsBufferVisualization(m_ViewMode))
+            m_ViewMode = EViewMode::Lit;
 
         // Determine the final scene render target (before post-process)
         // If post-process active, render to offscreen RT[0]; else to backbuffer
@@ -1038,7 +1056,9 @@ protected:
             sceneRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
         }
 
-        if (useDeferredPipeline && m_GBufferPSO && m_GBufferRT[0])
+        if (m_RenderPath == ERenderPath::RayTracing)
+            RenderRayTracing(ctx, sceneRTV, vp, sr);
+        else if (useDeferredPipeline && m_GBufferPSO && m_GBufferRT[0])
             RenderDeferred(ctx, sceneRTV, vp, sr);
         else
             RenderForward(ctx, sceneRTV, vp, sr);
@@ -1108,6 +1128,19 @@ protected:
     // Scene Mesh Drawing
     // ============================================================
 
+    void InitMaterialShaders(RHIDevice* device)
+    {
+        namespace fs = std::filesystem;
+        std::string surfaceDir = m_ShaderDir + "/../SurfaceShaders";
+        if (!fs::exists(surfaceDir))
+            surfaceDir = m_ShaderDir + "/../../../SurfaceShaders";
+        auto api = device->GetApiType();
+        std::string templateDir = (api == RHI_API_TYPE::METAL)
+            ? ForwardShaderDirectory(api, m_ShaderDir) + "/MaterialTemplates"
+            : m_ShaderDir + "/MaterialTemplates";
+        m_MaterialShaders.Initialize(device, m_InputLayout.get(), surfaceDir, templateDir);
+    }
+
     // Fill the camera ViewUniformBuffer. Binding is a separate SetConstantBuffer(0).
     void UploadViewUB()
     {
@@ -1137,47 +1170,13 @@ protected:
         if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
     }
 
-    // Helper: Fill and upload per-object PrimitiveUniformBuffer
-    void UploadObjectUB(RHICommandContext* ctx, MeshComponent* meshComp)
-    {
-        Mat4 worldMatrix = meshComp->GetWorldMatrix();
-
-        // Fetch material for PBR properties
-        Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
-        Vec4  color     = mat ? mat->GetColor("_Color",     { 0.8f, 0.8f, 0.8f, 1.0f }) : Vec4{ 0.8f, 0.8f, 0.8f, 1.0f };
-        float roughness = mat ? mat->GetFloat("_Roughness", 0.5f) : 0.5f;
-        float metallic  = mat ? mat->GetFloat("_Metallic",  0.0f) : 0.0f;
-        std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
-        std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
-
-        PrimitiveUniformBuffer oub = {};
-        memcpy(oub.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-        oub.ObjectColor[0] = color.x;
-        oub.ObjectColor[1] = color.y;
-        oub.ObjectColor[2] = color.z;
-        oub.ObjectColor[3] = color.w;
-        oub.Selected = 0.0f;
-        oub.Roughness = roughness;
-        oub.Metallic  = metallic;
-        oub.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
-        oub.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
-        oub.ShadingModelID  = mat ? (float)(uint8_t)mat->ShadingModel : 1.0f;
-        oub.ObjectPadding[0] = oub.ObjectPadding[1] = oub.ObjectPadding[2] = 0.0f;
-
-        void* mapped = m_ObjectUB->Map();
-        if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
-        ctx->SetConstantBuffer(1, m_ObjectUB.get());
-    }
-
-    // GPU Scene upload now handled by GPUScene class (m_GPUScene)
-
     // Helper: Bind material textures for the current object
     void BindMaterialTextures(RHICommandContext* ctx, MeshComponent* meshComp)
     {
-        Material* mat = m_MaterialLibrary.GetMaterial(meshComp->MaterialName);
-        std::string baseColorTex = mat ? mat->GetTexture("_BaseColorTex") : "";
-        std::string normalTex    = mat ? mat->GetTexture("_NormalTex")    : "";
-        std::string mrTex        = mat ? mat->GetTexture("_MetallicRoughnessTex") : "";
+        Material* mat = m_MaterialLibrary.GetMaterial(meshComp->Material.Parent);
+        std::string baseColorTex = meshComp->Material.GetTexture(mat, "_BaseColorTex");
+        std::string normalTex    = meshComp->Material.GetTexture(mat, "_NormalTex");
+        std::string mrTex        = meshComp->Material.GetTexture(mat, "_MetallicRoughnessTex");
 
         // t4 = BaseColor texture
         if (!baseColorTex.empty())
@@ -1482,26 +1481,19 @@ protected:
             item.DistToCamera = distSq;
             // DC merge keys: group by mesh type + material
             item.MeshID = (uint32_t)meshComp->PrimitiveType;
-            item.MaterialName = meshComp->MaterialName.c_str();
+            item.MaterialName = meshComp->Material.Parent.c_str();
+            item.BatchKey = MakeMeshBatchKey(item, m_MaterialLibrary);
             m_RenderList.push_back(item);
         }
 
-        // Sort for DC merging: SortOrder → MeshID → Material → front-to-back
-        // Groups same mesh + same material together to minimize state changes.
-        // Front-to-back within group exploits Early-Z for deferred pass.
+        // Same key as mesh batching. Distance only orders draws inside one batch.
         std::sort(m_RenderList.begin(), m_RenderList.end(),
             [](const RenderItem& a, const RenderItem& b)
             {
-                if (a.SortOrder != b.SortOrder)
-                    return a.SortOrder > b.SortOrder;
-                if (a.MeshID != b.MeshID)
-                    return a.MeshID < b.MeshID;           // Group same mesh type
-                int matCmp = strcmp(a.MaterialName, b.MaterialName);
-                if (matCmp != 0)
-                    return matCmp < 0;                     // Group same material
-                if (a.MeshComp->CullMode != b.MeshComp->CullMode)
-                    return (int)a.MeshComp->CullMode < (int)b.MeshComp->CullMode;
-                return a.DistToCamera < b.DistToCamera;   // Front-to-back (Early-Z)
+                int keyCmp = a.BatchKey.Compare(b.BatchKey);
+                if (keyCmp != 0)
+                    return keyCmp < 0;
+                return a.DistToCamera < b.DistToCamera;
             });
     }
 
@@ -1614,6 +1606,7 @@ protected:
 
         // Release all shaders via ShaderLibrary
         m_ShaderLibrary.ReleaseAll();
+        m_MaterialShaders.ReleaseAll();
         m_TextureManager.ReleaseAll();
 
         // Release post-process resources
@@ -1728,6 +1721,7 @@ private:
 
         std::string shaderDir = ForwardShaderDirectory(api, m_ShaderDir);
         m_ShaderLibrary.Initialize(shaderDir, device, m_InputLayout.get());
+        InitMaterialShaders(device);
 
         // Initialize post-process resources
         InitPostProcessResources(device);
@@ -1883,15 +1877,17 @@ private:
         // GBufferC: Emissive (RGB) + Specular (A) — R8G8B8A8_UNORM
         // World position is reconstructed from hardware depth + inverse ViewProj matrix.
         EFormat gbufferFormats[GBUFFER_COUNT] = {
-            EFormat::R8G8B8A8_UNORM,       // GBufferA: Normal + Metallic + ShadingModelID
-            EFormat::R8G8B8A8_UNORM,       // GBufferB: BaseColor + Roughness
-            EFormat::R8G8B8A8_UNORM,       // GBufferC: Emissive + Specular
+            EFormat::R8G8B8A8_UNORM, // A: normal
+            EFormat::R8G8B8A8_UNORM, // B: metallic, specular, roughness, shading model
+            EFormat::R8G8B8A8_UNORM, // C: base color + AO
+            EFormat::R8G8B8A8_UNORM, // D: emissive
         };
 
         const char* gbufferNames[GBUFFER_COUNT] = {
-            "GBufferA_NormalMetallic",
-            "GBufferB_BaseColorRoughness",
-            "GBufferC_EmissiveSpecular",
+            "GBufferA_Normal",
+            "GBufferB_Material",
+            "GBufferC_BaseColor",
+            "GBufferD_Emissive",
         };
 
         for (int i = 0; i < GBUFFER_COUNT; i++)
@@ -1999,7 +1995,6 @@ private:
     void CompileDeferredShaders(RHIDevice* device)
     {
         auto api = device->GetApiType();
-        const bool compileInstanced = api != RHI_API_TYPE::METAL;
 
         // --- Compile G-Buffer Pass shader ---
         std::string gbufferPath = DeferredShaderPath(api, "GBufferPass");
@@ -2015,10 +2010,11 @@ private:
             {
                 // Create MRT PSO for G-Buffer (3 render targets, UE5-inspired layout)
                 GraphicsPipelineStateInitializer gbufferPSODesc;
-                gbufferPSODesc.RenderTargetsEnabled = 3;
+                gbufferPSODesc.RenderTargetsEnabled = 4;
                 gbufferPSODesc.RenderTargetFormats[0] = EFormat::R8G8B8A8_UNORM; // GBufferA: Normal + Metallic
                 gbufferPSODesc.RenderTargetFormats[1] = EFormat::R8G8B8A8_UNORM; // GBufferB: BaseColor + Roughness
-                gbufferPSODesc.RenderTargetFormats[2] = EFormat::R8G8B8A8_UNORM; // GBufferC: Emissive + Specular
+                gbufferPSODesc.RenderTargetFormats[2] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.RenderTargetFormats[3] = EFormat::R8G8B8A8_UNORM;
                 gbufferPSODesc.DepthStencilTargetFormat = EFormat::D32_FLOAT;
                 gbufferPSODesc.DepthEnabled = true;
                 gbufferPSODesc.DepthWrite = true;
@@ -2029,17 +2025,14 @@ private:
                 gbufferPSODesc.VertexDeclaration = m_InputLayout.get();
                 m_GBufferPSO = device->CreateGraphicsPipelineState(gbufferPSODesc);
 
-                if (compileInstanced)
+                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                m_GBufferVS_Instanced = device->CompileShader(
+                    EShaderType::Vertex, gbufferSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                if (m_GBufferVS_Instanced)
                 {
-                    ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-                    m_GBufferVS_Instanced = device->CompileShader(
-                        EShaderType::Vertex, gbufferSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-                    if (m_GBufferVS_Instanced)
-                    {
-                        GraphicsPipelineStateInitializer gbufferInstanced = gbufferPSODesc;
-                        gbufferInstanced.VertexShader = m_GBufferVS_Instanced.get();
-                        m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(gbufferInstanced);
-                    }
+                    GraphicsPipelineStateInitializer gbufferInstanced = gbufferPSODesc;
+                    gbufferInstanced.VertexShader = m_GBufferVS_Instanced.get();
+                    m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(gbufferInstanced);
                 }
 
                 std::cout << "[Kiwi] G-Buffer shader compiled successfully" << std::endl;
@@ -2211,17 +2204,14 @@ private:
                 }
                 m_ShadowPassPSO = device->CreateGraphicsPipelineState(shadowPSODesc);
 
-                if (device->GetApiType() != RHI_API_TYPE::METAL)
+                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                m_ShadowPassVS_Instanced = device->CompileShader(
+                    EShaderType::Vertex, shadowSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                if (m_ShadowPassVS_Instanced)
                 {
-                    ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-                    m_ShadowPassVS_Instanced = device->CompileShader(
-                        EShaderType::Vertex, shadowSrc.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-                    if (m_ShadowPassVS_Instanced)
-                    {
-                        GraphicsPipelineStateInitializer shadowInstanced = shadowPSODesc;
-                        shadowInstanced.VertexShader = m_ShadowPassVS_Instanced.get();
-                        m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
-                    }
+                    GraphicsPipelineStateInitializer shadowInstanced = shadowPSODesc;
+                    shadowInstanced.VertexShader = m_ShadowPassVS_Instanced.get();
+                    m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
                 }
 
                 std::cout << "[Kiwi] Shadow Pass shader compiled successfully" << std::endl;
@@ -2296,6 +2286,7 @@ private:
 
         // 1. Release all existing shader resources
         m_ShaderLibrary.ReleaseAll();
+        m_MaterialShaders.ReleaseAll();
         ReleaseDeferredShaders();
         ReleasePostProcessResources();
         ReleaseShadowShaderOnly(); // Only release shader/PSO, keep CB/sampler/atlas
@@ -2304,6 +2295,7 @@ private:
         auto api = device->GetApiType();
         std::string shaderDir = ForwardShaderDirectory(api, m_ShaderDir);
         m_ShaderLibrary.Initialize(shaderDir, device, m_InputLayout.get());
+        InitMaterialShaders(device);
 
         // 3. Recompile post-process shaders
         InitPostProcessResources(device);
@@ -2398,10 +2390,11 @@ private:
             if (m_GBufferVS && m_GBufferPS)
             {
                 GraphicsPipelineStateInitializer gbufferPSODesc;
-                gbufferPSODesc.RenderTargetsEnabled = 3;
+                gbufferPSODesc.RenderTargetsEnabled = 4;
                 gbufferPSODesc.RenderTargetFormats[0] = EFormat::R8G8B8A8_UNORM;
                 gbufferPSODesc.RenderTargetFormats[1] = EFormat::R8G8B8A8_UNORM;
                 gbufferPSODesc.RenderTargetFormats[2] = EFormat::R8G8B8A8_UNORM;
+                gbufferPSODesc.RenderTargetFormats[3] = EFormat::R8G8B8A8_UNORM;
                 gbufferPSODesc.DepthStencilTargetFormat = EFormat::D32_FLOAT;
                 gbufferPSODesc.DepthEnabled = true;
                 gbufferPSODesc.DepthWrite = true;
@@ -2412,17 +2405,14 @@ private:
                 gbufferPSODesc.VertexDeclaration = m_InputLayout.get();
                 m_GBufferPSO = device->CreateGraphicsPipelineState(gbufferPSODesc);
 
-                if (device->GetApiType() != RHI_API_TYPE::METAL)
+                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+                m_GBufferVS_Instanced = device->CompileShader(
+                    EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+                if (m_GBufferVS_Instanced)
                 {
-                    ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-                    m_GBufferVS_Instanced = device->CompileShader(
-                        EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-                    if (m_GBufferVS_Instanced)
-                    {
-                        GraphicsPipelineStateInitializer gbufferInstanced = gbufferPSODesc;
-                        gbufferInstanced.VertexShader = m_GBufferVS_Instanced.get();
-                        m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(gbufferInstanced);
-                    }
+                    GraphicsPipelineStateInitializer gbufferInstanced = gbufferPSODesc;
+                    gbufferInstanced.VertexShader = m_GBufferVS_Instanced.get();
+                    m_GBufferPSO_Instanced = device->CreateGraphicsPipelineState(gbufferInstanced);
                 }
             }
             timestamps[shaderName] = fs::last_write_time(filePath);
@@ -2554,17 +2544,14 @@ private:
             }
             m_ShadowPassPSO = device->CreateGraphicsPipelineState(shadowPSODesc);
 
-            if (device->GetApiType() != RHI_API_TYPE::METAL)
+            ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
+            m_ShadowPassVS_Instanced = device->CompileShader(
+                EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
+            if (m_ShadowPassVS_Instanced)
             {
-                ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-                m_ShadowPassVS_Instanced = device->CompileShader(
-                    EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-                if (m_ShadowPassVS_Instanced)
-                {
-                    GraphicsPipelineStateInitializer shadowInstanced = shadowPSODesc;
-                    shadowInstanced.VertexShader = m_ShadowPassVS_Instanced.get();
-                    m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
-                }
+                GraphicsPipelineStateInitializer shadowInstanced = shadowPSODesc;
+                shadowInstanced.VertexShader = m_ShadowPassVS_Instanced.get();
+                m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
             }
         }
 
@@ -2784,195 +2771,6 @@ private:
             memcpy(mapped, &m_ShadowUBData, sizeof(m_ShadowUBData));
             m_ShadowCB->Unmap();
         }
-    }
-
-    // ============================================================
-    // Shadow Pass: Render scene depth from light perspective
-    // ============================================================
-
-    void RenderShadowPass(RHICommandContext* ctx)
-    {
-        if (!m_ShadowPassPSO || !m_ShadowPassVS || m_ShadowUBData.NumCascades <= 0)
-            return;
-
-        ctx->BeginEvent("Shadow Pass");
-        m_PassTimer.Begin("Shadow Pass");
-
-        int numCascades = m_ShadowUBData.NumCascades;
-
-        // Set shadow pass pipeline state
-        ctx->SetPipelineState(m_ShadowPassPSO.get());
-        ctx->SetVertexShader(m_ShadowPassVS.get());
-        ctx->SetPixelShader(nullptr);
-        ctx->SetInputLayout(m_InputLayout.get());
-        ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
-
-        // Transition atlas to depth write
-        ctx->ResourceBarrier(m_ShadowAtlasRT.get(),
-            RESOURCE_STATE_COMMON, RESOURCE_STATE_DEPTH_WRITE);
-
-        // Set render target: depth only (no color RT), bind the whole atlas DSV
-        RHITextureView* nullRTV = nullptr;
-        ctx->SetRenderTargets(&nullRTV, 0, m_ShadowAtlasDSV.get());
-
-        // Clear entire atlas depth
-        uint32_t atlasSize = m_ShadowCascadeSize * 2;
-        Viewport fullVP;
-        fullVP.TopLeftX = 0; fullVP.TopLeftY = 0;
-        fullVP.Width = (float)atlasSize; fullVP.Height = (float)atlasSize;
-        fullVP.MinDepth = 0.0f; fullVP.MaxDepth = 1.0f;
-        ctx->SetViewports(&fullVP, 1);
-        ScissorRect fullSR;
-        fullSR.Left = 0; fullSR.Top = 0;
-        fullSR.Right = (int32_t)atlasSize; fullSR.Bottom = (int32_t)atlasSize;
-        ctx->SetScissorRects(&fullSR, 1);
-
-        ClearDepthStencilValue depthClear = { 1.0f, 0 };
-        ctx->ClearDepthStencilView(m_ShadowAtlasDSV.get(), depthClear, 0x01);
-
-        // Atlas 2x2 layout: [0]=top-left, [1]=top-right, [2]=bottom-left, [3]=bottom-right
-        static const int cascadeOffsetX[4] = { 0, 1, 0, 1 };
-        static const int cascadeOffsetY[4] = { 0, 0, 1, 1 };
-
-        for (int cascade = 0; cascade < numCascades; cascade++)
-        {
-            // Set viewport/scissor for this cascade's region in the atlas
-            float ox = (float)(cascadeOffsetX[cascade] * m_ShadowCascadeSize);
-            float oy = (float)(cascadeOffsetY[cascade] * m_ShadowCascadeSize);
-
-            Viewport shadowVP;
-            shadowVP.TopLeftX = ox; shadowVP.TopLeftY = oy;
-            shadowVP.Width = (float)m_ShadowCascadeSize;
-            shadowVP.Height = (float)m_ShadowCascadeSize;
-            shadowVP.MinDepth = 0.0f; shadowVP.MaxDepth = 1.0f;
-            ctx->SetViewports(&shadowVP, 1);
-
-            ScissorRect shadowSR;
-            shadowSR.Left = (int32_t)ox; shadowSR.Top = (int32_t)oy;
-            shadowSR.Right = (int32_t)(ox + m_ShadowCascadeSize);
-            shadowSR.Bottom = (int32_t)(oy + m_ShadowCascadeSize);
-            ctx->SetScissorRects(&shadowSR, 1);
-
-            // Shadow VS reads the light view and projection from b0.
-            // This buffer is separate from the camera ViewUB uploaded after InitView.
-            ViewUniformBuffer lightViewUB = {};
-            memcpy(lightViewUB.ViewMatrix, m_LightViewMatrices[cascade].m, sizeof(float) * 16);
-            memcpy(lightViewUB.ProjectionMatrix, m_LightProjMatrices[cascade].m, sizeof(float) * 16);
-            if (m_ShadowViewUB)
-            {
-                void* mapped = m_ShadowViewUB->Map();
-                if (mapped)
-                {
-                    memcpy(mapped, &lightViewUB, sizeof(lightViewUB));
-                    m_ShadowViewUB->Unmap();
-                }
-                ctx->SetConstantBuffer(0, m_ShadowViewUB.get());
-            }
-
-            // Draw all mesh objects -- instanced batches first, then single draws
-            auto& batches = m_GPUScene.GetInstanceBatches();
-            auto& singles = m_GPUScene.GetSingleDrawItems();
-
-            // Instanced batches: true DrawIndexedInstanced via StructuredBuffer
-            if (!batches.empty() && m_ShadowPassVS_Instanced && m_ShadowPassPSO_Instanced)
-            {
-                ctx->SetPipelineState(m_ShadowPassPSO_Instanced.get());
-                ctx->SetVertexShader(m_ShadowPassVS_Instanced.get());
-                ctx->SetPixelShader(nullptr);
-                ctx->SetInputLayout(m_InputLayout.get());
-                m_GPUScene.BindForInstancing(ctx);
-
-                for (const auto& batch : batches)
-                {
-                    SharedMeshEntry mesh = {};
-                    for (auto& entry : m_SharedMeshPool)
-                        if (entry.MeshID == batch.MeshID) { mesh = entry; break; }
-                    if (!mesh.VertexBuffer || mesh.IndexCount == 0) continue;
-
-                    if (!batch.RenderListIndices.empty())
-                    {
-                        auto* meshComp = m_RenderList[batch.RenderListIndices[0]].MeshComp;
-                        if (meshComp)
-                            ctx->SetCullMode(meshComp->CullMode);
-                    }
-
-                    VertexBufferView vbView;
-                    vbView.BufferLocation = 0;
-                    vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
-                    vbView.StrideInBytes = sizeof(Vertex);
-                    RHIBuffer* vbPtr = mesh.VertexBuffer;
-                    ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
-
-                    IndexBufferView ibView;
-                    ibView.BufferLocation = 0;
-                    ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
-                    ibView.Format = EFormat::R32_UINT;
-                    ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
-
-                    m_GPUScene.SetBatchStartIndex(ctx, batch.StartIndex);
-                    ctx->DrawIndexedInstanced(mesh.IndexCount, batch.InstanceCount, 0, 0, 0);
-                }
-
-                // Restore non-instanced PSO for single draws
-                ctx->SetPipelineState(m_ShadowPassPSO.get());
-                ctx->SetVertexShader(m_ShadowPassVS.get());
-                ctx->SetPixelShader(nullptr);
-            }
-
-            // Single draws (CB offset). Without an instanced shadow shader, draw each
-            // batched object on its own so those meshes still cast shadows.
-            RHIBuffer* lastShadowVB = nullptr;
-            auto drawShadowSingle = [&](uint32_t renderListIndex, uint32_t gpuSceneIndex)
-            {
-                const auto& renderItem = m_RenderList[renderListIndex];
-                auto* meshComp = renderItem.MeshComp;
-                if (!meshComp) return;
-
-                SharedMeshEntry mesh = GetSharedMesh(renderItem.ObjectIndex);
-                if (!mesh.VertexBuffer || mesh.IndexCount == 0) return;
-
-                ctx->SetCullMode(meshComp->CullMode);
-                m_GPUScene.BindPrimitive(ctx, gpuSceneIndex);
-
-                if (mesh.VertexBuffer != lastShadowVB)
-                {
-                    VertexBufferView vbView;
-                    vbView.BufferLocation = 0;
-                    vbView.SizeInBytes = mesh.VertexCount * sizeof(Vertex);
-                    vbView.StrideInBytes = sizeof(Vertex);
-                    RHIBuffer* vbPtr = mesh.VertexBuffer;
-                    ctx->SetVertexBuffers(0, &vbPtr, &vbView, 1);
-
-                    IndexBufferView ibView;
-                    ibView.BufferLocation = 0;
-                    ibView.SizeInBytes = mesh.IndexCount * sizeof(uint32_t);
-                    ibView.Format = EFormat::R32_UINT;
-                    ctx->SetIndexBuffer(mesh.IndexBuffer, &ibView);
-                    lastShadowVB = mesh.VertexBuffer;
-                }
-
-                ctx->DrawIndexed(mesh.IndexCount, 0, 0);
-            };
-
-            if (!m_ShadowPassVS_Instanced || !m_ShadowPassPSO_Instanced)
-            {
-                for (const auto& batch : batches)
-                {
-                    for (uint32_t renderListIndex : batch.RenderListIndices)
-                        drawShadowSingle(renderListIndex, m_GPUScene.GetGPUSceneIndex(renderListIndex));
-                }
-            }
-
-            for (const auto& single : singles)
-                drawShadowSingle(single.RenderListIndex, single.GPUSceneIndex);
-        }
-
-        // Transition atlas to shader resource for lighting pass
-        ctx->ResourceBarrier(m_ShadowAtlasRT.get(),
-            RESOURCE_STATE_DEPTH_WRITE, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-        m_PassTimer.End();
-        ctx->EndEvent();
     }
 
     // ============================================================
@@ -3523,7 +3321,9 @@ private:
 
         if (ImGui::Begin("##ViewModeBtn", nullptr, flags))
         {
-            bool isLit = (m_ViewMode == EViewMode::Lit);
+            bool canDeferred = IsDeferredRHI(GetCurrentRHIType());
+            ERenderPath defaultPath = canDeferred ? ERenderPath::Deferred : ERenderPath::Forward;
+            bool isLit = (m_ViewMode == EViewMode::Lit && m_RenderPath == defaultPath);
 
             // Non-Lit modes get a yellow/orange tint to indicate active override
             ImVec4 btnColor    = isLit ? ImVec4(0.25f, 0.32f, 0.38f, 0.95f)
@@ -3550,6 +3350,7 @@ private:
             if (ImGui::IsItemHovered())
             {
                 ImGui::BeginTooltip();
+                ImGui::Text("Pipeline: %s", GetRenderPathName(m_RenderPath));
                 ImGui::Text("View Mode: %s", GetViewModeName(m_ViewMode));
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Click to change view mode");
                 ImGui::EndTooltip();
@@ -3572,6 +3373,25 @@ private:
             // Popup menu for view mode selection
             if (ImGui::BeginPopup("ViewModePopup"))
             {
+                ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Pipeline");
+                ImGui::Separator();
+
+                if (ImGui::MenuItem("Deferred", nullptr, m_RenderPath == ERenderPath::Deferred, canDeferred))
+                    m_RenderPath = ERenderPath::Deferred;
+                if (ImGui::MenuItem("Forward", nullptr, m_RenderPath == ERenderPath::Forward))
+                {
+                    m_RenderPath = ERenderPath::Forward;
+                    if (IsBufferVisualization(m_ViewMode))
+                        m_ViewMode = EViewMode::Lit;
+                }
+                if (ImGui::MenuItem("Ray Tracing", nullptr, m_RenderPath == ERenderPath::RayTracing))
+                {
+                    m_RenderPath = ERenderPath::RayTracing;
+                    if (IsBufferVisualization(m_ViewMode))
+                        m_ViewMode = EViewMode::Lit;
+                }
+
+                ImGui::Separator();
                 ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "View Mode");
                 ImGui::Separator();
 
@@ -3581,11 +3401,12 @@ private:
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Buffer Visualization");
 
-                if (ImGui::MenuItem("BaseColor", nullptr, m_ViewMode == EViewMode::BaseColor))
+                bool bufferVis = canDeferred && m_RenderPath == ERenderPath::Deferred;
+                if (ImGui::MenuItem("BaseColor", nullptr, m_ViewMode == EViewMode::BaseColor, bufferVis))
                     m_ViewMode = EViewMode::BaseColor;
-                if (ImGui::MenuItem("Roughness", nullptr, m_ViewMode == EViewMode::Roughness))
+                if (ImGui::MenuItem("Roughness", nullptr, m_ViewMode == EViewMode::Roughness, bufferVis))
                     m_ViewMode = EViewMode::Roughness;
-                if (ImGui::MenuItem("Metallic", nullptr, m_ViewMode == EViewMode::Metallic))
+                if (ImGui::MenuItem("Metallic", nullptr, m_ViewMode == EViewMode::Metallic, bufferVis))
                     m_ViewMode = EViewMode::Metallic;
 
                 ImGui::Separator();
@@ -4144,6 +3965,11 @@ private:
                 DrawPlacerTab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Rendering"))
+            {
+                DrawRenderingTab();
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
 
@@ -4506,10 +4332,11 @@ private:
                 ImGui::SameLine();
                 if (ImGui::Selectable(fname.c_str(), false, 0, ImVec2(280, 0)))
                 {
-                    // Set the property
-                    Material* mat = m_MaterialLibrary.GetMaterial(m_TexturePickerMatTarget);
-                    if (mat)
+                    if (m_TexturePickerMesh)
+                        m_TexturePickerMesh->Material.SetTexture(m_TexturePickerPropKey, fname);
+                    else if (Material* mat = m_MaterialLibrary.GetMaterial(m_TexturePickerMatTarget))
                         mat->SetTexture(m_TexturePickerPropKey, fname);
+                    m_TexturePickerMesh = nullptr;
                     m_TexturePickerMatTarget.clear();
                     m_TexturePickerPropKey.clear();
                     selected = true;
@@ -4528,16 +4355,12 @@ private:
         ImGui::EndPopup();
     }
 
-    // Helper: draw a single texture slot row
-    // Returns true if value changed.
-    // slotLabel: display label (e.g. "Base Color")
-    // propKey: material property key (e.g. "_BaseColorTex")
-    // uniqueId: unique string for ImGui ID disambiguation
-    // mat: material to read/write
+    // Helper: draw a single texture slot row.
+    // mesh: when set, the slot edits that primitive's material instance.
     void DrawTextureSlotRow(const std::string& slotLabel, const std::string& propKey,
-                            const std::string& uniqueId, Material* mat)
+                            const std::string& uniqueId, Material* mat, MeshComponent* mesh = nullptr)
     {
-        std::string texPath = mat->GetTexture(propKey);
+        std::string texPath = mesh ? mesh->Material.GetTexture(mat, propKey) : mat->GetTexture(propKey);
 
         // Slot label column (fixed width)
         ImGui::Text("%-11s", slotLabel.c_str());
@@ -4567,7 +4390,10 @@ private:
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("KIWI_TEXTURE"))
             {
                 const char* droppedFile = static_cast<const char*>(payload->Data);
-                mat->SetTexture(propKey, droppedFile);
+                if (mesh)
+                    mesh->Material.SetTexture(propKey, droppedFile);
+                else if (mat)
+                    mat->SetTexture(propKey, droppedFile);
             }
             ImGui::EndDragDropTarget();
         }
@@ -4576,7 +4402,8 @@ private:
         ImGui::SameLine();
         if (ImGui::Button(("Pick##pick_" + uniqueId).c_str(), ImVec2(pickBtnW, 0)))
         {
-            m_TexturePickerMatTarget = mat->Name;
+            m_TexturePickerMesh = mesh;
+            m_TexturePickerMatTarget = mat ? mat->Name : "";
             m_TexturePickerPropKey   = propKey;
             m_ShowTexturePicker      = true;
         }
@@ -4586,7 +4413,12 @@ private:
         {
             ImGui::SameLine();
             if (ImGui::SmallButton(("X##clr_" + uniqueId).c_str()))
-                mat->SetTexture(propKey, "");
+            {
+                if (mesh)
+                    mesh->Material.SetTexture(propKey, "");
+                else if (mat)
+                    mat->SetTexture(propKey, "");
+            }
         }
     }
 
@@ -4818,50 +4650,45 @@ private:
 
                     // ---- Material Selection ----
                     ImGui::Separator();
-                    ImGui::Text("Material");
+                    ImGui::Text("Material Instance");
                     {
                         auto matNames = m_MaterialLibrary.GetMaterialNames();
-                        if (ImGui::BeginCombo(("##MaterialCombo" + std::to_string(ci)).c_str(), mesh.MaterialName.c_str()))
+                        if (ImGui::BeginCombo(("##MaterialCombo" + std::to_string(ci)).c_str(), mesh.Material.Parent.c_str()))
                         {
                             for (const auto& name : matNames)
                             {
-                                bool isSelected = (name == mesh.MaterialName);
+                                bool isSelected = (name == mesh.Material.Parent);
                                 if (ImGui::Selectable(name.c_str(), isSelected))
-                                    mesh.MaterialName = name;
+                                    mesh.Material.SetParent(name);
                                 if (isSelected) ImGui::SetItemDefaultFocus();
                             }
                             ImGui::EndCombo();
                         }
                     }
 
-                    // ---- Material Properties (direct, no double-write) ----
-                    Material* activeMat = m_MaterialLibrary.GetMaterial(mesh.MaterialName);
+                    Material* activeMat = m_MaterialLibrary.GetMaterial(mesh.Material.Parent);
                     if (activeMat)
                     {
                         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Shading Model: %s", ShadingModelToString(activeMat->ShadingModel));
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Surface: %s", activeMat->SurfaceShader.c_str());
 
                         ImGui::Separator();
-                        ImGui::Text("Properties");
+                        ImGui::Text("Instance Parameters");
 
-                        // Color
                         {
-                            Vec4 color = activeMat->GetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
+                            Vec4 color = mesh.Material.GetColor(activeMat, "_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
                             if (ImGui::ColorEdit4(("Color##mat" + std::to_string(ci)).c_str(), &color.x))
-                                activeMat->SetColor("_Color", color);
+                                mesh.Material.SetColor("_Color", color);
                         }
-
-                        // Roughness
                         {
-                            float roughness = activeMat->GetFloat("_Roughness", 0.5f);
+                            float roughness = mesh.Material.GetFloat(activeMat, "_Roughness", 0.5f);
                             if (ImGui::SliderFloat(("Roughness##mat" + std::to_string(ci)).c_str(), &roughness, 0.0f, 1.0f))
-                                activeMat->SetFloat("_Roughness", roughness);
+                                mesh.Material.SetFloat("_Roughness", roughness);
                         }
-
-                        // Metallic
                         {
-                            float metallic = activeMat->GetFloat("_Metallic", 0.0f);
+                            float metallic = mesh.Material.GetFloat(activeMat, "_Metallic", 0.0f);
                             if (ImGui::SliderFloat(("Metallic##mat" + std::to_string(ci)).c_str(), &metallic, 0.0f, 1.0f))
-                                activeMat->SetFloat("_Metallic", metallic);
+                                mesh.Material.SetFloat("_Metallic", metallic);
                         }
 
                         ImGui::Spacing();
@@ -4869,22 +4696,19 @@ private:
                         ImGui::Spacing();
 
                         DrawTextureSlotRow("Base Color", "_BaseColorTex",
-                                           "ins_bc_" + std::to_string(ci), activeMat);
+                                           "ins_bc_" + std::to_string(ci), activeMat, &mesh);
                         DrawTextureSlotRow("Normal Map", "_NormalTex",
-                                           "ins_nm_" + std::to_string(ci), activeMat);
+                                           "ins_nm_" + std::to_string(ci), activeMat, &mesh);
                         DrawTextureSlotRow("MR Map",     "_MetallicRoughnessTex",
-                                           "ins_mr_" + std::to_string(ci), activeMat);
+                                           "ins_mr_" + std::to_string(ci), activeMat, &mesh);
 
-                        // Save material button
                         ImGui::Spacing();
-                        if (ImGui::SmallButton(("Save Material##" + std::to_string(ci)).c_str()))
-                            m_MaterialLibrary.SaveMaterial(mesh.MaterialName);
-
-                        // Quick open material editor
+                        if (ImGui::SmallButton(("Reset Overrides##" + std::to_string(ci)).c_str()))
+                            mesh.Material.ClearOverrides();
                         ImGui::SameLine();
-                        if (ImGui::SmallButton(("Edit...##" + std::to_string(ci)).c_str()))
+                        if (ImGui::SmallButton(("Edit Material...##" + std::to_string(ci)).c_str()))
                         {
-                            m_MaterialEditorTarget = mesh.MaterialName;
+                            m_MaterialEditorTarget = mesh.Material.Parent;
                             m_ShowMaterialEditor   = true;
                         }
                     }
@@ -5227,6 +5051,29 @@ private:
                 ppComp->AddMaterial(m_PostProcessLibrary.GetShaderNames()[0]);
             }
             m_Scene.SelectObject(obj->ID);
+        }
+    }
+
+    void DrawRenderingTab()
+    {
+        ImGui::Text("Render Path: %s", GetRenderPathName(m_RenderPath));
+        ImGui::Separator();
+
+        if (m_RenderPath == ERenderPath::RayTracing)
+        {
+            ImGui::SliderInt("RPP", &m_RayTracingSamplesPerPixel, 1, 16);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Rays per pixel. Samples are jittered inside the pixel and averaged.");
+
+            ImGui::SliderFloat("Resolution", &m_RayTracingResolutionPercent, 10.0f, 100.0f, "%.0f%%");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Percentage of the framebuffer resolution used for tracing.");
+
+            ImGui::Text("Trace size: %u x %u", m_RayTraceWidth, m_RayTraceHeight);
+        }
+        else
+        {
+            ImGui::TextDisabled("No settings for this path.");
         }
     }
 
@@ -5781,6 +5628,7 @@ private:
 
     // Shader Library — manages all loaded shaders
     ShaderLibrary m_ShaderLibrary;
+    MaterialShaderCache m_MaterialShaders;
     TextureManager m_TextureManager;
     MaterialLibrary m_MaterialLibrary;
     std::string m_ShaderDir; // Path to Shaders/ folder
@@ -5801,7 +5649,8 @@ private:
     // Texture picker popup state (used by material editor and inspector)
     bool m_ShowTexturePicker = false;
     std::string m_TexturePickerPropKey;   // Which material property to set (e.g. "_BaseColorTex")
-    std::string m_TexturePickerMatTarget; // Which material to write to
+    std::string m_TexturePickerMatTarget; // Parent material asset, used by the material editor
+    MeshComponent* m_TexturePickerMesh = nullptr; // Primitive instance to write, when set
 
     // Save Scene dialog state
     bool m_ShowSaveDialog = false;
@@ -5905,7 +5754,7 @@ private:
     float m_TotalTime = 0.0f;
 
     // ---- Deferred Rendering: G-Buffer Resources ----
-    static constexpr int GBUFFER_COUNT = 3; // Position, Normal(+Roughness), Albedo(+Metallic)
+    static constexpr int GBUFFER_COUNT = 4; // A normal, B material, C base color, D emissive
     std::unique_ptr<RHITexture>     m_GBufferRT[GBUFFER_COUNT];
     std::unique_ptr<RHITextureView> m_GBufferRTV[GBUFFER_COUNT];
     std::unique_ptr<RHITextureView> m_GBufferSRV[GBUFFER_COUNT];
@@ -5940,7 +5789,17 @@ private:
     std::unique_ptr<RHIPipelineState> m_BufferVisPSO;
 
     // ---- View Mode ----
+    ERenderPath m_RenderPath = ERenderPath::Deferred;
     EViewMode m_ViewMode = EViewMode::Lit;
+    int m_RayTracingSamplesPerPixel = 1;
+    float m_RayTracingResolutionPercent = 50.0f;
+    uint32_t m_RayTraceWidth = 0;
+    uint32_t m_RayTraceHeight = 0;
+    std::unique_ptr<RHIShader> m_RayTraceBlitVS;
+    std::unique_ptr<RHIShader> m_RayTraceBlitPS;
+    std::unique_ptr<RHIPipelineState> m_RayTraceBlitPSO;
+    std::unique_ptr<RHITexture> m_RayTraceColor;
+    std::unique_ptr<RHITextureView> m_RayTraceColorSRV;
 
     // ---- Cascaded Shadow Map (CSM) Resources — Single Atlas ----
     static constexpr int MAX_SHADOW_CASCADES = 4;

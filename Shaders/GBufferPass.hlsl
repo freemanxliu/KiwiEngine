@@ -55,6 +55,7 @@ struct GBufferOutput
     float4 GBufferA : SV_TARGET0;  // Normal Oct(RG) + Normal.z(B) + PerObjectData(A)
     float4 GBufferB : SV_TARGET1;  // Metallic(R) + Specular(G) + Roughness(B) + ShadingModelID(A)
     float4 GBufferC : SV_TARGET2;  // BaseColor(RGB) + AO(A)
+    float4 GBufferD : SV_TARGET3;  // Emissive(RGB)
 };
 
 // ---- Octahedron Normal Encoding (UE5 EncodeNormal) ----
@@ -173,6 +174,7 @@ GBufferOutput PSMain(VSOutput input)
         output.GBufferA = float4(encodedNormal, 0.0);
         output.GBufferB = float4(0, 0, 0, EncodeShadingModelId(0));
         output.GBufferC = float4(baseColor, 1.0);
+        output.GBufferD = float4(baseColor, 0.0);
         return output;
     }
 
@@ -204,6 +206,7 @@ GBufferOutput PSMain(VSOutput input)
 
     float ao = 1.0;
     output.GBufferC = float4(baseColor, ao);
+    output.GBufferD = float4(g_ObjectPadding, 0.0);
 
     return output;
 }

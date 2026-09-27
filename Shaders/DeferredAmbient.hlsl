@@ -10,6 +10,7 @@
 Texture2D g_GBufferA    : register(t0);
 Texture2D g_GBufferB    : register(t1);
 Texture2D g_GBufferC    : register(t2);
+Texture2D g_Emissive    : register(t9);
 Texture2D g_DepthBuffer : register(t7);
 
 SamplerState g_Sampler : register(s0);
@@ -60,9 +61,9 @@ float4 PSMain(VSOutput input) : SV_TARGET
 
     float3 baseColor = gC.rgb;
 
-    // Unlit: output BaseColor directly as emissive (no ambient/lighting)
+    float3 emissive = g_Emissive.Sample(g_Sampler, input.TexCoord).rgb;
     if (shadingModelId == 0)
-        return float4(baseColor, 1.0);
+        return float4(emissive, 1.0);
 
     float3 N = DecodeNormal(gA);
     float metallic = gB.r, specular = gB.g, roughness = max(gB.b, 0.04);
@@ -82,5 +83,5 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float3 ambDiffuse = diffuseColor * ambient * 0.3 * ao;
     float3 ambSpecular = EnvBRDFApprox(specularColor, roughness, NoV) * ambient * 0.15;
 
-    return float4(ambDiffuse + ambSpecular, 1.0);
+    return float4(ambDiffuse + ambSpecular + emissive, 1.0);
 }

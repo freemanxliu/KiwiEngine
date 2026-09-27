@@ -1,5 +1,6 @@
-// G-Buffer geometry pass. Three color attachments, matching GBufferPass.hlsl.
-// Single draws read PrimitiveUniformBuffer at buffer(1). Instancing stays on DX.
+// G-Buffer geometry pass. Four color attachments, matching GBufferPass.hlsl.
+// Single draws read PrimitiveUniformBuffer at buffer(1).
+// USE_GPU_SCENE_INSTANCING reads the same 256-byte records from buffer(8).
 
 //!VERTEX
 struct VSIn
@@ -25,6 +26,7 @@ struct VSOut
     float hasBase;
     float hasNormal;
     float shadingModel;
+    float3 emissive;
 };
 
 struct KiwiView
@@ -41,12 +43,12 @@ struct KiwiObject
     float4x4 world;
     float4 color;
     float4 material0; // selected, roughness, metallic, hasBase
-    float4 material1; // hasNormal, shadingModel
+    float4 material1; // hasNormal, shadingModel, emissive.r, emissive.g
+    float4 material2; // emissive.b
+    float4 pad[8];    // PrimitiveUniformBuffer is 256 bytes
 };
 
-vertex VSOut VSMain(VSIn in [[stage_in]],
-                    constant KiwiView& viewUB [[buffer(0)]],
-                    constant KiwiObject& objUB [[buffer(1)]])
+static VSOut TransformVertex(VSIn in, constant KiwiView& viewUB, KiwiObject objUB)
 {
     float4x4 world = objUB.world;
     float3x3 world3 = float3x3(world[0].xyz, world[1].xyz, world[2].xyz);
@@ -80,8 +82,27 @@ vertex VSOut VSMain(VSIn in [[stage_in]],
     out.hasBase = objUB.material0.w;
     out.hasNormal = objUB.material1.x;
     out.shadingModel = objUB.material1.y;
+    out.emissive = float3(objUB.material1.z, objUB.material1.w, objUB.material2.x);
     return out;
 }
+
+#ifdef USE_GPU_SCENE_INSTANCING
+vertex VSOut VSMain(VSIn in [[stage_in]],
+                    constant KiwiView& viewUB [[buffer(0)]],
+                    const device KiwiObject* scene [[buffer(8)]],
+                    constant uint4& batch [[buffer(4)]],
+                    uint instanceId [[instance_id]])
+{
+    return TransformVertex(in, viewUB, scene[batch.x + instanceId]);
+}
+#else
+vertex VSOut VSMain(VSIn in [[stage_in]],
+                    constant KiwiView& viewUB [[buffer(0)]],
+                    constant KiwiObject& objUB [[buffer(1)]])
+{
+    return TransformVertex(in, viewUB, objUB);
+}
+#endif
 
 //!FRAGMENT
 struct FSIn
@@ -98,6 +119,7 @@ struct FSIn
     float hasBase;
     float hasNormal;
     float shadingModel;
+    float3 emissive;
 };
 
 struct GBufferOut
@@ -105,6 +127,7 @@ struct GBufferOut
     float4 a [[color(0)]];
     float4 b [[color(1)]];
     float4 c [[color(2)]];
+    float4 d [[color(3)]];
 };
 
 float3 EncodeNormal(float3 n)
@@ -142,6 +165,7 @@ fragment GBufferOut PSMain(FSIn in [[stage_in]],
         out.a = float4(EncodeNormal(float3(0.0, 0.0, 1.0)), 0.0);
         out.b = float4(0.0, 0.0, 0.0, EncodeShadingModelId(0));
         out.c = float4(baseColor, 1.0);
+        out.d = float4(baseColor, 0.0);
         return out;
     }
 
@@ -160,5 +184,6 @@ fragment GBufferOut PSMain(FSIn in [[stage_in]],
     out.a = float4(EncodeNormal(normal), 0.0);
     out.b = float4(in.metallic, 0.5, in.roughness, EncodeShadingModelId(shadingModelId));
     out.c = float4(baseColor, 1.0);
+    out.d = float4(in.emissive, 0.0);
     return out;
 }

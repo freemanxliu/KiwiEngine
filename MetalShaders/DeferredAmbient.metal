@@ -66,6 +66,7 @@ fragment float4 PSMain(FSIn in [[stage_in]],
                        texture2d<float> gbufferA [[texture(0)]],
                        texture2d<float> gbufferB [[texture(1)]],
                        texture2d<float> gbufferC [[texture(2)]],
+                       texture2d<float> emissiveTex [[texture(9)]],
                        depth2d<float> depthTex [[texture(7)]],
                        sampler linearSampler [[sampler(0)]])
 {
@@ -78,8 +79,9 @@ fragment float4 PSMain(FSIn in [[stage_in]],
     float4 gC = gbufferC.sample(linearSampler, in.uv);
     uint shadingModelId = (uint(gB.a * 255.0 + 0.5)) >> 4;
     float3 baseColor = gC.rgb;
+    float3 emissive = emissiveTex.sample(linearSampler, in.uv).rgb;
     if (shadingModelId == 0)
-        return float4(baseColor, 1.0);
+        return float4(emissive, 1.0);
 
     float3 N = DecodeNormal(gA);
     float metallic = gB.r;
@@ -95,5 +97,5 @@ fragment float4 PSMain(FSIn in [[stage_in]],
     float3 ambient = mix(ground, sky, N.y * 0.5 + 0.5);
     float3 ambDiffuse = diffuseColor * ambient * 0.3 * ao;
     float3 ambSpecular = EnvBRDFApprox(specularColor, roughness, NoV) * ambient * 0.15;
-    return float4(ambDiffuse + ambSpecular, 1.0);
+    return float4(ambDiffuse + ambSpecular + emissive, 1.0);
 }

@@ -7,6 +7,8 @@
 namespace Kiwi
 {
 
+    static void WriteMaterialOverrides(std::ofstream& file, const MaterialInstance& inst);
+
     Scene::Scene()
     {
     }
@@ -285,7 +287,9 @@ namespace Kiwi
                 {
                     const auto& mesh = static_cast<const MeshComponent&>(comp);
                     file << ",\n";
-                    file << "          \"materialName\": \"" << EscapeString(mesh.MaterialName) << "\",\n";
+                    file << "          \"materialName\": \"" << EscapeString(mesh.Material.Parent) << "\"";
+                    WriteMaterialOverrides(file, mesh.Material);
+                    file << ",\n";
                     file << "          \"primitiveType\": \"" << PrimitiveTypeToString(mesh.PrimitiveType) << "\",\n";
                     file << "          \"sortOrder\": " << mesh.SortOrder << ",\n";
                     const char* cullName = "Back";
@@ -441,6 +445,61 @@ namespace Kiwi
         return false;
     }
 
+    static bool HasJsonKey(const std::string& line, const std::string& key)
+    {
+        return line.find("\"" + key + "\"") != std::string::npos;
+    }
+
+    static void WriteMaterialOverrides(std::ofstream& file, const MaterialInstance& inst)
+    {
+        auto writeColor = [&](const char* prop, const char* key)
+        {
+            if (!inst.HasOverride(prop))
+                return;
+            Vec4 c = inst.GetColor(nullptr, prop);
+            file << ",\n          \"" << key << "\": [" << c.x << ", " << c.y << ", " << c.z << ", " << c.w << "]";
+        };
+        auto writeFloat = [&](const char* prop, const char* key)
+        {
+            if (!inst.HasOverride(prop))
+                return;
+            file << ",\n          \"" << key << "\": " << inst.GetFloat(nullptr, prop);
+        };
+        auto writeTex = [&](const char* prop, const char* key)
+        {
+            if (!inst.HasOverride(prop))
+                return;
+            file << ",\n          \"" << key << "\": \"" << EscapeString(inst.GetTexture(nullptr, prop)) << "\"";
+        };
+        writeColor("_Color", "ovColor");
+        writeColor("_Emissive", "ovEmissive");
+        writeFloat("_Roughness", "ovRoughness");
+        writeFloat("_Metallic", "ovMetallic");
+        writeTex("_BaseColorTex", "ovBaseColorTex");
+        writeTex("_NormalTex", "ovNormalTex");
+        writeTex("_MetallicRoughnessTex", "ovMRTex");
+    }
+
+    static void ReadMaterialOverrides(const std::string& json, MaterialInstance& inst)
+    {
+        Vec4 color;
+        if (ReadVec4(json, "ovColor", color))
+            inst.SetColor("_Color", color);
+        if (ReadVec4(json, "ovEmissive", color))
+            inst.SetColor("_Emissive", color);
+        float value = 0.0f;
+        if (ReadFloat(json, "ovRoughness", value))
+            inst.SetFloat("_Roughness", value);
+        if (ReadFloat(json, "ovMetallic", value))
+            inst.SetFloat("_Metallic", value);
+        if (HasJsonKey(json, "ovBaseColorTex"))
+            inst.SetTexture("_BaseColorTex", ReadQuotedString(json, "ovBaseColorTex"));
+        if (HasJsonKey(json, "ovNormalTex"))
+            inst.SetTexture("_NormalTex", ReadQuotedString(json, "ovNormalTex"));
+        if (HasJsonKey(json, "ovMRTex"))
+            inst.SetTexture("_MetallicRoughnessTex", ReadQuotedString(json, "ovMRTex"));
+    }
+
     static bool ReadBool(const std::string& line, const std::string& key, bool& out)
     {
         size_t pos = line.find("\"" + key + "\"");
@@ -567,7 +626,8 @@ namespace Kiwi
 
                         // Material reference
                         std::string matName = ReadQuotedString(compStr, "materialName");
-                        if (!matName.empty()) mesh->MaterialName = matName;
+                        if (!matName.empty()) mesh->Material.Parent = matName;
+                        ReadMaterialOverrides(compStr, mesh->Material);
 
                         int32_t sortOrder = 0;
                         if (ReadInt(compStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;
@@ -713,7 +773,8 @@ namespace Kiwi
                     if (ReadVec3(objStr, "scale", scale))  mesh->Scale = scale;
 
                     std::string matName = ReadQuotedString(objStr, "materialName");
-                    if (!matName.empty()) mesh->MaterialName = matName;
+                    if (!matName.empty()) mesh->Material.Parent = matName;
+                    ReadMaterialOverrides(objStr, mesh->Material);
 
                     int32_t sortOrder = 0;
                     if (ReadInt(objStr, "sortOrder", sortOrder)) mesh->SortOrder = sortOrder;

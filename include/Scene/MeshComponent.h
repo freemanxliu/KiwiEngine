@@ -3,6 +3,7 @@
 #include "Scene/Component.h"
 #include "Scene/Mesh.h"
 #include "Scene/PrimitiveType.h"
+#include "Scene/Material.h"
 #include "RHI/RHITypes.h"
 #include <string>
 
@@ -30,8 +31,8 @@ namespace Kiwi
         // Primitive type used to generate this mesh (for serialization)
         EPrimitiveType PrimitiveType = EPrimitiveType::Cube;
 
-        // Material reference
-        std::string MaterialName = "Default-Material";          // Material asset name (references a .mat file)
+        // Instance of a material asset. Parent is the .mat in the library.
+        MaterialInstance Material;
         int32_t     SortOrder  = 0;                             // Render sort priority (higher = rendered first)
         ECullMode   CullMode   = ECullMode::Back;
     };
