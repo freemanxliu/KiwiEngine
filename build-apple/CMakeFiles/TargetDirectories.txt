@@ -1,3 +1,0 @@
-/Users/liuyuxuan/Documents/KiwiEngine/build-apple/CMakeFiles/KiwiEngine.dir
-/Users/liuyuxuan/Documents/KiwiEngine/build-apple/CMakeFiles/edit_cache.dir
-/Users/liuyuxuan/Documents/KiwiEngine/build-apple/CMakeFiles/rebuild_cache.dir
