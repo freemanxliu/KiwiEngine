@@ -53,6 +53,7 @@ set(GLAD_SOURCES ${GLAD_DIR}/src/gl.c)
 # ---- 源文件 ----
 set(SOURCES
     src/main.cpp
+    src/Renderer.cpp
     src/Core/Application.cpp
     src/Core/EngineConfig.cpp
     src/Core/Platform.cpp
