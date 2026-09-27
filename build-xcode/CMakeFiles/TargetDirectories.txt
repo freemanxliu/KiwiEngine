@@ -1,0 +1,3 @@
+/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir
+/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/ALL_BUILD.dir
+/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/ZERO_CHECK.dir

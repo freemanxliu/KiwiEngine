@@ -178,4 +178,10 @@ namespace Kiwi
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
+    void Window::SetTitle(const std::string& title)
+    {
+        std::wstring wide(title.begin(), title.end());
+        SetWindowTextW(m_Hwnd, wide.c_str());
+    }
+
 } // namespace Kiwi

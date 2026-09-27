@@ -1,13 +1,15 @@
 #include "Debug/RenderDocIntegration.h"
 #include "Core/EngineConfig.h"
 
-// Include the official RenderDoc In-App API header
-#include "renderdoc_app.h"
-
-#include <Windows.h>
 #include <iostream>
 #include <string>
 
+#if defined(_WIN32)
+#include "renderdoc_app.h"
+#include <Windows.h>
+#endif
+
+#if defined(_WIN32)
 namespace Kiwi
 {
 
@@ -208,4 +210,32 @@ namespace Kiwi
         return ret == 1;
     }
 
-} // namespace Kiwi
+}
+#else
+namespace Kiwi
+{
+
+    RenderDocIntegration& RenderDocIntegration::Get()
+    {
+        static RenderDocIntegration instance;
+        return instance;
+    }
+
+    bool RenderDocIntegration::Initialize()
+    {
+        std::cout << "[RenderDoc] Not available on this platform." << std::endl;
+        return false;
+    }
+
+    void RenderDocIntegration::Shutdown() {}
+    void RenderDocIntegration::TriggerCapture() {}
+    void RenderDocIntegration::StartFrameCapture(void*, void*) {}
+    void RenderDocIntegration::EndFrameCapture(void*, void*) {}
+    bool RenderDocIntegration::IsFrameCapturing() const { return false; }
+    uint32_t RenderDocIntegration::GetNumCaptures() const { return 0; }
+    void RenderDocIntegration::LaunchReplayUI() {}
+    void RenderDocIntegration::SetCaptureFilePathTemplate(const char*) {}
+    bool RenderDocIntegration::GetCapturePath(uint32_t, char*, uint32_t) const { return false; }
+
+}
+#endif

@@ -13,6 +13,7 @@ namespace Kiwi
         DX12,
         OPENGL,
         VULKAN,
+        METAL,
     };
 
     // 图形资源格式

@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
+if(APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version")
+    # Keep SDKROOT as the generic "macosx" name. An absolute MacOSX14.2.sdk path
+    # makes Xcode fail Info.plist generation with "SDK lookup failed: macosx14.2".
+    set(CMAKE_OSX_SYSROOT "macosx" CACHE PATH "macOS SDK" FORCE)
+endif()
 project(KiwiEngine VERSION 0.2.0 LANGUAGES C CXX)
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 17)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,12 +30,21 @@ set(IMGUI_SOURCES
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_dx12.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
 )
+if(WIN32)
+    list(APPEND IMGUI_SOURCES
+        ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_dx12.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+    )
+elseif(APPLE)
+    list(APPEND IMGUI_SOURCES
+        ${IMGUI_DIR}/backends/imgui_impl_metal.mm
+        ${IMGUI_DIR}/backends/imgui_impl_osx.mm
+    )
+endif()
 
 # ---- glad (OpenGL loader) ----
 set(GLAD_DIR ${CMAKE_SOURCE_DIR}/third_party/glad)
@@ -33,14 +53,10 @@ set(GLAD_SOURCES ${GLAD_DIR}/src/gl.c)
 # ---- 源文件 ----
 set(SOURCES
     src/main.cpp
-    src/Core/Window.cpp
     src/Core/Application.cpp
     src/Core/EngineConfig.cpp
-    src/RHI/DX11Device.cpp
-    src/RHI/DX12Device.cpp
-    src/RHI/DXCCompiler.cpp
-    src/RHI/GLDevice.cpp
-    src/RHI/VulkanDevice.cpp
+    src/Core/Platform.cpp
+    src/RHI/RHIFactory.cpp
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
     src/Scene/GPUScene.cpp
@@ -49,6 +65,21 @@ set(SOURCES
     src/Scene/stb_image_impl.cpp
     src/Debug/RenderDocIntegration.cpp
 )
+if(WIN32)
+    list(APPEND SOURCES
+        src/Core/Window.cpp
+        src/RHI/DX11Device.cpp
+        src/RHI/DX12Device.cpp
+        src/RHI/DXCCompiler.cpp
+        src/RHI/GLDevice.cpp
+        src/RHI/VulkanDevice.cpp
+    )
+elseif(APPLE)
+    list(APPEND SOURCES
+        src/Core/Window.mm
+        src/RHI/MetalDevice.mm
+    )
+endif()
 
 set(HEADERS
     include/RHI/RHI.h
@@ -88,7 +119,27 @@ set(HEADERS
 )
 
 # ---- 可执行文件 ----
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES} ${GLAD_SOURCES})
+if(WIN32)
+    add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES} ${GLAD_SOURCES})
+else()
+    add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES})
+endif()
+if(APPLE)
+    set_source_files_properties(src/Core/Window.mm src/RHI/MetalDevice.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    # A command-line tool on the macOS 14 SDK cannot be signed with an empty identity.
+    # Build a normal app bundle and ad-hoc sign it, so Xcode does not require a certificate.
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "KiwiEngine"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.kiwi.engine"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.kiwi.engine"
+        XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Manual"
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+        "XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY[sdk=macosx*]" "-"
+        XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${CMAKE_SOURCE_DIR}/apple/KiwiEngine.entitlements"
+        XCODE_ATTRIBUTE_ENABLE_HARDENED_RUNTIME "NO"
+    )
+endif()
 
 # ---- Include 路径 ----
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -101,26 +152,36 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${IMGUI_DIR}/backends
 )
 
-# ---- 链接 Windows 系统库 ----
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    d3d11
-    d3d12
-    d3dcompiler
-    dxgi
-    dxguid
-    dwmapi
-    opengl32
-    ${CMAKE_SOURCE_DIR}/third_party/vulkan-headers/lib/vulkan-1.lib
-)
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        d3d11
+        d3d12
+        d3dcompiler
+        dxgi
+        dxguid
+        dwmapi
+        opengl32
+        ${CMAKE_SOURCE_DIR}/third_party/vulkan-headers/lib/vulkan-1.lib
+    )
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        UNICODE
+        _UNICODE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+elseif(APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        "-framework Metal"
+        "-framework QuartzCore"
+        "-framework Cocoa"
+        "-framework AppKit"
+        "-framework GameController"
+    )
+endif()
 
-# ---- 定义 ----
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Debug>:_DEBUG;KIWI_DEBUG>
     $<$<CONFIG:Release>:NDEBUG;KIWI_RELEASE>
-    UNICODE
-    _UNICODE
-    NOMINMAX
-    WIN32_LEAN_AND_MEAN
 )
 
 # ---- 编译选项 ----
@@ -134,11 +195,19 @@ if(MSVC)
     )
 endif()
 
+# App bundles must keep loose assets in Contents/Resources. Files placed next to
+# the executable are treated as nested code and fail the code signature.
+if(APPLE)
+    set(KIWI_ASSET_DIR "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}>/Resources")
+else()
+    set(KIWI_ASSET_DIR "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
+endif()
+
 # ---- Copy Shaders/ folder to output directory ----
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/Shaders
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Shaders
+        ${KIWI_ASSET_DIR}/Shaders
     COMMENT "Copying Shaders/ to output directory"
 )
 
@@ -146,15 +215,29 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/GLShaders
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/GLShaders
+        ${KIWI_ASSET_DIR}/GLShaders
     COMMENT "Copying GLShaders/ to output directory"
+)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/MetalShaders
+        ${KIWI_ASSET_DIR}/MetalShaders
+    COMMENT "Copying MetalShaders/ to output directory"
+)
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/MetalPostProcess
+        ${KIWI_ASSET_DIR}/MetalPostProcess
+    COMMENT "Copying MetalPostProcess/ to output directory"
 )
 
 # ---- Copy PostProcessShaders/ folder to output directory ----
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/PostProcessShaders
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/PostProcessShaders
+        ${KIWI_ASSET_DIR}/PostProcessShaders
     COMMENT "Copying PostProcessShaders/ to output directory"
 )
 
@@ -162,7 +245,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/Config
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Config
+        ${KIWI_ASSET_DIR}/Config
     COMMENT "Copying Config/ to output directory"
 )
 
@@ -170,17 +253,18 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/Textures
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Textures
+        ${KIWI_ASSET_DIR}/Textures
     COMMENT "Copying Textures/ to output directory"
 )
 
-# ---- Copy Materials/ folder to output directory ----
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/Materials
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/Materials
-    COMMENT "Copying Materials/ to output directory"
-)
+if(EXISTS ${CMAKE_SOURCE_DIR}/Materials)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/Materials
+            ${KIWI_ASSET_DIR}/Materials
+        COMMENT "Copying Materials/ to output directory"
+    )
+endif()
 
 # ---- Copy DXC runtime DLLs to output directory (for runtime shader compilation) ----
 # Find Windows SDK bin directory for x64

@@ -16,17 +16,17 @@ namespace Kiwi
 
         // 创建 SwapChain
         SwapChainDesc scDesc;
-        scDesc.WindowHandle = m_Window->GetHWND();
-        scDesc.Width = windowDesc.Width;
-        scDesc.Height = windowDesc.Height;
+        scDesc.WindowHandle = m_Window->GetNativeHandle();
+        scDesc.Width = m_Window->GetWidth();
+        scDesc.Height = m_Window->GetHeight();
         scDesc.BufferCount = 2;
         scDesc.Format = EFormat::R8G8B8A8_UNORM;
         scDesc.Windowed = true;
 
         m_SwapChain = m_Device->CreateSwapChain(scDesc);
 
-        // 创建深度缓冲
-        RecreateDepthStencil(windowDesc.Width, windowDesc.Height);
+        // 创建深度缓冲。用窗口的像素尺寸，Retina 下它大于 WindowDesc 里的点尺寸。
+        RecreateDepthStencil(m_Window->GetWidth(), m_Window->GetHeight());
     }
 
     Application::~Application()
@@ -152,6 +152,7 @@ namespace Kiwi
             case RHI_API_TYPE::DX12:   return "Direct3D 12";
             case RHI_API_TYPE::OPENGL: return "OpenGL";
             case RHI_API_TYPE::VULKAN: return "Vulkan";
+            case RHI_API_TYPE::METAL:  return "Metal";
             default:                   return "Unknown";
             }
         };
@@ -183,7 +184,7 @@ namespace Kiwi
 
         // 6. 创建新的 SwapChain
         SwapChainDesc scDesc;
-        scDesc.WindowHandle = m_Window->GetHWND();
+        scDesc.WindowHandle = m_Window->GetNativeHandle();
         scDesc.Width = m_Window->GetWidth();
         scDesc.Height = m_Window->GetHeight();
         scDesc.BufferCount = 2;

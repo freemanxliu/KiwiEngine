@@ -1,0 +1,12 @@
+{
+  "name": "Default-Material",
+  "shadingModel": "DefaultLit",
+  "properties": {
+    "_MetallicRoughnessTex": "",
+    "_BaseColorTex": "",
+    "_NormalTex": "",
+    "_Metallic": 0,
+    "_Roughness": 0.5,
+    "_Color": [0.8, 0.8, 0.8, 1]
+  }
+}

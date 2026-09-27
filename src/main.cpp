@@ -5,6 +5,8 @@
 #include "Scene/Mesh.h"
 #include "Scene/Shaders.h"
 #include "Scene/GLShaders.h"
+#include "Scene/MetalShaders.h"
+#include "Core/Platform.h"
 #include "Scene/ShaderLibrary.h"
 #include "Scene/Scene.h"
 #include "Scene/GPUScene.h"
@@ -32,14 +34,40 @@
 #include <string>
 #include <fstream>
 #include <sstream>
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <shellapi.h>
+#include <chrono>
 
 using namespace Kiwi;
+
+static bool IsDeferredRHI(RHI_API_TYPE api)
+{
+    return api == RHI_API_TYPE::DX11 || api == RHI_API_TYPE::DX12;
+}
+
+static const char* BuiltinVertexShader(RHI_API_TYPE api)
+{
+    if (api == RHI_API_TYPE::METAL)
+        return g_VertexShaderMSL;
+    if (api == RHI_API_TYPE::OPENGL || api == RHI_API_TYPE::VULKAN)
+        return g_VertexShaderGLSL;
+    return g_VertexShaderHLSL;
+}
+
+static std::string ForwardShaderDirectory(RHI_API_TYPE api, const std::string& hlslDir)
+{
+    namespace fs = std::filesystem;
+    if (api == RHI_API_TYPE::METAL || api == RHI_API_TYPE::OPENGL || api == RHI_API_TYPE::VULKAN)
+    {
+        const char* folder = api == RHI_API_TYPE::METAL ? "MetalShaders" : "GLShaders";
+        std::string dir = hlslDir + "/../" + folder;
+        if (fs::exists(dir))
+            return dir;
+        std::string fallback = hlslDir + "/../../../" + folder;
+        if (fs::exists(fallback))
+            return fallback;
+        return dir;
+    }
+    return hlslDir;
+}
 
 // ============================================================
 // Pass Timer — High-resolution CPU timing for render passes
@@ -54,23 +82,15 @@ struct PassTimingEntry
 class PassTimer
 {
 public:
-    PassTimer()
-    {
-        QueryPerformanceFrequency(&m_Frequency);
-    }
-
     void Begin(const std::string& name)
     {
         m_CurrentName = name;
-        QueryPerformanceCounter(&m_StartTime);
+        m_StartTime = Clock::now();
     }
 
     void End()
     {
-        LARGE_INTEGER endTime;
-        QueryPerformanceCounter(&endTime);
-        double elapsed = (double)(endTime.QuadPart - m_StartTime.QuadPart) /
-                         (double)m_Frequency.QuadPart * 1000.0;
+        double elapsed = std::chrono::duration<double, std::milli>(Clock::now() - m_StartTime).count();
 
         // Update or insert entry
         bool found = false;
@@ -115,8 +135,8 @@ public:
     double GetFrameTotalMs() const { return m_FrameTotalMs; }
 
 private:
-    LARGE_INTEGER m_Frequency = {};
-    LARGE_INTEGER m_StartTime = {};
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point m_StartTime = {};
     std::string   m_CurrentName;
     std::vector<PassTimingEntry> m_Entries;
     double m_TotalMs = 0.0;
@@ -528,10 +548,21 @@ public:
         auto& config = Kiwi::EngineConfig::Get();
         std::string rhi = config.GetString("Rendering", "DefaultRHI", "DX11");
         std::cout << "[Kiwi] DefaultRHI from config: '" << rhi << "'" << std::endl;
+#if defined(__APPLE__)
+        if (rhi != "Metal" && rhi != "metal" && rhi != "METAL")
+            std::cout << "[Kiwi] This build renders with Metal." << std::endl;
+        return RHI_API_TYPE::METAL;
+#else
         if (rhi == "DX12" || rhi == "dx12")   return RHI_API_TYPE::DX12;
         if (rhi == "OpenGL" || rhi == "opengl" || rhi == "OPENGL") return RHI_API_TYPE::OPENGL;
         if (rhi == "Vulkan" || rhi == "vulkan" || rhi == "VULKAN") return RHI_API_TYPE::VULKAN;
+        if (rhi == "Metal" || rhi == "metal" || rhi == "METAL")
+        {
+            std::cout << "[Kiwi] Metal is only available on Apple platforms. Using DX11." << std::endl;
+            return RHI_API_TYPE::DX11;
+        }
         return RHI_API_TYPE::DX11;
+#endif
     }
 
     ~KiwiEngineApp()
@@ -548,87 +579,53 @@ protected:
         // ---- Determine Shaders directory ----
         // Try "Shaders" relative to exe, fallback to source directory
         {
-            char exePath[MAX_PATH] = {};
-            GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-            std::string exeDir(exePath);
-            size_t lastSlash = exeDir.find_last_of("\\/");
-            if (lastSlash != std::string::npos)
-                exeDir = exeDir.substr(0, lastSlash);
-            m_ShaderDir = exeDir + "\\Shaders";
-
-            // PostProcessShaders directory (same discovery logic)
-            m_PostProcessShaderDir = exeDir + "\\PostProcessShaders";
-
-            // Fallback: try source directory relative path
-            namespace fs = std::filesystem;
-            if (!fs::exists(m_ShaderDir))
+            std::string exeDir = GetExecutableDirectory();
+            // Writable folders must not be created inside Foo.app/, or codesign
+            // reports "unsealed contents present in the bundle root".
+            std::string outsideDir = exeDir;
+            const std::string bundleMarker = ".app/Contents/MacOS";
+            auto bundlePos = exeDir.rfind(bundleMarker);
+            if (bundlePos != std::string::npos)
             {
-                // Assume exe is in build/bin/ and source is ../../Shaders
-                std::string fallback = exeDir + "\\..\\..\\Shaders";
-                if (fs::exists(fallback))
-                    m_ShaderDir = fallback;
+                std::string appPath = exeDir.substr(0, bundlePos + 4);
+                auto slash = appPath.find_last_of('/');
+                if (slash != std::string::npos)
+                    outsideDir = appPath.substr(0, slash);
             }
-            if (!fs::exists(m_PostProcessShaderDir))
+            auto resolveDir = [&](const std::string& name, bool create) {
+                namespace fs = std::filesystem;
+                std::string candidates[] = {
+                    exeDir + "/../Resources/" + name,
+                    exeDir + "/" + name,
+                    outsideDir + "/" + name,
+                };
+                for (const auto& path : candidates)
+                {
+                    if (fs::exists(path))
+                        return path;
+                }
+                std::string created = outsideDir + "/" + name;
+                if (create)
+                    fs::create_directories(created);
+                return created;
+            };
+
+            m_ShaderDir = resolveDir("Shaders", false);
+            m_PostProcessShaderDir = resolveDir("PostProcessShaders", false);
+            if (GetCurrentRHIType() == RHI_API_TYPE::METAL)
             {
-                std::string fallback = exeDir + "\\..\\..\\PostProcessShaders";
-                if (fs::exists(fallback))
-                    m_PostProcessShaderDir = fallback;
+                std::string metalPost = resolveDir("MetalPostProcess", false);
+                if (std::filesystem::exists(metalPost))
+                    m_PostProcessShaderDir = metalPost;
             }
             std::cout << "[Kiwi] Shader directory: " << m_ShaderDir << std::endl;
             std::cout << "[Kiwi] PostProcess shader directory: " << m_PostProcessShaderDir << std::endl;
 
-            // Scenes directory (same discovery logic)
-            m_ScenesDir = exeDir + "\\Scenes";
-            if (!fs::exists(m_ScenesDir))
-            {
-                std::string fallback = exeDir + "\\..\\..\\Scenes";
-                if (fs::exists(fallback))
-                    m_ScenesDir = fallback;
-                else
-                {
-                    // Create Scenes/ next to the source tree
-                    m_ScenesDir = fallback;
-                    fs::create_directories(m_ScenesDir);
-                }
-            }
+            m_ScenesDir = resolveDir("Scenes", true);
             std::cout << "[Kiwi] Scenes directory: " << m_ScenesDir << std::endl;
-
-            // Textures directory
-            m_TexturesDir = exeDir + "\\Textures";
-            if (!fs::exists(m_TexturesDir))
-            {
-                std::string fallback = exeDir + "\\..\\..\\Textures";
-                if (fs::exists(fallback))
-                    m_TexturesDir = fallback;
-                else
-                {
-                    m_TexturesDir = fallback;
-                    fs::create_directories(m_TexturesDir);
-                }
-            }
-
-            // GLShaders directory
-            m_GLShaderDir = exeDir + "\\GLShaders";
-            if (!fs::exists(m_GLShaderDir))
-            {
-                std::string fallback = exeDir + "\\..\\..\\GLShaders";
-                if (fs::exists(fallback))
-                    m_GLShaderDir = fallback;
-            }
-
-            // Materials directory
-            m_MaterialsDir = exeDir + "\\Materials";
-            if (!fs::exists(m_MaterialsDir))
-            {
-                std::string fallback = exeDir + "\\..\\..\\Materials";
-                if (fs::exists(fallback))
-                    m_MaterialsDir = fallback;
-                else
-                {
-                    m_MaterialsDir = fallback;
-                    fs::create_directories(m_MaterialsDir);
-                }
-            }
+            m_TexturesDir = resolveDir("Textures", true);
+            m_GLShaderDir = resolveDir("GLShaders", false);
+            m_MaterialsDir = resolveDir("Materials", true);
         }
 
         // ---- Init ImGui context (once) ----
@@ -636,8 +633,10 @@ protected:
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Docking support
-        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Multi-viewport: drag windows outside main window
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+#if !defined(__APPLE__)
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+#endif
         ImGui::StyleColorsDark();
 
         // ---- Init RHI-specific resources ----
@@ -646,7 +645,7 @@ protected:
         // ---- Load default scene from file ----
         {
             namespace fs = std::filesystem;
-            std::string defaultScene = m_ScenesDir + "\\Default.json";
+            std::string defaultScene = m_ScenesDir + "/Default.json";
             if (fs::exists(defaultScene))
             {
                 m_Scene.LoadFromFile(defaultScene);
@@ -1010,7 +1009,8 @@ protected:
         // GL/Vulkan backend: always use forward path (deferred shaders not yet implemented)
         bool isGLBackend = (GetCurrentRHIType() == RHI_API_TYPE::OPENGL);
         bool isVulkanBackend = (GetCurrentRHIType() == RHI_API_TYPE::VULKAN);
-        bool useDeferredPipeline = !isGLBackend && !isVulkanBackend &&
+        bool isMetalBackend = (GetCurrentRHIType() == RHI_API_TYPE::METAL);
+        bool useDeferredPipeline = !isGLBackend && !isVulkanBackend && !isMetalBackend &&
                                     (m_ViewMode == EViewMode::Lit ||
                                      m_ViewMode == EViewMode::Unlit ||
                                      m_ViewMode == EViewMode::BaseColor ||
@@ -1266,10 +1266,17 @@ protected:
             ctx->SetInputLayout(m_InputLayout.get());
             ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
-            // ---- Draw with Unlit shader ----
-            ctx->BeginEvent("Forward Unlit Pass");
-            m_PassTimer.Begin("Forward Unlit Pass");
-            DrawSceneMeshesForward(ctx, "Unlit");
+            const char* forwardShader = nullptr;
+            if (m_ViewMode == EViewMode::Unlit)
+                forwardShader = "Unlit";
+            else if (m_ViewMode != EViewMode::Lit)
+                forwardShader = "DefaultLit";
+
+            ctx->BeginEvent("Forward Pass");
+            m_PassTimer.Begin("Forward Pass");
+            m_GPUScene.Update(m_Scene, m_MaterialLibrary, m_RenderList);
+            m_GPUScene.UploadToGPU();
+            DrawSceneMeshesForward(ctx, forwardShader);
             m_PassTimer.End();
             ctx->EndEvent();
 
@@ -1360,7 +1367,7 @@ protected:
         vub.CameraPos[0] = m_CameraPosition.x;
         vub.CameraPos[1] = m_CameraPosition.y;
         vub.CameraPos[2] = m_CameraPosition.z;
-        vub.ViewPadding1 = 0.0f;
+        vub.ViewPadding1 = (float)(int)m_ViewMode;
         vub.ScreenWidth = (float)GetWindow()->GetWidth();
         vub.ScreenHeight = (float)GetWindow()->GetHeight();
         vub.NearPlane = 0.1f;
@@ -1633,8 +1640,8 @@ protected:
                 lastVB = mesh.VertexBuffer;
             }
 
-            uint32_t primitiveIdx = (uint32_t)(&renderItem - &m_RenderList[0]);
-            m_GPUScene.BindPrimitive(ctx, primitiveIdx);
+            uint32_t renderListIdx = (uint32_t)(&renderItem - &m_RenderList[0]);
+            m_GPUScene.BindPrimitive(ctx, m_GPUScene.GetGPUSceneIndex(renderListIdx));
 
             const char* matName = meshComp->MaterialName.c_str();
             if (lastMaterial == nullptr || strcmp(matName, lastMaterial) != 0)
@@ -1988,8 +1995,7 @@ protected:
         if (title != m_LastWindowTitle)
         {
             m_LastWindowTitle = title;
-            std::wstring wtitle(title.begin(), title.end());
-            SetWindowTextW(GetWindow()->GetHWND(), wtitle.c_str());
+            GetWindow()->SetTitle(title);
         }
     }
 
@@ -2156,9 +2162,8 @@ private:
         auto device = GetDevice();
 
         // We need a temporary VS to create the shared input layout
-        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL ||
-                     device->GetApiType() == RHI_API_TYPE::VULKAN);
-        const char* defaultVSSrc = isGL ? g_VertexShaderGLSL : g_VertexShaderHLSL;
+        auto api = device->GetApiType();
+        const char* defaultVSSrc = BuiltinVertexShader(api);
         auto tempVS = device->CompileShader(
             EShaderType::Vertex, defaultVSSrc, "main", "vs_5_0");
 
@@ -2197,24 +2202,14 @@ private:
         // Pipeline state (DX11: empty wrapper, DX12: managed per-shader)
         m_PipelineState = device->CreatePipelineState();
 
-        // Initialize ShaderLibrary — GL uses GLShaders/ directory
-        std::string shaderDir = isGL ? (m_ShaderDir + "\\..\\GLShaders") : m_ShaderDir;
-        {
-            namespace fs = std::filesystem;
-            if (!fs::exists(shaderDir))
-            {
-                // Fallback: try source tree
-                std::string fallback = m_ShaderDir + "\\..\\..\\..\\GLShaders";
-                if (isGL && fs::exists(fallback)) shaderDir = fallback;
-            }
-        }
+        std::string shaderDir = ForwardShaderDirectory(api, m_ShaderDir);
         m_ShaderLibrary.Initialize(shaderDir, device, m_InputLayout.get());
 
         // Initialize post-process resources
         InitPostProcessResources(device);
 
-        // Initialize deferred rendering resources (DX11/DX12 only — GLSL deferred shaders not yet implemented)
-        if (!isGL)
+        // Deferred and shadow shaders are implemented for DX11/DX12.
+        if (IsDeferredRHI(api))
         {
             CompileDeferredShaders(device);
             CreateGBufferResources(device, GetWindow()->GetWidth(), GetWindow()->GetHeight());
@@ -2242,8 +2237,7 @@ private:
 
     void InitPostProcessResources(RHIDevice* device)
     {
-        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL ||
-                     device->GetApiType() == RHI_API_TYPE::VULKAN);
+        auto api = device->GetApiType();
         // PostProcess shader library
         m_PostProcessLibrary.Initialize(m_PostProcessShaderDir, device);
 
@@ -2260,8 +2254,18 @@ private:
         m_PostProcessSampler = device->CreateSampler();
 
         // Compile passthrough shader (for final blit from offscreen to backbuffer)
-        const char* ppVSSrc = isGL ? g_PostProcessVS_GLSL : g_PostProcessVS;
-        const char* ppPSSrc = isGL ? g_PostProcessPassthroughPS_GLSL : g_PostProcessPassthroughPS;
+        const char* ppVSSrc = g_PostProcessVS;
+        const char* ppPSSrc = g_PostProcessPassthroughPS;
+        if (api == RHI_API_TYPE::OPENGL || api == RHI_API_TYPE::VULKAN)
+        {
+            ppVSSrc = g_PostProcessVS_GLSL;
+            ppPSSrc = g_PostProcessPassthroughPS_GLSL;
+        }
+        else if (api == RHI_API_TYPE::METAL)
+        {
+            ppVSSrc = g_PostProcessVS_MSL;
+            ppPSSrc = g_PostProcessPassthroughPS_MSL;
+        }
         m_PassthroughVS = device->CompileShader(
             EShaderType::Vertex, ppVSSrc, "VSMain", "vs_5_0");
         m_PassthroughPS = device->CompileShader(
@@ -2736,24 +2740,15 @@ private:
         ReleaseShadowShaderOnly(); // Only release shader/PSO, keep CB/sampler/atlas
 
         // 2. Recompile ShaderLibrary
-        bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL ||
-                     device->GetApiType() == RHI_API_TYPE::VULKAN);
-        std::string shaderDir = isGL ? (m_ShaderDir + "\\..\\GLShaders") : m_ShaderDir;
-        {
-            namespace fs = std::filesystem;
-            if (!fs::exists(shaderDir))
-            {
-                std::string fallback = m_ShaderDir + "\\..\\..\\..\\GLShaders";
-                if (isGL && fs::exists(fallback)) shaderDir = fallback;
-            }
-        }
+        auto api = device->GetApiType();
+        std::string shaderDir = ForwardShaderDirectory(api, m_ShaderDir);
         m_ShaderLibrary.Initialize(shaderDir, device, m_InputLayout.get());
 
         // 3. Recompile post-process shaders
         InitPostProcessResources(device);
 
         // 4. Recompile deferred + shadow shaders (DX11/DX12 only)
-        if (!isGL)
+        if (IsDeferredRHI(api))
         {
             CompileDeferredShaders(device);
             CompileShadowShader(device);
@@ -2795,8 +2790,7 @@ private:
         total += m_PostProcessLibrary.ReloadModifiedShaders();
 
         // 3. Deferred shaders (GBufferPass, DeferredLighting, DeferredAmbient, BufferVisualization)
-        if (device->GetApiType() != RHI_API_TYPE::OPENGL &&
-            device->GetApiType() != RHI_API_TYPE::VULKAN)
+        if (IsDeferredRHI(device->GetApiType()))
         {
             total += ReloadDeferredShaderIfModified(device, "GBufferPass", m_ShaderDir + "/GBufferPass.hlsl");
             total += ReloadDeferredShaderIfModified(device, "DeferredLighting", m_ShaderDir + "/DeferredLighting.hlsl");
@@ -3415,6 +3409,11 @@ private:
                 {
                     auto currentRHI = GetCurrentRHIType();
 
+#if defined(__APPLE__)
+                    if (ImGui::MenuItem("Metal", nullptr, currentRHI == RHI_API_TYPE::METAL, false))
+                    {
+                    }
+#else
                     if (ImGui::MenuItem("Direct3D 11", nullptr,
                         currentRHI == RHI_API_TYPE::DX11, currentRHI != RHI_API_TYPE::DX11))
                     {
@@ -3443,6 +3442,7 @@ private:
                         m_PendingRHISwitch = true;
                         m_PendingRHIType = RHI_API_TYPE::VULKAN;
                     }
+#endif
 
                     ImGui::EndMenu();
                 }
@@ -3497,7 +3497,7 @@ private:
                 namespace fs = std::filesystem;
                 std::string name(m_SaveSceneName);
                 m_Scene.SetName(name);
-                std::string filepath = m_ScenesDir + "\\" + name + ".json";
+                std::string filepath = m_ScenesDir + "/" + name + ".json";
                 fs::create_directories(m_ScenesDir);
                 m_Scene.SaveToFile(filepath);
                 ImGui::CloseCurrentPopup();
@@ -3772,7 +3772,8 @@ private:
             const char* rhiName = (rhiType == RHI_API_TYPE::DX11) ? "DX11" :
                                   (rhiType == RHI_API_TYPE::DX12) ? "DX12" :
                                   (rhiType == RHI_API_TYPE::OPENGL) ? "OpenGL" :
-                                  (rhiType == RHI_API_TYPE::VULKAN) ? "Vulkan" : "Unknown";
+                                  (rhiType == RHI_API_TYPE::VULKAN) ? "Vulkan" :
+                                  (rhiType == RHI_API_TYPE::METAL) ? "Metal" : "Unknown";
             ImGui::Text("RHI: %s", rhiName);
 
             ImGui::Separator();
@@ -4451,7 +4452,8 @@ private:
         const char* rhiName = (rhiType == RHI_API_TYPE::DX11) ? "Direct3D 11" :
                               (rhiType == RHI_API_TYPE::DX12) ? "Direct3D 12" :
                               (rhiType == RHI_API_TYPE::OPENGL) ? "OpenGL" :
-                              (rhiType == RHI_API_TYPE::VULKAN) ? "Vulkan" : "Unknown";
+                              (rhiType == RHI_API_TYPE::VULKAN) ? "Vulkan" :
+                              (rhiType == RHI_API_TYPE::METAL) ? "Metal" : "Unknown";
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "RHI: %s", rhiName);
         ImGui::Separator();
 
@@ -4680,13 +4682,17 @@ private:
                         if (ImGui::MenuItem("Show In Explorer"))
                         {
                             // Open Explorer with file selected
+#if defined(__APPLE__)
+                            std::string cmd = "open -R \"" + file.FullPath + "\"";
+#else
                             std::string cmd = "explorer /select,\"" + file.FullPath + "\"";
+#endif
                             system(cmd.c_str());
                         }
                         if (ImGui::MenuItem("Open File"))
                         {
                             // Open with default associated application
-                            ShellExecuteA(nullptr, "open", file.FullPath.c_str(), nullptr, nullptr, SW_SHOW);
+                            OpenFileWithDefaultApp(file.FullPath.c_str());
                         }
                         ImGui::EndPopup();
                     }
@@ -5009,7 +5015,7 @@ private:
                 case EShadingModel::DefaultLit: shaderFile = "DefaultLit"; break;
                 default:                        shaderFile = "DefaultLit"; break;
                 }
-                std::string shaderPath = m_ShaderDir + "\\" + shaderFile + ".hlsl";
+                std::string shaderPath = m_ShaderDir + "/" + shaderFile + ".hlsl";
                 std::ifstream sf(shaderPath);
                 if (sf.is_open())
                 {
@@ -6325,7 +6331,7 @@ int main()
     {
         std::cout << "========================================" << std::endl;
         std::cout << "  Kiwi Engine - Scene Editor" << std::endl;
-        std::cout << "  RHI: DX11 / DX12 / OpenGL / Vulkan" << std::endl;
+        std::cout << "  RHI: DX11 / DX12 / OpenGL / Vulkan / Metal" << std::endl;
         std::cout << "========================================" << std::endl;
         std::cout << std::endl;
 
@@ -6369,7 +6375,7 @@ int main()
     catch (const std::exception& e)
     {
         std::cerr << "[Kiwi] Fatal Error: " << e.what() << std::endl;
-        MessageBoxA(nullptr, e.what(), "Kiwi Engine Error", MB_OK | MB_ICONERROR);
+        ShowErrorDialog("Kiwi Engine Error", e.what());
         return 1;
     }
 }

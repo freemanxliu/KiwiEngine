@@ -3,6 +3,7 @@
 #include "RHI/RHI.h"
 #include "Scene/PostProcessShaders.h"
 #include "Scene/GLShaders.h"
+#include "Scene/MetalShaders.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -42,8 +43,11 @@ namespace Kiwi
             m_ShaderNames.clear();
 
             // Compile the shared fullscreen vertex shader
-            bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
-            const char* vsSrc = isGL ? g_PostProcessVS_GLSL : g_PostProcessVS;
+            const char* vsSrc = g_PostProcessVS;
+            if (device->GetApiType() == RHI_API_TYPE::OPENGL)
+                vsSrc = g_PostProcessVS_GLSL;
+            else if (device->GetApiType() == RHI_API_TYPE::METAL)
+                vsSrc = g_PostProcessVS_MSL;
             m_FullscreenVS = device->CompileShader(
                 EShaderType::Vertex, vsSrc, "VSMain", "vs_5_0");
 
@@ -163,7 +167,8 @@ namespace Kiwi
             {
                 if (!entry.is_regular_file()) continue;
                 auto ext = entry.path().extension().string();
-                bool isShader = (ext == ".hlsl" || ext == ".HLSL" || ext == ".glsl" || ext == ".GLSL");
+                bool isShader = (ext == ".hlsl" || ext == ".HLSL" || ext == ".glsl" || ext == ".GLSL" ||
+                                 ext == ".metal" || ext == ".METAL");
                 if (!isShader) continue;
 
                 std::string name = entry.path().stem().string();
@@ -215,8 +220,11 @@ namespace Kiwi
                 if (!shader->PixelShader) return false;
 
                 // Clone VS reference (compile a new VS instance for PSO creation)
-                bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
-                const char* vsSrc = isGL ? g_PostProcessVS_GLSL : g_PostProcessVS;
+                const char* vsSrc = g_PostProcessVS;
+                if (device->GetApiType() == RHI_API_TYPE::OPENGL)
+                    vsSrc = g_PostProcessVS_GLSL;
+                else if (device->GetApiType() == RHI_API_TYPE::METAL)
+                    vsSrc = g_PostProcessVS_MSL;
                 shader->VertexShader = device->CompileShader(
                     EShaderType::Vertex, vsSrc, "VSMain", "vs_5_0");
 

@@ -1,0 +1,1015 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXAggregateTarget section */
+		1241F0C75B294C0B9F20FDDE /* ZERO_CHECK */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = F778BBC4C03A4DE4B3719DDD /* Build configuration list for PBXAggregateTarget "ZERO_CHECK" */;
+			buildPhases = (
+				9E8D7380E5C3A4696B206C07 /* Generate CMakeFiles/ZERO_CHECK */,
+			);
+			dependencies = (
+			);
+			name = ZERO_CHECK;
+			productName = ZERO_CHECK;
+		};
+		F126B54F438A4DB389E5EE92 /* ALL_BUILD */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 7D14FEA58BCA46A6925FB54E /* Build configuration list for PBXAggregateTarget "ALL_BUILD" */;
+			buildPhases = (
+				02778B7B9BB9203FBA2413E8 /* Generate CMakeFiles/ALL_BUILD */,
+			);
+			dependencies = (
+				EA102A7875EF419186F2C05E /* PBXTargetDependency */,
+				14611EE0C4C84043942770E0 /* PBXTargetDependency */,
+			);
+			name = ALL_BUILD;
+			productName = ALL_BUILD;
+		};
+/* End PBXAggregateTarget section */
+
+/* Begin PBXBuildFile section */
+		1075DE4E4F02473AA9F3BD5E /* /Users/liuyuxuan/Documents/KiwiEngine/src/main.cpp */ = {isa = PBXBuildFile; fileRef = 058543F5FC25427A981C1EAF /* /Users/liuyuxuan/Documents/KiwiEngine/src/main.cpp */; };
+		1C3092AA49614047A042633D /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanHeaders.h */ = {isa = PBXBuildFile; fileRef = CE6DB9730D4F4823A83B4396 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanHeaders.h */; };
+		1DDDEA6DE7A04269A03D0199 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Debug/RenderDocIntegration.h */ = {isa = PBXBuildFile; fileRef = 5261336E879A4DA6ACE5CFD3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Debug/RenderDocIntegration.h */; };
+		1E2753E8BCFC42E58E1FE162 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessComponent.h */ = {isa = PBXBuildFile; fileRef = 3A5A47CB0D7945B58FE8E297 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessComponent.h */; };
+		22A8BBEEF75C4F49AE93F212 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Material.cpp */ = {isa = PBXBuildFile; fileRef = 5FD3FFAC2A014179A020B382 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Material.cpp */; };
+		25052C3ED1D244F89FB1EFA4 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Shaders.h */ = {isa = PBXBuildFile; fileRef = 450F0BD64C7748A6B9EF8DAC /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Shaders.h */; };
+		372F2C51A90042938814E983 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/CameraComponent.h */ = {isa = PBXBuildFile; fileRef = 0712A51C237C412BBBCCBDA6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/CameraComponent.h */; };
+		3F7E740A2FC34CF5BB49942E /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Scene.cpp */ = {isa = PBXBuildFile; fileRef = 50824898A9C64EEC9E3A34CA /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Scene.cpp */; };
+		407F6E1563414353B2EF5BBE /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Platform.cpp */ = {isa = PBXBuildFile; fileRef = 2EAD82A3D53540A0833EFD14 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Platform.cpp */; };
+		412DCF549252457F95F242AD /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanDevice.h */ = {isa = PBXBuildFile; fileRef = F5AB97B44A8E4FC9BF867E48 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanDevice.h */; };
+		413136DD1F9E4EE2B34C1C72 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/EngineConfig.cpp */ = {isa = PBXBuildFile; fileRef = 8AB90AAACA564D268A0CC641 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/EngineConfig.cpp */; };
+		44D0A5014B5E49B29175031C /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/LightComponent.h */ = {isa = PBXBuildFile; fileRef = C02C970A810149F78206EACA /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/LightComponent.h */; };
+		4755F356390B4C8CAC019F40 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Math/Math.h */ = {isa = PBXBuildFile; fileRef = 2B0ED5CC9AB54FDFA7B46138 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Math/Math.h */; };
+		47E3452F9C0D4913B1A94A24 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLHeaders.h */ = {isa = PBXBuildFile; fileRef = F8CE29D46C1F4B87AEDC53EB /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLHeaders.h */; };
+		4EA818758627484EBB094590 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Mesh.h */ = {isa = PBXBuildFile; fileRef = 0FF73CDF1B764DEF97CFD813 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Mesh.h */; };
+		51D81B8F2C1A45EABC31FC3C /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLDevice.h */ = {isa = PBXBuildFile; fileRef = 238EEB8FFE3641A7AD42ABD6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLDevice.h */; };
+		55351D32C10942B194155811 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHI.h */ = {isa = PBXBuildFile; fileRef = 477FC764983A484DAC154F1C /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHI.h */; };
+		562406DF8A6949888E3E7841 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui.cpp */ = {isa = PBXBuildFile; fileRef = F278443872154CE99063089F /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui.cpp */; };
+		581CB54606CD44D8877EDC13 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHITypes.h */ = {isa = PBXBuildFile; fileRef = 4500AF795FA64FF4B5F2C572 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHITypes.h */; };
+		7CFC4423E9FF4089B973F59F /* /Users/liuyuxuan/Documents/KiwiEngine/CMakeLists.txt */ = {isa = PBXBuildFile; fileRef = A28A1884F91E4AC7B1041609 /* /Users/liuyuxuan/Documents/KiwiEngine/CMakeLists.txt */; };
+		7FE37E150DA94B9ABF24C9FE /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_tables.cpp */ = {isa = PBXBuildFile; fileRef = 204289BA7B004F21B26624F6 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_tables.cpp */; };
+		8050490227354674B1AD6578 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/TextureManager.cpp */ = {isa = PBXBuildFile; fileRef = 501D857DD337440792A0F3BA /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/TextureManager.cpp */; };
+		811B9790879F466096C1CF0A /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/EngineConfig.h */ = {isa = PBXBuildFile; fileRef = 0125EFCAA2ED49CD8D44185A /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/EngineConfig.h */; };
+		814CB53032714A048A561BD3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Headers.h */ = {isa = PBXBuildFile; fileRef = CAE9524D289B4DC49226458F /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Headers.h */; };
+		8154E34A443641FEBEDBB044 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Mesh.cpp */ = {isa = PBXBuildFile; fileRef = 21C71E41A03743E189E7228C /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Mesh.cpp */; };
+		87FFCA36C12D4699A6FF47EE /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_demo.cpp */ = {isa = PBXBuildFile; fileRef = EAB783B10DEB467C8A6E0A77 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_demo.cpp */; };
+		882F724530864881AECE33AF /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Headers.h */ = {isa = PBXBuildFile; fileRef = 0EA9C9CD9FE245FB8FA7B616 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Headers.h */; };
+		88F3F27215EF4E5190C57E87 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaderLibrary.h */ = {isa = PBXBuildFile; fileRef = 1195CFDD1CCE4B7FA66035F3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaderLibrary.h */; };
+		8C621EE18BB54F32B04A933C /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaders.h */ = {isa = PBXBuildFile; fileRef = 1E169E1DABC54D0FA96C2CCE /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaders.h */; };
+		8E035BD0FE9F4FB5993823D8 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_draw.cpp */ = {isa = PBXBuildFile; fileRef = E5491092F33E4B4898706B46 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_draw.cpp */; };
+		9303BF85FBF1486E9F83B3F0 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Device.h */ = {isa = PBXBuildFile; fileRef = BFD5BBFF74C04629BDAF07EE /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Device.h */; };
+		9339AFE92F864A32ADB8EFFF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Debug/RenderDocIntegration.cpp */ = {isa = PBXBuildFile; fileRef = E05AE8F521784106ACC142DF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Debug/RenderDocIntegration.cpp */; };
+		934E68A3910045D99B7798D6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Resources.h */ = {isa = PBXBuildFile; fileRef = B961AF77B07D4B578D1A9744 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Resources.h */; };
+		935FB7C755C6479683B44874 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/TextureManager.h */ = {isa = PBXBuildFile; fileRef = 774D9A09F84B49D181723DA3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/TextureManager.h */; };
+		941E1E6068AE49BFA2E0FD90 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Utils.h */ = {isa = PBXBuildFile; fileRef = 6C7CCC5D8AD84182942FEEC7 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Utils.h */; };
+		9E94EE524C4443F9867DA400 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Window.h */ = {isa = PBXBuildFile; fileRef = 1DA96C6B0DE9494B9C0BB383 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Window.h */; };
+		A3852670113842C49E2F47ED /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/GPUScene.cpp */ = {isa = PBXBuildFile; fileRef = 8F2A5B661EC54D07A49CEA69 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/GPUScene.cpp */; };
+		A5ECD41BDC634290AB079FCE /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/MetalDevice.mm */ = {isa = PBXBuildFile; fileRef = 8183F6DFC3B34DBDACE538C5 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/MetalDevice.mm */; settings = {COMPILER_FLAGS = "-fobjc-arc"; }; };
+		AA3CF7453110455F81572C05 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Application.cpp */ = {isa = PBXBuildFile; fileRef = DD9C9B24BDAB413386DD0C80 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Application.cpp */; };
+		AB146771D7184BB690CF5DCF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/stb_image_impl.cpp */ = {isa = PBXBuildFile; fileRef = E2380C1EFFEF40799CC87708 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/stb_image_impl.cpp */; };
+		B19A8E51FF224A99BFA3A058 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/SceneObject.h */ = {isa = PBXBuildFile; fileRef = 750DCB56BAFE416DAAC7EE2B /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/SceneObject.h */; };
+		BD2E179FE4E941CEB3AB8610 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_osx.mm */ = {isa = PBXBuildFile; fileRef = C0F67F1360F641BE9622D249 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_osx.mm */; };
+		C0F1FADF86B34789B61E50D6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DXCCompiler.h */ = {isa = PBXBuildFile; fileRef = DB18244AC589480296741299 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DXCCompiler.h */; };
+		C26790BB914D448F9AA79FA0 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_widgets.cpp */ = {isa = PBXBuildFile; fileRef = 8D477F8189534D49BA055911 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_widgets.cpp */; };
+		C2F1C3878D694D6F94E6FB6E /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Application.h */ = {isa = PBXBuildFile; fileRef = B9363A2550A048CD805B4CCD /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Application.h */; };
+		C47B72C686C24DE88E16BA37 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Scene.h */ = {isa = PBXBuildFile; fileRef = D566943443F04379BC098870 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Scene.h */; };
+		C4BB0C6530204C17A96412AD /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_metal.mm */ = {isa = PBXBuildFile; fileRef = 072615F65EFB410A8E0FDC46 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_metal.mm */; };
+		CD29257342134CD0BFE59526 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/ShaderLibrary.h */ = {isa = PBXBuildFile; fileRef = C0D24203DCAE4E1CB7567DD9 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/ShaderLibrary.h */; };
+		CED4011AE70449908A175D06 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Material.h */ = {isa = PBXBuildFile; fileRef = 49EC84E2178A489BA3861F2A /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Material.h */; };
+		DAACA249897E4645942D7138 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/RHIFactory.cpp */ = {isa = PBXBuildFile; fileRef = 9A112F7784A747ED9B297100 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/RHIFactory.cpp */; };
+		DF4723CD9C2D40008AE397F5 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Component.h */ = {isa = PBXBuildFile; fileRef = 1B3B2286EE2F4708BE7508B6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Component.h */; };
+		E51EFCD3642D4181A0CE2118 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Device.h */ = {isa = PBXBuildFile; fileRef = ACA5541F509544D082233E24 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Device.h */; };
+		E8A1BA26687F4E98893299DF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Window.mm */ = {isa = PBXBuildFile; fileRef = 6318062101784C3492706ABE /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Window.mm */; settings = {COMPILER_FLAGS = "-fobjc-arc"; }; };
+		E994BA9BE50D48318FF153D4 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Resources.h */ = {isa = PBXBuildFile; fileRef = 5F4E608075A945ABA54E8411 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Resources.h */; };
+		EB4866A0604841C5AEC41C43 /* /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist */ = {isa = PBXBuildFile; fileRef = 4C08EFA875A8414E94E3328F /* /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist */; };
+		F9FF08A76338478BA2712A36 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/MeshComponent.h */ = {isa = PBXBuildFile; fileRef = DD5E1F53E70A400CB82F9859 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/MeshComponent.h */; };
+		FAC1BE5902814780B69212A4 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLResources.h */ = {isa = PBXBuildFile; fileRef = 3EE87818590B42EEB7C96307 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLResources.h */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXBuildStyle section */
+		0179EEA3628646E7876A153D /* MinSizeRel */ = {
+			isa = PBXBuildStyle;
+			buildSettings = {
+				COPY_PHASE_STRIP = NO;
+			};
+			name = MinSizeRel;
+		};
+		1C375749CC9845528858C55A /* Debug */ = {
+			isa = PBXBuildStyle;
+			buildSettings = {
+				COPY_PHASE_STRIP = NO;
+			};
+			name = Debug;
+		};
+		4F0B2C873BD84BEC8163D5EC /* Release */ = {
+			isa = PBXBuildStyle;
+			buildSettings = {
+				COPY_PHASE_STRIP = NO;
+			};
+			name = Release;
+		};
+		7B77538B766644AFB57797BB /* RelWithDebInfo */ = {
+			isa = PBXBuildStyle;
+			buildSettings = {
+				COPY_PHASE_STRIP = NO;
+			};
+			name = RelWithDebInfo;
+		};
+/* End PBXBuildStyle section */
+
+/* Begin PBXContainerItemProxy section */
+		4806D626CEA84EBFBB36D535 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D9A6FE894B684992AD69AAB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D568E8CB543845F494675C1F;
+			remoteInfo = KiwiEngine;
+		};
+		A23092D4002640C0B8208A54 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D9A6FE894B684992AD69AAB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1241F0C75B294C0B9F20FDDE;
+			remoteInfo = ZERO_CHECK;
+		};
+		B984EE800CC04EF2BEEF9DE8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D9A6FE894B684992AD69AAB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1241F0C75B294C0B9F20FDDE;
+			remoteInfo = ZERO_CHECK;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0125EFCAA2ED49CD8D44185A /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/EngineConfig.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = EngineConfig.h; path = include/Core/EngineConfig.h; sourceTree = SOURCE_ROOT; };
+		058543F5FC25427A981C1EAF /* /Users/liuyuxuan/Documents/KiwiEngine/src/main.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = main.cpp; path = src/main.cpp; sourceTree = SOURCE_ROOT; };
+		0712A51C237C412BBBCCBDA6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/CameraComponent.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = CameraComponent.h; path = include/Scene/CameraComponent.h; sourceTree = SOURCE_ROOT; };
+		072615F65EFB410A8E0FDC46 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_metal.mm */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; name = imgui_impl_metal.mm; path = third_party/imgui/backends/imgui_impl_metal.mm; sourceTree = SOURCE_ROOT; };
+		0EA9C9CD9FE245FB8FA7B616 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Headers.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DX12Headers.h; path = include/RHI/DX12/DX12Headers.h; sourceTree = SOURCE_ROOT; };
+		0FF73CDF1B764DEF97CFD813 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Mesh.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Mesh.h; path = include/Scene/Mesh.h; sourceTree = SOURCE_ROOT; };
+		1195CFDD1CCE4B7FA66035F3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaderLibrary.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = PostProcessShaderLibrary.h; path = include/Scene/PostProcessShaderLibrary.h; sourceTree = SOURCE_ROOT; };
+		1B3B2286EE2F4708BE7508B6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Component.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Component.h; path = include/Scene/Component.h; sourceTree = SOURCE_ROOT; };
+		1DA96C6B0DE9494B9C0BB383 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Window.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Window.h; path = include/Core/Window.h; sourceTree = SOURCE_ROOT; };
+		1E169E1DABC54D0FA96C2CCE /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaders.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = PostProcessShaders.h; path = include/Scene/PostProcessShaders.h; sourceTree = SOURCE_ROOT; };
+		204289BA7B004F21B26624F6 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_tables.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = imgui_tables.cpp; path = third_party/imgui/imgui_tables.cpp; sourceTree = SOURCE_ROOT; };
+		21C71E41A03743E189E7228C /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Mesh.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Mesh.cpp; path = src/Scene/Mesh.cpp; sourceTree = SOURCE_ROOT; };
+		238EEB8FFE3641A7AD42ABD6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLDevice.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = GLDevice.h; path = include/RHI/GL/GLDevice.h; sourceTree = SOURCE_ROOT; };
+		2B0ED5CC9AB54FDFA7B46138 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Math/Math.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Math.h; path = include/Math/Math.h; sourceTree = SOURCE_ROOT; };
+		2EAD82A3D53540A0833EFD14 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Platform.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Platform.cpp; path = src/Core/Platform.cpp; sourceTree = SOURCE_ROOT; };
+		3A5A47CB0D7945B58FE8E297 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessComponent.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = PostProcessComponent.h; path = include/Scene/PostProcessComponent.h; sourceTree = SOURCE_ROOT; };
+		3EE87818590B42EEB7C96307 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLResources.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = GLResources.h; path = include/RHI/GL/GLResources.h; sourceTree = SOURCE_ROOT; };
+		4500AF795FA64FF4B5F2C572 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHITypes.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = RHITypes.h; path = include/RHI/RHITypes.h; sourceTree = SOURCE_ROOT; };
+		450F0BD64C7748A6B9EF8DAC /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Shaders.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Shaders.h; path = include/Scene/Shaders.h; sourceTree = SOURCE_ROOT; };
+		477FC764983A484DAC154F1C /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHI.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = RHI.h; path = include/RHI/RHI.h; sourceTree = SOURCE_ROOT; };
+		49EC84E2178A489BA3861F2A /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Material.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Material.h; path = include/Scene/Material.h; sourceTree = SOURCE_ROOT; };
+		4C08EFA875A8414E94E3328F /* /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist */ = {isa = PBXFileReference; explicitFileType = sourcecode.text.plist; fileEncoding = 4; name = Info.plist; path = "build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist"; sourceTree = SOURCE_ROOT; };
+		501D857DD337440792A0F3BA /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/TextureManager.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = TextureManager.cpp; path = src/Scene/TextureManager.cpp; sourceTree = SOURCE_ROOT; };
+		50824898A9C64EEC9E3A34CA /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Scene.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Scene.cpp; path = src/Scene/Scene.cpp; sourceTree = SOURCE_ROOT; };
+		5261336E879A4DA6ACE5CFD3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Debug/RenderDocIntegration.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = RenderDocIntegration.h; path = include/Debug/RenderDocIntegration.h; sourceTree = SOURCE_ROOT; };
+		5F4E608075A945ABA54E8411 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Resources.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DX11Resources.h; path = include/RHI/DX11/DX11Resources.h; sourceTree = SOURCE_ROOT; };
+		5FD3FFAC2A014179A020B382 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Material.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Material.cpp; path = src/Scene/Material.cpp; sourceTree = SOURCE_ROOT; };
+		6318062101784C3492706ABE /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Window.mm */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; name = Window.mm; path = src/Core/Window.mm; sourceTree = SOURCE_ROOT; };
+		6C7CCC5D8AD84182942FEEC7 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Utils.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DX11Utils.h; path = include/RHI/DX11/DX11Utils.h; sourceTree = SOURCE_ROOT; };
+		750DCB56BAFE416DAAC7EE2B /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/SceneObject.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = SceneObject.h; path = include/Scene/SceneObject.h; sourceTree = SOURCE_ROOT; };
+		774D9A09F84B49D181723DA3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/TextureManager.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = TextureManager.h; path = include/Scene/TextureManager.h; sourceTree = SOURCE_ROOT; };
+		7CD57CF5EAA84558BC6F56F9 /* /Users/liuyuxuan/Documents/KiwiEngine/CMakeLists.txt */ = {isa = PBXFileReference; explicitFileType = sourcecode.text; fileEncoding = 4; name = CMakeLists.txt; path = CMakeLists.txt; sourceTree = SOURCE_ROOT; };
+		8183F6DFC3B34DBDACE538C5 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/MetalDevice.mm */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; name = MetalDevice.mm; path = src/RHI/MetalDevice.mm; sourceTree = SOURCE_ROOT; };
+		8AB90AAACA564D268A0CC641 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/EngineConfig.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = EngineConfig.cpp; path = src/Core/EngineConfig.cpp; sourceTree = SOURCE_ROOT; };
+		8D477F8189534D49BA055911 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_widgets.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = imgui_widgets.cpp; path = third_party/imgui/imgui_widgets.cpp; sourceTree = SOURCE_ROOT; };
+		8F2A5B661EC54D07A49CEA69 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/GPUScene.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = GPUScene.cpp; path = src/Scene/GPUScene.cpp; sourceTree = SOURCE_ROOT; };
+		9A112F7784A747ED9B297100 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/RHIFactory.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = RHIFactory.cpp; path = src/RHI/RHIFactory.cpp; sourceTree = SOURCE_ROOT; };
+		A28A1884F91E4AC7B1041609 /* /Users/liuyuxuan/Documents/KiwiEngine/CMakeLists.txt */ = {isa = PBXFileReference; explicitFileType = sourcecode.text; fileEncoding = 4; name = CMakeLists.txt; path = CMakeLists.txt; sourceTree = SOURCE_ROOT; };
+		ACA5541F509544D082233E24 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Device.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DX11Device.h; path = include/RHI/DX11/DX11Device.h; sourceTree = SOURCE_ROOT; };
+		B9363A2550A048CD805B4CCD /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Application.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Application.h; path = include/Core/Application.h; sourceTree = SOURCE_ROOT; };
+		B961AF77B07D4B578D1A9744 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Resources.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DX12Resources.h; path = include/RHI/DX12/DX12Resources.h; sourceTree = SOURCE_ROOT; };
+		BFD5BBFF74C04629BDAF07EE /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Device.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DX12Device.h; path = include/RHI/DX12/DX12Device.h; sourceTree = SOURCE_ROOT; };
+		C02C970A810149F78206EACA /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/LightComponent.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = LightComponent.h; path = include/Scene/LightComponent.h; sourceTree = SOURCE_ROOT; };
+		C0D24203DCAE4E1CB7567DD9 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/ShaderLibrary.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = ShaderLibrary.h; path = include/Scene/ShaderLibrary.h; sourceTree = SOURCE_ROOT; };
+		C0F67F1360F641BE9622D249 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_osx.mm */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; name = imgui_impl_osx.mm; path = third_party/imgui/backends/imgui_impl_osx.mm; sourceTree = SOURCE_ROOT; };
+		CAE9524D289B4DC49226458F /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Headers.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DX11Headers.h; path = include/RHI/DX11/DX11Headers.h; sourceTree = SOURCE_ROOT; };
+		CE6DB9730D4F4823A83B4396 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanHeaders.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = VulkanHeaders.h; path = include/RHI/Vulkan/VulkanHeaders.h; sourceTree = SOURCE_ROOT; };
+		D566943443F04379BC098870 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Scene.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Scene.h; path = include/Scene/Scene.h; sourceTree = SOURCE_ROOT; };
+		DB18244AC589480296741299 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DXCCompiler.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = DXCCompiler.h; path = include/RHI/DXCCompiler.h; sourceTree = SOURCE_ROOT; };
+		DD5E1F53E70A400CB82F9859 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/MeshComponent.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = MeshComponent.h; path = include/Scene/MeshComponent.h; sourceTree = SOURCE_ROOT; };
+		DD9C9B24BDAB413386DD0C80 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Application.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Application.cpp; path = src/Core/Application.cpp; sourceTree = SOURCE_ROOT; };
+		E05AE8F521784106ACC142DF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Debug/RenderDocIntegration.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = RenderDocIntegration.cpp; path = src/Debug/RenderDocIntegration.cpp; sourceTree = SOURCE_ROOT; };
+		E167E6251B844F1893A69FFC /* KiwiEngine */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; path = KiwiEngine; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2380C1EFFEF40799CC87708 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/stb_image_impl.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = stb_image_impl.cpp; path = src/Scene/stb_image_impl.cpp; sourceTree = SOURCE_ROOT; };
+		E5491092F33E4B4898706B46 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_draw.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = imgui_draw.cpp; path = third_party/imgui/imgui_draw.cpp; sourceTree = SOURCE_ROOT; };
+		EAB783B10DEB467C8A6E0A77 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_demo.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = imgui_demo.cpp; path = third_party/imgui/imgui_demo.cpp; sourceTree = SOURCE_ROOT; };
+		F278443872154CE99063089F /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = imgui.cpp; path = third_party/imgui/imgui.cpp; sourceTree = SOURCE_ROOT; };
+		F5AB97B44A8E4FC9BF867E48 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanDevice.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = VulkanDevice.h; path = include/RHI/Vulkan/VulkanDevice.h; sourceTree = SOURCE_ROOT; };
+		F8CE29D46C1F4B87AEDC53EB /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLHeaders.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = GLHeaders.h; path = include/RHI/GL/GLHeaders.h; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		586082D4A9454B799C7137EB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1B52D08FCBBC4B2BA060AE08 /* Source Files */ = {
+			isa = PBXGroup;
+			children = (
+				DD9C9B24BDAB413386DD0C80 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Application.cpp */,
+				8AB90AAACA564D268A0CC641 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/EngineConfig.cpp */,
+				2EAD82A3D53540A0833EFD14 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Platform.cpp */,
+				6318062101784C3492706ABE /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Window.mm */,
+				E05AE8F521784106ACC142DF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Debug/RenderDocIntegration.cpp */,
+				8183F6DFC3B34DBDACE538C5 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/MetalDevice.mm */,
+				9A112F7784A747ED9B297100 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/RHIFactory.cpp */,
+				8F2A5B661EC54D07A49CEA69 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/GPUScene.cpp */,
+				5FD3FFAC2A014179A020B382 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Material.cpp */,
+				21C71E41A03743E189E7228C /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Mesh.cpp */,
+				50824898A9C64EEC9E3A34CA /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Scene.cpp */,
+				501D857DD337440792A0F3BA /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/TextureManager.cpp */,
+				E2380C1EFFEF40799CC87708 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/stb_image_impl.cpp */,
+				058543F5FC25427A981C1EAF /* /Users/liuyuxuan/Documents/KiwiEngine/src/main.cpp */,
+				072615F65EFB410A8E0FDC46 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_metal.mm */,
+				C0F67F1360F641BE9622D249 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_osx.mm */,
+				F278443872154CE99063089F /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui.cpp */,
+				EAB783B10DEB467C8A6E0A77 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_demo.cpp */,
+				E5491092F33E4B4898706B46 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_draw.cpp */,
+				204289BA7B004F21B26624F6 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_tables.cpp */,
+				8D477F8189534D49BA055911 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_widgets.cpp */,
+			);
+			name = "Source Files";
+			sourceTree = "<group>";
+		};
+		2CFC79D1411B4CDEBC4FD2DA /* ALL_BUILD */ = {
+			isa = PBXGroup;
+			children = (
+				F185F324612C4177A8E89E47 /* CMake Rules */,
+				7CD57CF5EAA84558BC6F56F9 /* /Users/liuyuxuan/Documents/KiwiEngine/CMakeLists.txt */,
+			);
+			name = ALL_BUILD;
+			sourceTree = "<group>";
+		};
+		9C152963D2304B1FBF3822E1 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				4C08EFA875A8414E94E3328F /* /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		AD2AE7DF37874B71854B4D02 /* KiwiEngine */ = {
+			isa = PBXGroup;
+			children = (
+				1B52D08FCBBC4B2BA060AE08 /* Source Files */,
+				DFCC45B7CBBE4DFD814403DC /* Header Files */,
+				9C152963D2304B1FBF3822E1 /* Resources */,
+				A28A1884F91E4AC7B1041609 /* /Users/liuyuxuan/Documents/KiwiEngine/CMakeLists.txt */,
+			);
+			name = KiwiEngine;
+			sourceTree = "<group>";
+		};
+		B4DB7E3D5BAC41B8BAEB4D59 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		DFCC45B7CBBE4DFD814403DC /* Header Files */ = {
+			isa = PBXGroup;
+			children = (
+				B9363A2550A048CD805B4CCD /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Application.h */,
+				0125EFCAA2ED49CD8D44185A /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/EngineConfig.h */,
+				1DA96C6B0DE9494B9C0BB383 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Core/Window.h */,
+				5261336E879A4DA6ACE5CFD3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Debug/RenderDocIntegration.h */,
+				2B0ED5CC9AB54FDFA7B46138 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Math/Math.h */,
+				ACA5541F509544D082233E24 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Device.h */,
+				CAE9524D289B4DC49226458F /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Headers.h */,
+				5F4E608075A945ABA54E8411 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Resources.h */,
+				6C7CCC5D8AD84182942FEEC7 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX11/DX11Utils.h */,
+				BFD5BBFF74C04629BDAF07EE /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Device.h */,
+				0EA9C9CD9FE245FB8FA7B616 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Headers.h */,
+				B961AF77B07D4B578D1A9744 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DX12/DX12Resources.h */,
+				DB18244AC589480296741299 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/DXCCompiler.h */,
+				238EEB8FFE3641A7AD42ABD6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLDevice.h */,
+				F8CE29D46C1F4B87AEDC53EB /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLHeaders.h */,
+				3EE87818590B42EEB7C96307 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/GL/GLResources.h */,
+				477FC764983A484DAC154F1C /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHI.h */,
+				4500AF795FA64FF4B5F2C572 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/RHITypes.h */,
+				F5AB97B44A8E4FC9BF867E48 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanDevice.h */,
+				CE6DB9730D4F4823A83B4396 /* /Users/liuyuxuan/Documents/KiwiEngine/include/RHI/Vulkan/VulkanHeaders.h */,
+				0712A51C237C412BBBCCBDA6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/CameraComponent.h */,
+				1B3B2286EE2F4708BE7508B6 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Component.h */,
+				C02C970A810149F78206EACA /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/LightComponent.h */,
+				49EC84E2178A489BA3861F2A /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Material.h */,
+				0FF73CDF1B764DEF97CFD813 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Mesh.h */,
+				DD5E1F53E70A400CB82F9859 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/MeshComponent.h */,
+				3A5A47CB0D7945B58FE8E297 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessComponent.h */,
+				1195CFDD1CCE4B7FA66035F3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaderLibrary.h */,
+				1E169E1DABC54D0FA96C2CCE /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/PostProcessShaders.h */,
+				D566943443F04379BC098870 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Scene.h */,
+				750DCB56BAFE416DAAC7EE2B /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/SceneObject.h */,
+				C0D24203DCAE4E1CB7567DD9 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/ShaderLibrary.h */,
+				450F0BD64C7748A6B9EF8DAC /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/Shaders.h */,
+				774D9A09F84B49D181723DA3 /* /Users/liuyuxuan/Documents/KiwiEngine/include/Scene/TextureManager.h */,
+			);
+			name = "Header Files";
+			sourceTree = "<group>";
+		};
+		EBF17584C9E8452290A0A522 = {
+			isa = PBXGroup;
+			children = (
+				AD2AE7DF37874B71854B4D02 /* KiwiEngine */,
+				2CFC79D1411B4CDEBC4FD2DA /* ALL_BUILD */,
+				F81BA1C2FA6A4F09B6F337B0 /* Products */,
+				B4DB7E3D5BAC41B8BAEB4D59 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		F185F324612C4177A8E89E47 /* CMake Rules */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = "CMake Rules";
+			sourceTree = "<group>";
+		};
+		F81BA1C2FA6A4F09B6F337B0 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E167E6251B844F1893A69FFC /* KiwiEngine */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D568E8CB543845F494675C1F /* KiwiEngine */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 228E9836D8F24D889B87E4E5 /* Build configuration list for PBXNativeTarget "KiwiEngine" */;
+			buildPhases = (
+				05F3D39D7D604D3F9CC93EFA /* Sources */,
+				586082D4A9454B799C7137EB /* Frameworks */,
+				A4AF7E4518376577C7C31379 /* CMake PostBuild Rules */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				02B1857983AF4D7EBD590513 /* PBXTargetDependency */,
+			);
+			name = KiwiEngine;
+			productName = KiwiEngine;
+			productReference = E167E6251B844F1893A69FFC /* KiwiEngine */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D9A6FE894B684992AD69AAB2 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1510;
+			};
+			buildConfigurationList = 3CFC7C66132342D1B550CBF9 /* Build configuration list for PBXProject "KiwiEngine" */;
+			buildSettings = {
+			};
+			buildStyles = (
+				1C375749CC9845528858C55A /* Debug */,
+				4F0B2C873BD84BEC8163D5EC /* Release */,
+				0179EEA3628646E7876A153D /* MinSizeRel */,
+				7B77538B766644AFB57797BB /* RelWithDebInfo */,
+			);
+			compatibilityVersion = "Xcode 3.2";
+			hasScannedForEncodings = 0;
+			mainGroup = EBF17584C9E8452290A0A522;
+			projectDirPath = /Users/liuyuxuan/Documents/KiwiEngine;
+			projectRoot = "";
+			targets = (
+				F126B54F438A4DB389E5EE92 /* ALL_BUILD */,
+				D568E8CB543845F494675C1F /* KiwiEngine */,
+				1241F0C75B294C0B9F20FDDE /* ZERO_CHECK */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		02778B7B9BB9203FBA2413E8 /* Generate CMakeFiles/ALL_BUILD */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Generate CMakeFiles/ALL_BUILD";
+			outputPaths = (
+"/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/ALL_BUILD"			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e
+if test \"$CONFIGURATION\" = \"Debug\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  echo Build\\ all\\ projects
+fi
+if test \"$CONFIGURATION\" = \"Release\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  echo Build\\ all\\ projects
+fi
+if test \"$CONFIGURATION\" = \"MinSizeRel\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  echo Build\\ all\\ projects
+fi
+if test \"$CONFIGURATION\" = \"RelWithDebInfo\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  echo Build\\ all\\ projects
+fi
+";
+			showEnvVarsInLog = 0;
+		};
+		3C0110FC8322DE7E50886E21 = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# shell script goes here
+exit 0";
+			showEnvVarsInLog = 0;
+		};
+		9B50530E35CC49C82C2FACCF = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# shell script goes here
+exit 0";
+			showEnvVarsInLog = 0;
+		};
+		9E8D7380E5C3A4696B206C07 /* Generate CMakeFiles/ZERO_CHECK */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Generate CMakeFiles/ZERO_CHECK";
+			outputPaths = (
+"/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/ZERO_CHECK"			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e
+if test \"$CONFIGURATION\" = \"Debug\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  make -f /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeScripts/ReRunCMake.make
+fi
+if test \"$CONFIGURATION\" = \"Release\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  make -f /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeScripts/ReRunCMake.make
+fi
+if test \"$CONFIGURATION\" = \"MinSizeRel\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  make -f /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeScripts/ReRunCMake.make
+fi
+if test \"$CONFIGURATION\" = \"RelWithDebInfo\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  make -f /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeScripts/ReRunCMake.make
+fi
+";
+			showEnvVarsInLog = 0;
+		};
+		A4AF7E4518376577C7C31379 /* CMake PostBuild Rules */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			name = "CMake PostBuild Rules";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e
+if test \"$CONFIGURATION\" = \"Debug\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Shaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Shaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/GLShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/GLShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/MetalShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalPostProcess /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/MetalPostProcess
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/PostProcessShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/PostProcessShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Config /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Config
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Textures /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Textures
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Materials /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Materials
+fi
+if test \"$CONFIGURATION\" = \"Release\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Shaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Shaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/GLShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/GLShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/MetalShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalPostProcess /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/MetalPostProcess
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/PostProcessShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/PostProcessShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Config /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Config
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Textures /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Textures
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Materials /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/KiwiEngine.app/Contents/Resources/Materials
+fi
+if test \"$CONFIGURATION\" = \"MinSizeRel\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Shaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/Shaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/GLShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/GLShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/MetalShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalPostProcess /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/MetalPostProcess
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/PostProcessShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/PostProcessShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Config /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/Config
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Textures /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/Textures
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Materials /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel/KiwiEngine.app/Contents/Resources/Materials
+fi
+if test \"$CONFIGURATION\" = \"RelWithDebInfo\"; then :
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Shaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/Shaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/GLShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/GLShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/MetalShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/MetalPostProcess /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/MetalPostProcess
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/PostProcessShaders /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/PostProcessShaders
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Config /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/Config
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Textures /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/Textures
+  cd /Users/liuyuxuan/Documents/KiwiEngine/build-xcode
+  /usr/local/Cellar/cmake/3.25.1/bin/cmake -E copy_directory /Users/liuyuxuan/Documents/KiwiEngine/Materials /Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo/KiwiEngine.app/Contents/Resources/Materials
+fi
+";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		05F3D39D7D604D3F9CC93EFA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA3CF7453110455F81572C05 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Application.cpp */,
+				413136DD1F9E4EE2B34C1C72 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/EngineConfig.cpp */,
+				407F6E1563414353B2EF5BBE /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Platform.cpp */,
+				E8A1BA26687F4E98893299DF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Core/Window.mm */,
+				9339AFE92F864A32ADB8EFFF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Debug/RenderDocIntegration.cpp */,
+				A5ECD41BDC634290AB079FCE /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/MetalDevice.mm */,
+				DAACA249897E4645942D7138 /* /Users/liuyuxuan/Documents/KiwiEngine/src/RHI/RHIFactory.cpp */,
+				A3852670113842C49E2F47ED /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/GPUScene.cpp */,
+				22A8BBEEF75C4F49AE93F212 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Material.cpp */,
+				8154E34A443641FEBEDBB044 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Mesh.cpp */,
+				3F7E740A2FC34CF5BB49942E /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/Scene.cpp */,
+				8050490227354674B1AD6578 /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/TextureManager.cpp */,
+				AB146771D7184BB690CF5DCF /* /Users/liuyuxuan/Documents/KiwiEngine/src/Scene/stb_image_impl.cpp */,
+				1075DE4E4F02473AA9F3BD5E /* /Users/liuyuxuan/Documents/KiwiEngine/src/main.cpp */,
+				C4BB0C6530204C17A96412AD /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_metal.mm */,
+				BD2E179FE4E941CEB3AB8610 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends/imgui_impl_osx.mm */,
+				562406DF8A6949888E3E7841 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui.cpp */,
+				87FFCA36C12D4699A6FF47EE /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_demo.cpp */,
+				8E035BD0FE9F4FB5993823D8 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_draw.cpp */,
+				7FE37E150DA94B9ABF24C9FE /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_tables.cpp */,
+				C26790BB914D448F9AA79FA0 /* /Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/imgui_widgets.cpp */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		02B1857983AF4D7EBD590513 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1241F0C75B294C0B9F20FDDE /* ZERO_CHECK */;
+			targetProxy = B984EE800CC04EF2BEEF9DE8 /* PBXContainerItemProxy */;
+		};
+		14611EE0C4C84043942770E0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D568E8CB543845F494675C1F /* KiwiEngine */;
+			targetProxy = 4806D626CEA84EBFBB36D535 /* PBXContainerItemProxy */;
+		};
+		EA102A7875EF419186F2C05E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1241F0C75B294C0B9F20FDDE /* ZERO_CHECK */;
+			targetProxy = A23092D4002640C0B8208A54 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		08E01C973C1F4826B701BDB7 /* RelWithDebInfo */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ALL_BUILD;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = RelWithDebInfo;
+		};
+		12360FAAABAC4A16AEBC1E54 /* RelWithDebInfo */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ZERO_CHECK;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = RelWithDebInfo;
+		};
+		260805286DAA48CBA04E2BA4 /* MinSizeRel */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SYMROOT = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build";
+			};
+			name = MinSizeRel;
+		};
+		486F50317CA4483DA9C4ECF5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ALL_BUILD;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = Release;
+		};
+		4D28DD4539804B019228FEB9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SYMROOT = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build";
+			};
+			name = Debug;
+		};
+		4DAC5EA0C3784B12A3FF566F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SYMROOT = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build";
+			};
+			name = Release;
+		};
+		4F8D05DE7B584FEA8D3AF637 /* MinSizeRel */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ALL_BUILD;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = MinSizeRel;
+		};
+		514F29B2DBFA488D93B97107 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ZERO_CHECK;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = Debug;
+		};
+		7956B194C265452DB7F44D3A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ZERO_CHECK;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = Release;
+		};
+		7D6E204CFD5744DCBC9D29D1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = /Users/liuyuxuan/Documents/KiwiEngine/apple/KiwiEngine.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CONFIGURATION_BUILD_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin";
+				ENABLE_HARDENED_RUNTIME = NO;
+				EXECUTABLE_PREFIX = "";
+				EXECUTABLE_SUFFIX = "";
+				GCC_GENERATE_DEBUGGING_SYMBOLS = NO;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 3;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'",NDEBUG,KIWI_RELEASE,"$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				HEADER_SEARCH_PATHS = (/Users/liuyuxuan/Documents/KiwiEngine/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party,/Users/liuyuxuan/Documents/KiwiEngine/third_party/renderdoc,"/Users/liuyuxuan/Documents/KiwiEngine/third_party/vulkan-headers/include",/Users/liuyuxuan/Documents/KiwiEngine/third_party/glad/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends,"$(inherited)");
+				INFOPLIST_FILE = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist";
+				INSTALL_PATH = "";
+				OTHER_CPLUSPLUSFLAGS = "    -DNDEBUG '-std=c++17' ";
+				OTHER_LDFLAGS = (" -Wl,-search_paths_first -Wl,-headerpad_max_install_names","-framework Metal","-framework QuartzCore","-framework Cocoa","-framework AppKit","-framework GameController","-lobjc","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.kiwi.engine;
+				PRODUCT_NAME = KiwiEngine;
+				SECTORDER_FLAGS = "";
+				TARGET_TEMP_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build/KiwiEngine.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = Release;
+		};
+		A2811161EC2A4CDE993BE07C /* RelWithDebInfo */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = /Users/liuyuxuan/Documents/KiwiEngine/apple/KiwiEngine.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CONFIGURATION_BUILD_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/RelWithDebInfo";
+				ENABLE_HARDENED_RUNTIME = NO;
+				EXECUTABLE_PREFIX = "";
+				EXECUTABLE_SUFFIX = "";
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 2;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				HEADER_SEARCH_PATHS = (/Users/liuyuxuan/Documents/KiwiEngine/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party,/Users/liuyuxuan/Documents/KiwiEngine/third_party/renderdoc,"/Users/liuyuxuan/Documents/KiwiEngine/third_party/vulkan-headers/include",/Users/liuyuxuan/Documents/KiwiEngine/third_party/glad/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends,"$(inherited)");
+				INFOPLIST_FILE = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist";
+				INSTALL_PATH = "";
+				OTHER_CPLUSPLUSFLAGS = "       -DNDEBUG '-std=c++17' ";
+				OTHER_LDFLAGS = (" -Wl,-search_paths_first -Wl,-headerpad_max_install_names","-framework Metal","-framework QuartzCore","-framework Cocoa","-framework AppKit","-framework GameController","-lobjc","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.kiwi.engine;
+				PRODUCT_NAME = KiwiEngine;
+				SECTORDER_FLAGS = "";
+				TARGET_TEMP_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build/KiwiEngine.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = RelWithDebInfo;
+		};
+		BAA9AA6486EC4E92A7BFFB14 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ALL_BUILD;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = Debug;
+		};
+		C52426C951E345E1A1A5C590 /* MinSizeRel */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				INSTALL_PATH = "";
+				OTHER_LDFLAGS = ("","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_NAME = ZERO_CHECK;
+				SECTORDER_FLAGS = "";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = MinSizeRel;
+		};
+		E0B75E495450425DB9677081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = /Users/liuyuxuan/Documents/KiwiEngine/apple/KiwiEngine.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CONFIGURATION_BUILD_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin";
+				ENABLE_HARDENED_RUNTIME = NO;
+				EXECUTABLE_PREFIX = "";
+				EXECUTABLE_SUFFIX = "";
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'",_DEBUG,KIWI_DEBUG,"$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				HEADER_SEARCH_PATHS = (/Users/liuyuxuan/Documents/KiwiEngine/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party,/Users/liuyuxuan/Documents/KiwiEngine/third_party/renderdoc,"/Users/liuyuxuan/Documents/KiwiEngine/third_party/vulkan-headers/include",/Users/liuyuxuan/Documents/KiwiEngine/third_party/glad/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends,"$(inherited)");
+				INFOPLIST_FILE = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist";
+				INSTALL_PATH = "";
+				OTHER_CPLUSPLUSFLAGS = "   '-std=c++17' ";
+				OTHER_LDFLAGS = (" -Wl,-search_paths_first -Wl,-headerpad_max_install_names","-framework Metal","-framework QuartzCore","-framework Cocoa","-framework AppKit","-framework GameController","-lobjc","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.kiwi.engine;
+				PRODUCT_NAME = KiwiEngine;
+				SECTORDER_FLAGS = "";
+				TARGET_TEMP_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build/KiwiEngine.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = Debug;
+		};
+		F29CCB9277164F24AC586D0D /* RelWithDebInfo */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(NATIVE_ARCH_ACTUAL)";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SYMROOT = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build";
+			};
+			name = RelWithDebInfo;
+		};
+		F33488E5057E4A3DB6715AF9 /* MinSizeRel */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = /Users/liuyuxuan/Documents/KiwiEngine/apple/KiwiEngine.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CONFIGURATION_BUILD_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/bin/MinSizeRel";
+				ENABLE_HARDENED_RUNTIME = NO;
+				EXECUTABLE_PREFIX = "";
+				EXECUTABLE_SUFFIX = "";
+				GCC_GENERATE_DEBUGGING_SYMBOLS = NO;
+				GCC_INLINES_ARE_PRIVATE_EXTERN = NO;
+				GCC_OPTIMIZATION_LEVEL = s;
+				GCC_PREPROCESSOR_DEFINITIONS = ("'CMAKE_INTDIR=\"$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)\"'","$(inherited)");
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				HEADER_SEARCH_PATHS = (/Users/liuyuxuan/Documents/KiwiEngine/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party,/Users/liuyuxuan/Documents/KiwiEngine/third_party/renderdoc,"/Users/liuyuxuan/Documents/KiwiEngine/third_party/vulkan-headers/include",/Users/liuyuxuan/Documents/KiwiEngine/third_party/glad/include,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui,/Users/liuyuxuan/Documents/KiwiEngine/third_party/imgui/backends,"$(inherited)");
+				INFOPLIST_FILE = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/CMakeFiles/KiwiEngine.dir/Info.plist";
+				INSTALL_PATH = "";
+				OTHER_CPLUSPLUSFLAGS = "    -DNDEBUG '-std=c++17' ";
+				OTHER_LDFLAGS = (" -Wl,-search_paths_first -Wl,-headerpad_max_install_names","-framework Metal","-framework QuartzCore","-framework Cocoa","-framework AppKit","-framework GameController","-lobjc","$(inherited)");
+				OTHER_REZFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.kiwi.engine;
+				PRODUCT_NAME = KiwiEngine;
+				SECTORDER_FLAGS = "";
+				TARGET_TEMP_DIR = "/Users/liuyuxuan/Documents/KiwiEngine/build-xcode/build/KiwiEngine.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
+				USE_HEADERMAP = NO;
+				WARNING_CFLAGS = ("$(inherited)");
+			};
+			name = MinSizeRel;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		228E9836D8F24D889B87E4E5 /* Build configuration list for PBXNativeTarget "KiwiEngine" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E0B75E495450425DB9677081 /* Debug */,
+				7D6E204CFD5744DCBC9D29D1 /* Release */,
+				F33488E5057E4A3DB6715AF9 /* MinSizeRel */,
+				A2811161EC2A4CDE993BE07C /* RelWithDebInfo */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		3CFC7C66132342D1B550CBF9 /* Build configuration list for PBXProject "KiwiEngine" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4D28DD4539804B019228FEB9 /* Debug */,
+				4DAC5EA0C3784B12A3FF566F /* Release */,
+				260805286DAA48CBA04E2BA4 /* MinSizeRel */,
+				F29CCB9277164F24AC586D0D /* RelWithDebInfo */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7D14FEA58BCA46A6925FB54E /* Build configuration list for PBXAggregateTarget "ALL_BUILD" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BAA9AA6486EC4E92A7BFFB14 /* Debug */,
+				486F50317CA4483DA9C4ECF5 /* Release */,
+				4F8D05DE7B584FEA8D3AF637 /* MinSizeRel */,
+				08E01C973C1F4826B701BDB7 /* RelWithDebInfo */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F778BBC4C03A4DE4B3719DDD /* Build configuration list for PBXAggregateTarget "ZERO_CHECK" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				514F29B2DBFA488D93B97107 /* Debug */,
+				7956B194C265452DB7F44D3A /* Release */,
+				C52426C951E345E1A1A5C590 /* MinSizeRel */,
+				12360FAAABAC4A16AEBC1E54 /* RelWithDebInfo */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = D9A6FE894B684992AD69AAB2 /* Project object */;
+}

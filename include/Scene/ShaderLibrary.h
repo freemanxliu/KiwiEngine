@@ -3,6 +3,7 @@
 #include "RHI/RHI.h"
 #include "Scene/Shaders.h"
 #include "Scene/GLShaders.h"
+#include "Scene/MetalShaders.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -152,11 +153,20 @@ namespace Kiwi
             auto shader = std::make_unique<CompiledShader>();
             shader->Name = "Default";
 
-            bool isGL = (device->GetApiType() == RHI_API_TYPE::OPENGL);
-            const char* vsSrc = isGL ? g_VertexShaderGLSL : g_VertexShaderHLSL;
-            const char* psSrc = isGL ? g_PixelShaderGLSL  : g_PixelShaderHLSL;
-            const char* vsEntry = isGL ? "main" : "main";
-            const char* psEntry = isGL ? "main" : "main";
+            const char* vsSrc = g_VertexShaderHLSL;
+            const char* psSrc = g_PixelShaderHLSL;
+            if (device->GetApiType() == RHI_API_TYPE::OPENGL)
+            {
+                vsSrc = g_VertexShaderGLSL;
+                psSrc = g_PixelShaderGLSL;
+            }
+            else if (device->GetApiType() == RHI_API_TYPE::METAL)
+            {
+                vsSrc = g_VertexShaderMSL;
+                psSrc = g_PixelShaderMSL;
+            }
+            const char* vsEntry = "main";
+            const char* psEntry = "main";
 
             shader->VertexShader = device->CompileShader(
                 EShaderType::Vertex, vsSrc, vsEntry, "vs_5_0");
@@ -189,7 +199,8 @@ namespace Kiwi
                 auto ext = entry.path().extension().string();
                 bool isHLSL = (ext == ".hlsl" || ext == ".HLSL");
                 bool isGLSL = (ext == ".glsl" || ext == ".GLSL");
-                if (!isHLSL && !isGLSL) continue;
+                bool isMetal = (ext == ".metal" || ext == ".METAL");
+                if (!isHLSL && !isGLSL && !isMetal) continue;
 
                 std::string name = entry.path().stem().string();
 

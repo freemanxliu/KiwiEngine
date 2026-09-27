@@ -1,6 +1,6 @@
 #include "Core/EngineConfig.h"
+#include "Core/Platform.h"
 
-#include <Windows.h>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -85,24 +85,14 @@ namespace Kiwi
         if (m_Loaded)
             return true;
 
-        // Get exe directory
-        char exePath[MAX_PATH] = {};
-        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-        std::string exeDir(exePath);
-        size_t lastSlash = exeDir.find_last_of("\\/");
-        if (lastSlash != std::string::npos)
-            exeDir = exeDir.substr(0, lastSlash);
-
+        std::string exeDir = GetExecutableDirectory();
         namespace fs = std::filesystem;
 
-        // Search order:
-        // 1. Config/DefaultEngine.ini relative to exe
-        // 2. ../../Config/DefaultEngine.ini (exe in build/bin/, source is ../../)
-        // 3. DefaultEngine.ini relative to exe (flat layout)
         std::string searchPaths[] = {
-            exeDir + "\\Config\\DefaultEngine.ini",
-            exeDir + "\\..\\..\\Config\\DefaultEngine.ini",
-            exeDir + "\\DefaultEngine.ini",
+            exeDir + "/../Resources/Config/DefaultEngine.ini",
+            exeDir + "/Config/DefaultEngine.ini",
+            exeDir + "/../../Config/DefaultEngine.ini",
+            exeDir + "/DefaultEngine.ini",
         };
 
         for (const auto& path : searchPaths)
