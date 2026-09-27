@@ -29,6 +29,7 @@ struct VSInput
     float4 Tangent  : TANGENT;
     float4 Color    : COLOR;
     float2 TexCoord : TEXCOORD;
+    uint   InstanceID : SV_InstanceID;
 };
 
 struct VSOutput
@@ -38,6 +39,7 @@ struct VSOutput
     float3 NormalWS   : NORMAL;
     float4 Color      : COLOR;
     float2 TexCoord   : TEXCOORD;
+    nointerpolation float Selected : TEXCOORD1;
 };
 
 // ---- Vertex Shader ----
@@ -45,15 +47,17 @@ VSOutput VSMain(VSInput input)
 {
     VSOutput output;
 
-    float4 worldPos = mul(float4(input.Position, 1.0), g_World);
+    GPUObject obj = GetGPUObject(input.InstanceID);
+    float4 worldPos = mul(float4(input.Position, 1.0), obj.World);
     float4 viewPos = mul(worldPos, g_View);
     float4 projPos = mul(viewPos, g_Projection);
 
     output.PositionCS = projPos;
     output.PositionWS = worldPos.xyz;
-    output.NormalWS = mul(input.Normal, (float3x3)g_World);
-    output.Color = input.Color * g_ObjectColor;
+    output.NormalWS = mul(input.Normal, (float3x3)obj.World);
+    output.Color = input.Color * obj.Color;
     output.TexCoord = input.TexCoord;
+    output.Selected = obj.Selected;
 
     return output;
 }
@@ -62,9 +66,9 @@ VSOutput VSMain(VSInput input)
 float4 PSMain(VSOutput input) : SV_TARGET
 {
     // Gizmo / unlit mode
-    if (g_Selected > 1.5)
+    if (input.Selected > 1.5)
     {
-        return float4(input.Color.rgb * g_ObjectColor.rgb, input.Color.a);
+        return float4(input.Color.rgb, input.Color.a);
     }
 
     float3 normal = normalize(input.NormalWS);

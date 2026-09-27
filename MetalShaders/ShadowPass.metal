@@ -23,37 +23,25 @@ struct KiwiView
     float4x4 projection;
 };
 
-struct KiwiObject
+struct InstanceSceneData
 {
     float4x4 world;
-    float4 pad[12]; // PrimitiveUniformBuffer is 256 bytes
+    uint4 primitiveId;
 };
 
-static VSOut TransformShadow(VSIn in, constant KiwiView& viewUB, float4x4 world)
+vertex VSOut VSMain(VSIn in [[stage_in]],
+                    constant KiwiView& viewUB [[buffer(0)]],
+                    constant uint4& drawInfo [[buffer(4)]],
+                    const device InstanceSceneData* instances [[buffer(8)]],
+                    const device uint4* drawIds [[buffer(10)]],
+                    uint svInstanceId [[instance_id]])
 {
+    uint instanceId = drawIds[drawInfo.x + svInstanceId].x;
+    float4x4 world = instances[instanceId].world;
     VSOut out;
-    float4 worldPos = world * float4(in.position, 1.0);
-    out.position = viewUB.projection * viewUB.view * worldPos;
+    out.position = viewUB.projection * viewUB.view * (world * float4(in.position, 1.0));
     return out;
 }
-
-#ifdef USE_GPU_SCENE_INSTANCING
-vertex VSOut VSMain(VSIn in [[stage_in]],
-                    constant KiwiView& viewUB [[buffer(0)]],
-                    const device KiwiObject* scene [[buffer(8)]],
-                    constant uint4& batch [[buffer(4)]],
-                    uint instanceId [[instance_id]])
-{
-    return TransformShadow(in, viewUB, scene[batch.x + instanceId].world);
-}
-#else
-vertex VSOut VSMain(VSIn in [[stage_in]],
-                    constant KiwiView& viewUB [[buffer(0)]],
-                    constant KiwiObject& objUB [[buffer(1)]])
-{
-    return TransformShadow(in, viewUB, objUB.world);
-}
-#endif
 
 //!FRAGMENT
 fragment void PSMain()

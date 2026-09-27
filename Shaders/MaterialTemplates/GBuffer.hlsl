@@ -11,6 +11,7 @@ struct VSInput
     float4 Tangent  : TANGENT;
     float4 Color    : COLOR;
     float2 TexCoord : TEXCOORD;
+    uint   InstanceID : SV_InstanceID;
 };
 
 struct VSOutput
@@ -53,16 +54,17 @@ VSOutput VSMain(VSInput input)
     if (dot(n, n) < 1e-8)
         n = float3(0.0, 0.0, 1.0);
 
-    float4 worldPos = mul(float4(input.Position, 1.0), g_World);
+    GPUObject obj = GetGPUObject(input.InstanceID);
+    float4 worldPos = mul(float4(input.Position, 1.0), obj.World);
     output.PositionCS = mul(mul(worldPos, g_View), g_Projection);
-    output.NormalWS = normalize(mul(n, (float3x3)g_World));
-    output.Color = input.Color * g_ObjectColor;
+    output.NormalWS = normalize(mul(n, (float3x3)obj.World));
+    output.Color = input.Color * obj.Color;
     output.TexCoord = input.TexCoord;
-    output.Roughness = g_Roughness;
-    output.Metallic = g_Metallic;
-    output.HasBaseColorTex = g_HasBaseColorTex;
-    output.ShadingModelID = g_ShadingModelID;
-    output.Emissive = g_ObjectPadding;
+    output.Roughness = obj.Roughness;
+    output.Metallic = obj.Metallic;
+    output.HasBaseColorTex = obj.HasBaseColorTex;
+    output.ShadingModelID = obj.ShadingModelID;
+    output.Emissive = obj.Emissive;
     return output;
 }
 

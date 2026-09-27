@@ -1,25 +1,35 @@
 #include "Scene/MeshPassProcessor.h"
+#include "Scene/GPUScene.h"
 #include "Scene/ShaderLibrary.h"
 
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 namespace Kiwi
 {
 
-void MeshPassProcessor::Process(const std::vector<MeshBatch>& batches)
+static bool SameDrawState(const MeshDrawCommand& a, const MeshDrawCommand& b)
 {
-    m_Commands.clear();
-    for (const MeshBatch& batch : batches)
-    {
-        if (ShouldDraw(batch))
-            AddMeshBatch(batch);
-    }
+    const char* matA = a.MaterialName ? a.MaterialName : "";
+    const char* matB = b.MaterialName ? b.MaterialName : "";
+    return a.Shader.PSO == b.Shader.PSO
+        && a.Shader.VertexShader == b.Shader.VertexShader
+        && a.Shader.PixelShader == b.Shader.PixelShader
+        && a.VertexBuffer == b.VertexBuffer
+        && a.IndexBuffer == b.IndexBuffer
+        && a.IndexCount == b.IndexCount
+        && a.CullMode == b.CullMode
+        && strcmp(matA, matB) == 0;
+}
 
-    std::stable_sort(m_Commands.begin(), m_Commands.end(), [](const MeshDrawCommand& a, const MeshDrawCommand& b)
+static void MergeDrawCommands(std::vector<MeshDrawCommand>& commands, GPUScene& gpuScene)
+{
+    if (commands.empty())
+        return;
+
+    std::stable_sort(commands.begin(), commands.end(), [](const MeshDrawCommand& a, const MeshDrawCommand& b)
     {
-        if (a.bInstanced != b.bInstanced)
-            return a.bInstanced > b.bInstanced;
         if (a.Shader.PSO != b.Shader.PSO)
             return a.Shader.PSO < b.Shader.PSO;
         if (a.Shader.VertexShader != b.Shader.VertexShader)
@@ -28,10 +38,50 @@ void MeshPassProcessor::Process(const std::vector<MeshBatch>& batches)
             return a.Shader.PixelShader < b.Shader.PixelShader;
         if (a.VertexBuffer != b.VertexBuffer)
             return a.VertexBuffer < b.VertexBuffer;
+        if (a.IndexBuffer != b.IndexBuffer)
+            return a.IndexBuffer < b.IndexBuffer;
+        if (a.IndexCount != b.IndexCount)
+            return a.IndexCount < b.IndexCount;
+        if (a.CullMode != b.CullMode)
+            return (int)a.CullMode < (int)b.CullMode;
         const char* matA = a.MaterialName ? a.MaterialName : "";
         const char* matB = b.MaterialName ? b.MaterialName : "";
         return strcmp(matA, matB) < 0;
     });
+
+    std::vector<MeshDrawCommand> merged;
+    merged.reserve(commands.size());
+    size_t run = 0;
+    while (run < commands.size())
+    {
+        size_t end = run + 1;
+        while (end < commands.size() && SameDrawState(commands[run], commands[end]))
+            ++end;
+
+        std::vector<uint32_t> ids;
+        ids.reserve(end - run);
+        for (size_t i = run; i < end; ++i)
+            ids.push_back(commands[i].InstanceId);
+
+        MeshDrawCommand command = commands[run];
+        command.NumInstances = (uint32_t)ids.size();
+        command.bInstanced = ids.size() > 1;
+        command.DrawInstanceOffset = gpuScene.AppendDrawInstanceIds(ids.data(), command.NumInstances);
+        merged.push_back(command);
+        run = end;
+    }
+    commands.swap(merged);
+}
+
+void MeshPassProcessor::Process(const std::vector<MeshBatch>& batches, GPUScene& gpuScene)
+{
+    m_Commands.clear();
+    for (const MeshBatch& batch : batches)
+    {
+        if (ShouldDraw(batch))
+            AddMeshBatch(batch);
+    }
+    MergeDrawCommands(m_Commands, gpuScene);
 }
 
 static MeshDrawCommand MakeCommand(const MeshBatch& batch, const MeshBatchElement& element,
@@ -46,10 +96,9 @@ static MeshDrawCommand MakeCommand(const MeshBatch& batch, const MeshBatchElemen
     command.IndexCount = element.NumIndices;
     command.FirstIndex = element.FirstIndex;
     command.BaseVertexIndex = element.BaseVertexIndex;
-    command.NumInstances = instanced ? (uint32_t)batch.Elements.size() : 1;
-    command.bInstanced = instanced;
-    command.PrimitiveId = element.PrimitiveId;
-    command.InstanceOffset = batch.InstanceOffset;
+    command.NumInstances = 1;
+    command.bInstanced = false;
+    command.InstanceId = element.InstanceId;
     command.bBindMaterial = bindMaterial;
     command.Mesh = element.Mesh;
     command.MaterialName = batch.MaterialName.c_str();
@@ -68,32 +117,13 @@ void ShadowDepthPassProcessor::AddMeshBatch(const MeshBatch& batch)
     if (batch.Elements.empty())
         return;
 
-    const MeshPassShader instanced = ShaderForPass(batch, EMaterialPass::Depth, true);
-    const bool useInstanced = batch.bCanBeInstanced
-        && instanced.PSO
-        && instanced.VertexShader
-        && HasGeometry(batch.Elements[0]);
-    if (useInstanced)
-    {
-        AddCommand(MakeCommand(batch, batch.Elements[0], instanced, true, false));
-        return;
-    }
-
-    const MeshPassShader single = ShaderForPass(batch, EMaterialPass::Depth, false);
+    const MeshPassShader shader = ShaderForPass(batch, EMaterialPass::Depth, false);
     for (const MeshBatchElement& element : batch.Elements)
     {
-        if (!HasGeometry(element) || !single.VertexShader)
+        if (!HasGeometry(element) || !shader.VertexShader)
             continue;
-        AddCommand(MakeCommand(batch, element, single, false, false));
+        AddCommand(MakeCommand(batch, element, shader, false, false));
     }
-}
-
-bool BasePassProcessor::CanInstance(const MeshBatch& batch) const
-{
-    if (!batch.bCanBeInstanced || m_Config.ForcedShader)
-        return false;
-    const MeshPassShader instanced = ShaderForPass(batch, m_Config.MaterialPass, true);
-    return instanced.PSO && instanced.VertexShader;
 }
 
 MeshPassShader BasePassProcessor::ResolveSingleShader(const MeshBatch& batch) const
@@ -117,13 +147,6 @@ void BasePassProcessor::AddMeshBatch(const MeshBatch& batch)
 {
     if (batch.Elements.empty())
         return;
-
-    if (CanInstance(batch) && HasGeometry(batch.Elements[0]))
-    {
-        MeshPassShader instanced = ShaderForPass(batch, m_Config.MaterialPass, true);
-        AddCommand(MakeCommand(batch, batch.Elements[0], instanced, true, m_Config.bBindMaterials));
-        return;
-    }
 
     MeshPassShader shader = ResolveSingleShader(batch);
     if (!shader.VertexShader)

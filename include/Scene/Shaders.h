@@ -65,9 +65,35 @@ namespace Kiwi
         float ObjectPadding[3];      // pad to 16-byte row
         float _Reserved[35];         // pad struct to 256 bytes total (116 + 140 = 256)
     };
-    // Size: 256 bytes (aligned for GPU Scene offset binding)
-    static constexpr uint32_t OBJECT_UB_STRIDE = 256;  // per-primitive stride in GPU Scene buffer
+    // Size: 256 bytes (aligned for legacy object constant buffers)
+    static constexpr uint32_t OBJECT_UB_STRIDE = 256;
     static constexpr uint32_t MAX_GPU_SCENE_PRIMITIVES = 1024;
+
+    // Primitive scene data. One entry per mesh, indexed by PrimitiveId.
+    struct PrimitiveSceneData
+    {
+        float ObjectColor[4];
+        float Material0[4]; // selected, roughness, metallic, hasBaseColorTex
+        float Material1[4]; // hasNormalTex, shadingModel, emissive.r, emissive.g
+        float Material2[4]; // emissive.b
+        uint32_t InstanceSceneDataOffset;
+        uint32_t NumInstances;
+        uint32_t Pad[2];
+    };
+
+    // Instance scene data. Indexed by InstanceId. Points back at its primitive.
+    struct InstanceSceneData
+    {
+        float WorldMatrix[16];
+        uint32_t PrimitiveId;
+        uint32_t Pad[3];
+    };
+
+    struct DrawInstanceId
+    {
+        uint32_t Id;
+        uint32_t Pad[3];
+    };
 
     // ---- Shadow Uniform Buffer (b2) — per-frame CSM data ----
     struct ShadowUniformBuffer

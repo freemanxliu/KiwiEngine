@@ -4,121 +4,14 @@
 #include "Scene/MeshComponent.h"
 #include "Scene/Material.h"
 #include <cstring>
-#include <iostream>
-#include <algorithm>
-
-// Forward declare RenderItem (defined in main.cpp but we only need MeshID/MaterialName)
-// The struct is passed by const reference from the caller.
+#include <unordered_set>
 
 namespace Kiwi
 {
-    // Need RenderItem definition — it's declared in main.cpp as a local struct.
-    // We only access it via the interface, so we use a forward-compatible approach:
-    // The Update() function receives RenderItem by const ref from main.cpp.
-    // To avoid circular dependency, we define a minimal compatible struct here for
-    // accessing the fields we need. The actual struct must match main.cpp's layout.
 
-    void GPUScene::Initialize(RHIDevice* device)
-    {
-        m_Device = device;
-
-        // Constant Buffer: for single-draw CB offset binding (b1)
-        BufferDesc cbDesc;
-        cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-        cbDesc.Usage = EResourceUsage::Dynamic;
-        cbDesc.DebugName = "GPUScene_CB";
-        cbDesc.SizeInBytes = MAX_GPU_SCENE_PRIMITIVES * OBJECT_UB_STRIDE;
-        m_ConstantBuffer = device->CreateBuffer(cbDesc);
-
-        // BatchUB: small CB for g_BatchStartIndex (b4)
-        BufferDesc batchDesc;
-        batchDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-        batchDesc.Usage = EResourceUsage::Dynamic;
-        batchDesc.DebugName = "GPUScene_BatchUB";
-        batchDesc.SizeInBytes = 16; // uint + uint3 padding
-        m_BatchUB = device->CreateBuffer(batchDesc);
-
-        m_PrimitiveData.resize(MAX_GPU_SCENE_PRIMITIVES);
-        m_NumPrimitives = 0;
-        m_Dirty = true;
-    }
-
-    void GPUScene::Release()
-    {
-        m_ConstantBuffer.reset();
-        m_StructuredBuffer.reset();
-        m_StructuredSRV.reset();
-        m_BatchUB.reset();
-        m_PrimitiveData.clear();
-        m_MeshBatches.clear();
-        m_RenderListToGPUScene.clear();
-        m_NumPrimitives = 0;
-        m_Device = nullptr;
-    }
-
-    void GPUScene::Update(Scene& scene, MaterialLibrary& materialLibrary,
-                          const std::vector<RenderItem>& renderList)
-    {
-        auto* selectedObj = scene.GetSelectedObject();
-        auto& objects = scene.GetObjects();
-
-        m_NumPrimitives = 0;
-        m_RenderListToGPUScene.resize(renderList.size());
-        std::vector<uint32_t> primitiveRenderIndices;
-        primitiveRenderIndices.reserve(renderList.size());
-
-        // Fill primitive data in RenderList order. BuildBatches reorders it to match MeshBatchKey.
-        for (uint32_t ri = 0; ri < (uint32_t)renderList.size() && m_NumPrimitives < MAX_GPU_SCENE_PRIMITIVES; ++ri)
-        {
-            const auto& item = renderList[ri];
-            auto* meshComp = item.MeshComp;
-            if (!meshComp) continue;
-
-            uint32_t gpuIdx = m_NumPrimitives;
-            m_RenderListToGPUScene[ri] = gpuIdx;
-
-            PrimitiveUniformBuffer& oub = m_PrimitiveData[gpuIdx];
-            memset(&oub, 0, sizeof(oub));
-
-            // World transform
-            Mat4 worldMatrix = meshComp->GetWorldMatrix();
-            memcpy(oub.WorldMatrix, worldMatrix.m, sizeof(worldMatrix.m));
-
-            // Material instance parameters, falling back to the parent asset.
-            Material* mat = materialLibrary.GetMaterial(meshComp->Material.Parent);
-            const MaterialInstance& instance = meshComp->Material;
-            Vec4 color = instance.GetColor(mat, "_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
-            float roughness = instance.GetFloat(mat, "_Roughness", 0.5f);
-            float metallic  = instance.GetFloat(mat, "_Metallic",  0.0f);
-            std::string baseColorTex = instance.GetTexture(mat, "_BaseColorTex");
-            std::string normalTex    = instance.GetTexture(mat, "_NormalTex");
-
-            oub.ObjectColor[0] = color.x;
-            oub.ObjectColor[1] = color.y;
-            oub.ObjectColor[2] = color.z;
-            oub.ObjectColor[3] = color.w;
-
-            // Check selection
-            oub.Selected = (objects[item.ObjectIndex].get() == selectedObj) ? 1.0f : 0.0f;
-
-            oub.Roughness = roughness;
-            oub.Metallic  = metallic;
-            oub.HasBaseColorTex = baseColorTex.empty() ? 0.0f : 1.0f;
-            oub.HasNormalTex    = normalTex.empty()    ? 0.0f : 1.0f;
-            oub.ShadingModelID  = mat ? (float)(uint8_t)mat->ShadingModel : 1.0f;
-            Vec4 emissive = instance.GetColor(mat, "_Emissive", { 0, 0, 0, 1 });
-            oub.ObjectPadding[0] = emissive.x;
-            oub.ObjectPadding[1] = emissive.y;
-            oub.ObjectPadding[2] = emissive.z;
-
-            primitiveRenderIndices.push_back(ri);
-            ++m_NumPrimitives;
-        }
-
-        BuildBatches(renderList, primitiveRenderIndices, materialLibrary);
-
-        m_Dirty = true;
-    }
+    static_assert(sizeof(PrimitiveSceneData) == 80, "PrimitiveSceneData stride must match the shader");
+    static_assert(sizeof(InstanceSceneData) == 80, "InstanceSceneData stride must match the shader");
+    static_assert(sizeof(DrawInstanceId) == 16, "DrawInstanceId stride must match the shader");
 
     MeshBatchKey MakeMeshBatchKey(const RenderItem& item, MaterialLibrary& materialLibrary)
     {
@@ -140,193 +33,290 @@ namespace Kiwi
         return key;
     }
 
-    void GPUScene::BuildBatches(const std::vector<RenderItem>& renderList,
-                                const std::vector<uint32_t>& primitiveRenderIndices,
-                                MaterialLibrary& materialLibrary)
+    static std::unique_ptr<RHIBuffer> CreateStructured(RHIDevice* device, const char* name, uint32_t stride, uint32_t count)
     {
-        m_MeshBatches.clear();
-        if (primitiveRenderIndices.empty())
+        BufferDesc desc;
+        desc.BindFlags = BUFFER_USAGE_STRUCTURED;
+        desc.Usage = EResourceUsage::Default;
+        desc.DebugName = name;
+        desc.StructByteStride = stride;
+        desc.SizeInBytes = stride * count;
+        return device->CreateBuffer(desc);
+    }
+
+    void GPUScene::Initialize(RHIDevice* device)
+    {
+        m_Device = device;
+        m_Primitives.assign(MAX_GPU_SCENE_PRIMITIVES, {});
+        m_Instances.assign(MAX_GPU_SCENE_PRIMITIVES, {});
+        m_PrimitiveAlive.assign(MAX_GPU_SCENE_PRIMITIVES, 0);
+        m_InstanceAlive.assign(MAX_GPU_SCENE_PRIMITIVES, 0);
+        EnsureBuffers();
+
+        BufferDesc offsetDesc;
+        offsetDesc.BindFlags = BUFFER_USAGE_CONSTANT;
+        offsetDesc.Usage = EResourceUsage::Dynamic;
+        offsetDesc.DebugName = "GPUScene_DrawOffset";
+        offsetDesc.SizeInBytes = 16;
+        m_DrawOffsetCB = device->CreateBuffer(offsetDesc);
+    }
+
+    void GPUScene::EnsureBuffers()
+    {
+        if (!m_Device)
             return;
-
-        struct Entry
+        if (!m_PrimitiveBuffer)
         {
-            MeshBatchKey Key;
-            uint32_t RenderListIndex = 0;
-        };
-
-        std::vector<Entry> entries;
-        entries.reserve(primitiveRenderIndices.size());
-        for (uint32_t renderListIndex : primitiveRenderIndices)
-        {
-            Entry entry;
-            entry.Key = MakeMeshBatchKey(renderList[renderListIndex], materialLibrary);
-            entry.RenderListIndex = renderListIndex;
-            entries.push_back(entry);
+            m_PrimitiveBuffer = CreateStructured(m_Device, "GPUScene_Primitives", sizeof(PrimitiveSceneData), MAX_GPU_SCENE_PRIMITIVES);
+            if (m_PrimitiveBuffer)
+                m_PrimitiveSRV = m_Device->CreateBufferSRV(m_PrimitiveBuffer.get(), MAX_GPU_SCENE_PRIMITIVES, sizeof(PrimitiveSceneData));
         }
-
-        std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
+        if (!m_InstanceBuffer)
         {
-            return a.Key.Compare(b.Key) < 0;
-        });
-
-        // Instancing reads a contiguous range, so pack primitive data into key order.
-        std::vector<PrimitiveUniformBuffer> packed(entries.size());
-        for (uint32_t newIndex = 0; newIndex < (uint32_t)entries.size(); ++newIndex)
-        {
-            uint32_t renderListIndex = entries[newIndex].RenderListIndex;
-            uint32_t oldIndex = m_RenderListToGPUScene[renderListIndex];
-            packed[newIndex] = m_PrimitiveData[oldIndex];
-            m_RenderListToGPUScene[renderListIndex] = newIndex;
+            m_InstanceBuffer = CreateStructured(m_Device, "GPUScene_Instances", sizeof(InstanceSceneData), MAX_GPU_SCENE_PRIMITIVES);
+            if (m_InstanceBuffer)
+                m_InstanceSRV = m_Device->CreateBufferSRV(m_InstanceBuffer.get(), MAX_GPU_SCENE_PRIMITIVES, sizeof(InstanceSceneData));
         }
-        std::copy(packed.begin(), packed.end(), m_PrimitiveData.begin());
-        m_NumPrimitives = (uint32_t)entries.size();
-
-        uint32_t instancedCount = 0;
-        uint32_t runStart = 0;
-        while (runStart < entries.size())
+        if (!m_DrawInstanceBuffer)
         {
-            uint32_t runEnd = runStart + 1;
-            while (runEnd < entries.size() && entries[runEnd].Key.Compare(entries[runStart].Key) == 0)
-                ++runEnd;
-
-            const Entry& first = entries[runStart];
-            const RenderItem& firstItem = renderList[first.RenderListIndex];
-            MeshBatch batch;
-            batch.MeshId = first.Key.MeshId;
-            batch.MaterialName = firstItem.MeshComp ? firstItem.MeshComp->Material.Parent : "";
-            batch.SurfaceShader = (first.Key.Material && !first.Key.Material->SurfaceShader.empty())
-                ? first.Key.Material->SurfaceShader
-                : "DefaultSurface";
-            batch.CullMode = first.Key.CullMode;
-            batch.Type = first.Key.Topology;
-            batch.bCastShadow = first.Key.bCastShadow;
-            batch.bUseForMaterial = first.Key.bUseForMaterial;
-            batch.bUseForDepthPass = first.Key.bUseForDepthPass;
-            batch.bCanBeInstanced = (runEnd - runStart) >= 2;
-            batch.InstanceOffset = runStart;
-            if (batch.bCanBeInstanced)
-                ++instancedCount;
-
-            batch.Elements.reserve(runEnd - runStart);
-            for (uint32_t index = runStart; index < runEnd; ++index)
-            {
-                const RenderItem& item = renderList[entries[index].RenderListIndex];
-                MeshBatchElement element;
-                element.PrimitiveId = index;
-                element.ObjectIndex = item.ObjectIndex;
-                element.Mesh = item.MeshComp;
-                element.NumInstances = 1;
-                batch.Elements.push_back(element);
-            }
-            m_MeshBatches.push_back(std::move(batch));
-            runStart = runEnd;
+            m_DrawInstanceBuffer = CreateStructured(m_Device, "GPUScene_DrawInstanceIds", sizeof(DrawInstanceId), MAX_GPU_SCENE_PRIMITIVES);
+            if (m_DrawInstanceBuffer)
+                m_DrawInstanceSRV = m_Device->CreateBufferSRV(m_DrawInstanceBuffer.get(), MAX_GPU_SCENE_PRIMITIVES, sizeof(DrawInstanceId));
         }
-
-        std::cout << "[Kiwi] GPUScene: " << m_NumPrimitives << " primitives → "
-                  << m_MeshBatches.size() << " mesh batches ("
-                  << instancedCount << " instanced)" << std::endl;
     }
 
-    void GPUScene::UploadToGPU()
+    void GPUScene::Release()
     {
-        if (!m_ConstantBuffer || m_NumPrimitives == 0)
+        m_PrimitiveBuffer.reset();
+        m_PrimitiveSRV.reset();
+        m_InstanceBuffer.reset();
+        m_InstanceSRV.reset();
+        m_DrawInstanceBuffer.reset();
+        m_DrawInstanceSRV.reset();
+        m_DrawOffsetCB.reset();
+        m_Primitives.clear();
+        m_Instances.clear();
+        m_PrimitiveAlive.clear();
+        m_InstanceAlive.clear();
+        m_FreePrimitives.clear();
+        m_FreeInstances.clear();
+        m_DrawInstanceIds.clear();
+        m_PrimitiveCount = 0;
+        m_InstanceCount = 0;
+        m_Device = nullptr;
+    }
+
+    uint32_t GPUScene::AllocatePrimitive()
+    {
+        uint32_t id;
+        if (!m_FreePrimitives.empty())
         {
+            id = m_FreePrimitives.back();
+            m_FreePrimitives.pop_back();
+        }
+        else
+        {
+            if (m_PrimitiveCount >= MAX_GPU_SCENE_PRIMITIVES)
+                return MeshComponent::kInvalidGPUSceneId;
+            id = m_PrimitiveCount++;
+        }
+        m_PrimitiveAlive[id] = 1;
+        return id;
+    }
+
+    uint32_t GPUScene::AllocateInstance()
+    {
+        uint32_t id;
+        if (!m_FreeInstances.empty())
+        {
+            id = m_FreeInstances.back();
+            m_FreeInstances.pop_back();
+        }
+        else
+        {
+            if (m_InstanceCount >= MAX_GPU_SCENE_PRIMITIVES)
+                return MeshComponent::kInvalidGPUSceneId;
+            id = m_InstanceCount++;
+        }
+        m_InstanceAlive[id] = 1;
+        return id;
+    }
+
+    void GPUScene::FreePrimitive(uint32_t id)
+    {
+        if (id >= m_PrimitiveAlive.size() || !m_PrimitiveAlive[id])
             return;
-        }
-        
-        // Upload to Constant Buffer (for single-draw CB offset path)
-        {
-            void* mapped = m_ConstantBuffer->Map();
-            if (mapped)
-            {
-                uint8_t* dst = (uint8_t*)mapped;
-                for (uint32_t i = 0; i < m_NumPrimitives; ++i)
-                {
-                    memcpy(dst + i * OBJECT_UB_STRIDE, &m_PrimitiveData[i], sizeof(PrimitiveUniformBuffer));
-                }
-                m_ConstantBuffer->Unmap();
-            }
-        }
-
-        // Create/recreate StructuredBuffer for instanced draw path
-        bool hasInstancedBatch = false;
-        for (const MeshBatch& batch : m_MeshBatches)
-        {
-            if (batch.bCanBeInstanced)
-            {
-                hasInstancedBatch = true;
-                break;
-            }
-        }
-
-        if (hasInstancedBatch && m_Device)
-        {
-            uint32_t requiredSize = m_NumPrimitives * sizeof(PrimitiveUniformBuffer);
-
-            // Recreate if size changed or first time
-            if (!m_StructuredBuffer || m_StructuredBuffer->GetDesc().SizeInBytes < requiredSize)
-            {
-                m_StructuredSRV.reset();
-                m_StructuredBuffer.reset();
-
-                BufferDesc sbDesc;
-                sbDesc.BindFlags = BUFFER_USAGE_STRUCTURED;
-                sbDesc.Usage = EResourceUsage::Dynamic;
-                sbDesc.DebugName = "GPUScene_StructuredBuffer";
-                sbDesc.SizeInBytes = MAX_GPU_SCENE_PRIMITIVES * sizeof(PrimitiveUniformBuffer);
-                sbDesc.StructByteStride = sizeof(PrimitiveUniformBuffer);
-                m_StructuredBuffer = m_Device->CreateBuffer(sbDesc);
-
-                if (m_StructuredBuffer)
-                {
-                    m_StructuredSRV = m_Device->CreateBufferSRV(
-                        m_StructuredBuffer.get(),
-                        MAX_GPU_SCENE_PRIMITIVES,
-                        sizeof(PrimitiveUniformBuffer));
-                }
-            }
-
-            // Upload primitive data to StructuredBuffer
-            if (m_StructuredBuffer)
-            {
-                void* mapped = m_StructuredBuffer->Map();
-                if (mapped)
-                {
-                    memcpy(mapped, m_PrimitiveData.data(),
-                           m_NumPrimitives * sizeof(PrimitiveUniformBuffer));
-                    m_StructuredBuffer->Unmap();
-                }
-            }
-        }
-
-        m_Dirty = false;
+        m_PrimitiveAlive[id] = 0;
+        m_Primitives[id] = {};
+        m_FreePrimitives.push_back(id);
     }
 
-    void GPUScene::BindPrimitive(RHICommandContext* ctx, uint32_t gpuSceneIndex) const
+    void GPUScene::FreeInstance(uint32_t id)
     {
-        if (!m_ConstantBuffer) return;
-        ctx->SetConstantBufferOffset(1, m_ConstantBuffer.get(),
-            gpuSceneIndex * (OBJECT_UB_STRIDE / 16), OBJECT_UB_STRIDE / 16);
+        if (id >= m_InstanceAlive.size() || !m_InstanceAlive[id])
+            return;
+        m_InstanceAlive[id] = 0;
+        m_Instances[id] = {};
+        m_FreeInstances.push_back(id);
     }
 
-    void GPUScene::BindForInstancing(RHICommandContext* ctx) const
+    void GPUScene::UploadSlot(RHIBuffer* buffer, const void* data, uint32_t stride, uint32_t index)
     {
-        // Bind StructuredBuffer as SRV t8
-        if (m_StructuredSRV)
-            ctx->SetShaderResourceView(8, m_StructuredSRV.get());
+        if (buffer)
+            buffer->UpdateData(data, stride, index * stride);
     }
 
-    void GPUScene::SetBatchStartIndex(RHICommandContext* ctx, uint32_t startIndex) const
+    void GPUScene::Update(Scene& scene, MaterialLibrary& materialLibrary)
     {
-        if (!m_BatchUB) return;
-        uint32_t data[4] = { startIndex, 0, 0, 0 };
-        void* mapped = m_BatchUB->Map();
+        EnsureBuffers();
+        m_DrawInstanceIds.clear();
+        m_DrawIdsDirty = false;
+
+        auto* selected = scene.GetSelectedObject();
+        std::unordered_set<MeshComponent*> alive;
+        alive.reserve(scene.GetObjects().size());
+
+        for (const auto& objPtr : scene.GetObjects())
+        {
+            MeshComponent* mesh = objPtr->GetComponent<MeshComponent>();
+            if (!mesh)
+                continue;
+            alive.insert(mesh);
+
+            auto slotDead = [](uint32_t id, const std::vector<uint8_t>& alive)
+            {
+                return id == MeshComponent::kInvalidGPUSceneId || id >= alive.size() || !alive[id];
+            };
+            if (slotDead(mesh->PrimitiveId, m_PrimitiveAlive) || slotDead(mesh->InstanceId, m_InstanceAlive))
+            {
+                if (!slotDead(mesh->PrimitiveId, m_PrimitiveAlive))
+                    FreePrimitive(mesh->PrimitiveId);
+                if (!slotDead(mesh->InstanceId, m_InstanceAlive))
+                    FreeInstance(mesh->InstanceId);
+                mesh->PrimitiveId = AllocatePrimitive();
+                mesh->InstanceId = AllocateInstance();
+            }
+            if (mesh->PrimitiveId == MeshComponent::kInvalidGPUSceneId ||
+                mesh->InstanceId == MeshComponent::kInvalidGPUSceneId)
+                continue;
+
+            Material* parent = materialLibrary.GetMaterial(mesh->Material.Parent);
+            Vec4 color = mesh->Material.GetColor(parent, "_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
+            Vec4 emissive = mesh->Material.GetColor(parent, "_Emissive", { 0, 0, 0, 1 });
+
+            PrimitiveSceneData primitive = {};
+            primitive.ObjectColor[0] = color.x;
+            primitive.ObjectColor[1] = color.y;
+            primitive.ObjectColor[2] = color.z;
+            primitive.ObjectColor[3] = color.w;
+            primitive.Material0[0] = (objPtr.get() == selected) ? 1.0f : 0.0f;
+            primitive.Material0[1] = mesh->Material.GetFloat(parent, "_Roughness", 0.5f);
+            primitive.Material0[2] = mesh->Material.GetFloat(parent, "_Metallic", 0.0f);
+            primitive.Material0[3] = mesh->Material.GetTexture(parent, "_BaseColorTex").empty() ? 0.0f : 1.0f;
+            primitive.Material1[0] = mesh->Material.GetTexture(parent, "_NormalTex").empty() ? 0.0f : 1.0f;
+            primitive.Material1[1] = parent ? (float)(uint8_t)parent->ShadingModel : 1.0f;
+            primitive.Material1[2] = emissive.x;
+            primitive.Material1[3] = emissive.y;
+            primitive.Material2[0] = emissive.z;
+            primitive.InstanceSceneDataOffset = mesh->InstanceId;
+            primitive.NumInstances = 1;
+
+            InstanceSceneData instance = {};
+            Mat4 world = mesh->GetWorldMatrix();
+            memcpy(instance.WorldMatrix, world.m, sizeof(world.m));
+            instance.PrimitiveId = mesh->PrimitiveId;
+
+            if (memcmp(&m_Primitives[mesh->PrimitiveId], &primitive, sizeof(primitive)) != 0)
+            {
+                m_Primitives[mesh->PrimitiveId] = primitive;
+                UploadSlot(m_PrimitiveBuffer.get(), &primitive, sizeof(primitive), mesh->PrimitiveId);
+            }
+            if (memcmp(&m_Instances[mesh->InstanceId], &instance, sizeof(instance)) != 0)
+            {
+                m_Instances[mesh->InstanceId] = instance;
+                UploadSlot(m_InstanceBuffer.get(), &instance, sizeof(instance), mesh->InstanceId);
+            }
+        }
+
+        for (uint32_t id = 0; id < m_PrimitiveCount; ++id)
+        {
+            if (!m_PrimitiveAlive[id])
+                continue;
+            bool stillAlive = false;
+            for (MeshComponent* mesh : alive)
+            {
+                if (mesh->PrimitiveId == id)
+                {
+                    stillAlive = true;
+                    break;
+                }
+            }
+            if (!stillAlive)
+                FreePrimitive(id);
+        }
+        for (uint32_t id = 0; id < m_InstanceCount; ++id)
+        {
+            if (!m_InstanceAlive[id])
+                continue;
+            bool stillAlive = false;
+            for (MeshComponent* mesh : alive)
+            {
+                if (mesh->InstanceId == id)
+                {
+                    stillAlive = true;
+                    break;
+                }
+            }
+            if (!stillAlive)
+                FreeInstance(id);
+        }
+    }
+
+    uint32_t GPUScene::AppendDrawInstanceIds(const uint32_t* instanceIds, uint32_t count)
+    {
+        uint32_t offset = (uint32_t)m_DrawInstanceIds.size();
+        m_DrawInstanceIds.reserve(offset + count);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            DrawInstanceId entry = {};
+            entry.Id = instanceIds[i];
+            m_DrawInstanceIds.push_back(entry);
+        }
+        m_DrawIdsDirty = true;
+        return offset;
+    }
+
+    void GPUScene::UploadDrawInstanceIds()
+    {
+        if (!m_DrawIdsDirty || !m_DrawInstanceBuffer || m_DrawInstanceIds.empty())
+            return;
+        m_DrawInstanceBuffer->UpdateData(m_DrawInstanceIds.data(),
+            (uint32_t)(m_DrawInstanceIds.size() * sizeof(DrawInstanceId)), 0);
+        m_DrawIdsDirty = false;
+    }
+
+    void GPUScene::Bind(RHICommandContext* ctx) const
+    {
+        if (m_InstanceSRV)
+            ctx->SetShaderResourceView(8, m_InstanceSRV.get());
+        if (m_PrimitiveSRV)
+            ctx->SetShaderResourceView(9, m_PrimitiveSRV.get());
+        if (m_DrawInstanceSRV)
+            ctx->SetShaderResourceView(10, m_DrawInstanceSRV.get());
+    }
+
+    void GPUScene::SetDrawInstanceOffset(RHICommandContext* ctx, uint32_t offset) const
+    {
+        if (!m_DrawOffsetCB)
+            return;
+        uint32_t data[4] = { offset, 0, 0, 0 };
+        void* mapped = m_DrawOffsetCB->Map();
         if (mapped)
         {
             memcpy(mapped, data, sizeof(data));
-            m_BatchUB->Unmap();
+            m_DrawOffsetCB->Unmap();
         }
-        ctx->SetConstantBuffer(4, m_BatchUB.get());
+        ctx->SetConstantBuffer(4, m_DrawOffsetCB.get());
     }
 
 } // namespace Kiwi

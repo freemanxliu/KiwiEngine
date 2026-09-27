@@ -35,11 +35,10 @@ namespace Kiwi
     MeshBatchKey MakeMeshBatchKey(const RenderItem& item, MaterialLibrary& materialLibrary);
 
     // ============================================================
-    // GPUScene — primitive data for the frame.
+    // GPUScene — persistent primitive and instance tables.
     //
-    //   1. Collect PrimitiveUniformBuffer data
-    //   2. Upload the constant buffer and the instancing structured buffer
-    //   3. Build MeshBatch list (pass-agnostic; passes turn it into draw commands)
+    // Ids stay valid after a mesh enters the scene. Only dirty slots are
+    // uploaded. Draw commands look up InstanceId, then PrimitiveId.
     // ============================================================
 
     class GPUScene
@@ -51,56 +50,47 @@ namespace Kiwi
         void Initialize(RHIDevice* device);
         void Release();
 
-        // Per-frame update: collect data from scene + classify into batches
-        // Call ONCE per frame, before any rendering pass.
-        void Update(Scene& scene, MaterialLibrary& materialLibrary,
-                    const std::vector<struct RenderItem>& renderList);
+        // Allocate stable ids and upload dirty primitive/instance slots.
+        void Update(Scene& scene, MaterialLibrary& materialLibrary);
 
-        // Upload all data to GPU (CB + StructuredBuffer)
-        void UploadToGPU();
+        // This frame's draw-instance-id list. Cleared by Update.
+        uint32_t AppendDrawInstanceIds(const uint32_t* instanceIds, uint32_t count);
+        void UploadDrawInstanceIds();
 
-        // ---- Single draw path (CB offset binding to b1) ----
-        void BindPrimitive(RHICommandContext* ctx, uint32_t gpuSceneIndex) const;
+        void Bind(RHICommandContext* ctx) const;
+        void SetDrawInstanceOffset(RHICommandContext* ctx, uint32_t offset) const;
 
-        // ---- Instanced draw path (StructuredBuffer SRV t8 + BatchUB b4) ----
-        void BindForInstancing(RHICommandContext* ctx) const;
-        void SetBatchStartIndex(RHICommandContext* ctx, uint32_t startIndex) const;
-
-        // ---- Accessors ----
-        std::vector<MeshBatch>& GetMeshBatches() { return m_MeshBatches; }
-        const std::vector<MeshBatch>& GetMeshBatches() const { return m_MeshBatches; }
-        uint32_t GetNumPrimitives() const { return m_NumPrimitives; }
-
-        // Get the GPU Scene index for a given RenderList index
-        uint32_t GetGPUSceneIndex(uint32_t renderListIndex) const
-        {
-            if (renderListIndex < m_RenderListToGPUScene.size())
-                return m_RenderListToGPUScene[renderListIndex];
-            return 0;
-        }
+        uint32_t GetNumPrimitives() const { return m_PrimitiveCount; }
+        uint32_t GetNumInstances() const { return m_InstanceCount; }
 
     private:
-        void BuildBatches(const std::vector<struct RenderItem>& renderList,
-                          const std::vector<uint32_t>& primitiveRenderIndices,
-                          MaterialLibrary& materialLibrary);
+        uint32_t AllocatePrimitive();
+        uint32_t AllocateInstance();
+        void FreePrimitive(uint32_t id);
+        void FreeInstance(uint32_t id);
+        void EnsureBuffers();
+        void UploadSlot(RHIBuffer* buffer, const void* data, uint32_t stride, uint32_t index);
 
-        // GPU resources
-        std::unique_ptr<RHIBuffer> m_ConstantBuffer;        // CB for single-draw offset binding (b1)
-        std::unique_ptr<RHIBuffer> m_StructuredBuffer;      // StructuredBuffer for instanced reads (t8)
-        std::unique_ptr<RHITextureView> m_StructuredSRV;    // SRV for StructuredBuffer
-        std::unique_ptr<RHIBuffer> m_BatchUB;               // BatchUB (b4): g_BatchStartIndex
         RHIDevice* m_Device = nullptr;
+        std::unique_ptr<RHIBuffer> m_PrimitiveBuffer;
+        std::unique_ptr<RHITextureView> m_PrimitiveSRV;
+        std::unique_ptr<RHIBuffer> m_InstanceBuffer;
+        std::unique_ptr<RHITextureView> m_InstanceSRV;
+        std::unique_ptr<RHIBuffer> m_DrawInstanceBuffer;
+        std::unique_ptr<RHITextureView> m_DrawInstanceSRV;
+        std::unique_ptr<RHIBuffer> m_DrawOffsetCB;
 
-        // CPU data
-        std::vector<PrimitiveUniformBuffer> m_PrimitiveData;
-        uint32_t m_NumPrimitives = 0;
+        std::vector<PrimitiveSceneData> m_Primitives;
+        std::vector<InstanceSceneData> m_Instances;
+        std::vector<uint8_t> m_PrimitiveAlive;
+        std::vector<uint8_t> m_InstanceAlive;
+        std::vector<uint32_t> m_FreePrimitives;
+        std::vector<uint32_t> m_FreeInstances;
+        uint32_t m_PrimitiveCount = 0;
+        uint32_t m_InstanceCount = 0;
 
-        // RenderList index → GPU Scene index mapping
-        std::vector<uint32_t> m_RenderListToGPUScene;
-
-        std::vector<MeshBatch> m_MeshBatches;
-
-        bool m_Dirty = true;
+        std::vector<DrawInstanceId> m_DrawInstanceIds;
+        bool m_DrawIdsDirty = false;
     };
 
 } // namespace Kiwi

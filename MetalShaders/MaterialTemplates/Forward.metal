@@ -29,36 +29,48 @@ struct KiwiView
     float4 cameraAndMode;
 };
 
-struct KiwiObject
+struct PrimitiveSceneData
 {
-    float4x4 world;
-    float4 color;
+    float4 objectColor;
     float4 material0;
     float4 material1;
     float4 material2;
+    uint4 ids;
+};
+struct InstanceSceneData
+{
+    float4x4 world;
+    uint4 primitiveId;
 };
 
 vertex VSOut VSMain(VSIn in [[stage_in]],
                     constant KiwiView& viewUB [[buffer(0)]],
-                    constant KiwiObject& objUB [[buffer(1)]])
+                    constant uint4& drawInfo [[buffer(4)]],
+                    const device InstanceSceneData* instances [[buffer(8)]],
+                    const device PrimitiveSceneData* primitives [[buffer(9)]],
+                    const device uint4* drawIds [[buffer(10)]],
+                    uint svInstanceId [[instance_id]])
 {
+    uint instanceId = drawIds[drawInfo.x + svInstanceId].x;
+    InstanceSceneData inst = instances[instanceId];
+    PrimitiveSceneData prim = primitives[inst.primitiveId.x];
     float3 n = in.normal;
     if (dot(n, n) < 1e-8)
         n = float3(0.0, 0.0, 1.0);
-    float4x4 world = objUB.world;
+    float4x4 world = inst.world;
     float3x3 world3 = float3x3(world[0].xyz, world[1].xyz, world[2].xyz);
     float4 worldPos = world * float4(in.position, 1.0);
     VSOut out;
     out.position = viewUB.projection * viewUB.view * worldPos;
     out.positionWS = worldPos.xyz;
     out.normalWS = normalize(world3 * n);
-    out.color = in.color * objUB.color;
+    out.color = in.color * prim.objectColor;
     out.uv = in.uv;
-    out.roughness = objUB.material0.y;
-    out.metallic = objUB.material0.z;
-    out.hasBase = objUB.material0.w;
-    out.shadingModel = objUB.material1.y;
-    out.emissive = float3(objUB.material1.z, objUB.material1.w, objUB.material2.x);
+    out.roughness = prim.material0.y;
+    out.metallic = prim.material0.z;
+    out.hasBase = prim.material0.w;
+    out.shadingModel = prim.material1.y;
+    out.emissive = float3(prim.material1.z, prim.material1.w, prim.material2.x);
     return out;
 }
 

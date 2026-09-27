@@ -65,8 +65,9 @@ struct MeshBatchElement
     uint32_t NumInstances = 1;
     int32_t BaseVertexIndex = 0;
 
-    // Index of this primitive in the GPU scene buffer.
+    // Stable GPU Scene ids for this element.
     uint32_t PrimitiveId = 0;
+    uint32_t InstanceId = 0;
     size_t ObjectIndex = 0;
     MeshComponent* Mesh = nullptr;
 
@@ -152,8 +153,8 @@ struct MeshDrawCommand
     uint32_t FirstIndex = 0;
 
     bool bInstanced = false;
-    uint32_t PrimitiveId = 0;
-    uint32_t InstanceOffset = 0;
+    uint32_t InstanceId = 0;
+    uint32_t DrawInstanceOffset = 0;
 
     bool bBindMaterial = false;
     MeshComponent* Mesh = nullptr;

@@ -17,6 +17,7 @@ struct VSInput
     float4 Tangent  : TANGENT;
     float4 Color    : COLOR;
     float2 TexCoord : TEXCOORD;
+    uint   InstanceID : SV_InstanceID;
 };
 
 struct VSOutput
@@ -33,14 +34,15 @@ VSOutput VSMain(VSInput input)
 {
     VSOutput output;
 
-    float4 worldPos = mul(float4(input.Position, 1.0), g_World);
+    GPUObject obj = GetGPUObject(input.InstanceID);
+    float4 worldPos = mul(float4(input.Position, 1.0), obj.World);
     float4 viewPos = mul(worldPos, g_View);
     float4 projPos = mul(viewPos, g_Projection);
 
     output.PositionCS = projPos;
     output.PositionWS = worldPos.xyz;
-    output.NormalWS = mul(input.Normal, (float3x3)g_World);
-    output.Color = input.Color * g_ObjectColor;
+    output.NormalWS = mul(input.Normal, (float3x3)obj.World);
+    output.Color = input.Color * obj.Color;
     output.TexCoord = input.TexCoord;
 
     return output;

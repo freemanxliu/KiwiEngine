@@ -4728,6 +4728,17 @@ private:
                         ImGui::SetTooltip("Higher values are rendered first.\nObjects with same order are sorted back-to-front.");
 
                     ImGui::Separator();
+                    ImGui::Text("GPU Scene");
+                    if (mesh.PrimitiveId == MeshComponent::kInvalidGPUSceneId)
+                        ImGui::Text("  PrimitiveId: -");
+                    else
+                        ImGui::Text("  PrimitiveId: %u", mesh.PrimitiveId);
+                    if (mesh.InstanceId == MeshComponent::kInvalidGPUSceneId)
+                        ImGui::Text("  InstanceId: -");
+                    else
+                        ImGui::Text("  InstanceId: %u", mesh.InstanceId);
+
+                    ImGui::Separator();
                     ImGui::Text("Mesh Info");
                     ImGui::Text("  Vertices: %u", mesh.MeshData.GetVertexCount());
                     ImGui::Text("  Indices:  %u", mesh.MeshData.GetIndexCount());
@@ -5800,6 +5811,7 @@ private:
     std::unique_ptr<RHIPipelineState> m_RayTraceBlitPSO;
     std::unique_ptr<RHITexture> m_RayTraceColor;
     std::unique_ptr<RHITextureView> m_RayTraceColorSRV;
+    std::vector<MeshBatch> m_VisibleMeshBatches;
 
     // ---- Cascaded Shadow Map (CSM) Resources — Single Atlas ----
     static constexpr int MAX_SHADOW_CASCADES = 4;

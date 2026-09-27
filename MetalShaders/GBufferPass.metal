@@ -86,23 +86,30 @@ static VSOut TransformVertex(VSIn in, constant KiwiView& viewUB, KiwiObject objU
     return out;
 }
 
-#ifdef USE_GPU_SCENE_INSTANCING
+struct InstanceSceneData { float4x4 world; uint4 primitiveId; };
+struct PrimitiveSceneData { float4 objectColor; float4 material0; float4 material1; float4 material2; uint4 ids; };
+
 vertex VSOut VSMain(VSIn in [[stage_in]],
                     constant KiwiView& viewUB [[buffer(0)]],
-                    const device KiwiObject* scene [[buffer(8)]],
-                    constant uint4& batch [[buffer(4)]],
-                    uint instanceId [[instance_id]])
+                    constant uint4& drawInfo [[buffer(4)]],
+                    const device InstanceSceneData* instances [[buffer(8)]],
+                    const device PrimitiveSceneData* primitives [[buffer(9)]],
+                    const device uint4* drawIds [[buffer(10)]],
+                    uint svInstanceId [[instance_id]])
 {
-    return TransformVertex(in, viewUB, scene[batch.x + instanceId]);
+    uint instanceId = drawIds[drawInfo.x + svInstanceId].x;
+    InstanceSceneData inst = instances[instanceId];
+    PrimitiveSceneData prim = primitives[inst.primitiveId.x];
+    KiwiObject obj;
+    obj.world = inst.world;
+    obj.color = prim.objectColor;
+    obj.material0 = prim.material0;
+    obj.material1 = prim.material1;
+    obj.material2 = prim.material2;
+    for (int i = 0; i < 8; ++i)
+        obj.pad[i] = float4(0.0);
+    return TransformVertex(in, viewUB, obj);
 }
-#else
-vertex VSOut VSMain(VSIn in [[stage_in]],
-                    constant KiwiView& viewUB [[buffer(0)]],
-                    constant KiwiObject& objUB [[buffer(1)]])
-{
-    return TransformVertex(in, viewUB, objUB);
-}
-#endif
 
 //!FRAGMENT
 struct FSIn

@@ -35,7 +35,14 @@ namespace Kiwi
 
         void UpdateData(const void* data, uint32_t size, uint32_t offset = 0) override
         {
-            m_Context->UpdateSubresource(m_Buffer.Get(), 0, nullptr, data, size, 0);
+            if (!data || size == 0)
+                return;
+            D3D11_BOX box = {};
+            box.left = offset;
+            box.right = offset + size;
+            box.bottom = 1;
+            box.back = 1;
+            m_Context->UpdateSubresource(m_Buffer.Get(), 0, offset == 0 && size == m_Desc.SizeInBytes ? nullptr : &box, data, size, 0);
         }
 
         ID3D11Buffer* GetD3DBuffer() const { return m_Buffer.Get(); }

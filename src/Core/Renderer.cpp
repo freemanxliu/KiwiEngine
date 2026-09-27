@@ -26,26 +26,52 @@ void KiwiEngineApp::PrepareMeshBatches()
     
     m_MaterialShaders.SetFallback(EMaterialPass::GBuffer, { m_GBufferPSO.get(), m_GBufferVS.get(), m_GBufferPS.get() });
 
-    m_GPUScene.Update(m_Scene, m_MaterialLibrary, m_RenderList);
-    m_GPUScene.UploadToGPU();
+    m_GPUScene.Update(m_Scene, m_MaterialLibrary);
 
-    for (MeshBatch& batch : m_GPUScene.GetMeshBatches())
+    m_VisibleMeshBatches.clear();
+    m_VisibleMeshBatches.reserve(m_RenderList.size());
+    for (const RenderItem& item : m_RenderList)
     {
-        batch.ShaderMap = m_MaterialShaders.GetShaderMap(batch.SurfaceShader);
-        for (MeshBatchElement& element : batch.Elements)
-        {
-            SharedMeshEntry mesh = GetSharedMesh(element.ObjectIndex);
-            element.VertexBuffer = mesh.VertexBuffer;
-            element.IndexBuffer = mesh.IndexBuffer;
-            element.VertexCount = mesh.VertexCount;
-            element.NumIndices = mesh.IndexCount;
-        }
+        MeshComponent* meshComp = item.MeshComp;
+        if (!meshComp || meshComp->InstanceId == MeshComponent::kInvalidGPUSceneId)
+            continue;
+
+        SharedMeshEntry geometry = GetSharedMesh(item.ObjectIndex);
+        if (!geometry.VertexBuffer || geometry.IndexCount == 0)
+            continue;
+
+        Material* parent = m_MaterialLibrary.GetMaterial(meshComp->Material.Parent);
+        std::string surface = (parent && !parent->SurfaceShader.empty()) ? parent->SurfaceShader : "DefaultSurface";
+
+        MeshBatch batch;
+        batch.ShaderMap = m_MaterialShaders.GetShaderMap(surface);
+        batch.MeshId = item.MeshID;
+        batch.MaterialName = meshComp->Material.Parent;
+        batch.SurfaceShader = surface;
+        batch.CullMode = meshComp->CullMode;
+        batch.bCastShadow = true;
+        batch.bUseForMaterial = true;
+        batch.bUseForDepthPass = true;
+
+        MeshBatchElement element;
+        element.InstanceId = meshComp->InstanceId;
+        element.PrimitiveId = meshComp->PrimitiveId;
+        element.ObjectIndex = item.ObjectIndex;
+        element.Mesh = meshComp;
+        element.VertexBuffer = geometry.VertexBuffer;
+        element.IndexBuffer = geometry.IndexBuffer;
+        element.VertexCount = geometry.VertexCount;
+        element.NumIndices = geometry.IndexCount;
+        batch.Elements.push_back(element);
+        m_VisibleMeshBatches.push_back(std::move(batch));
     }
 }
 
 void KiwiEngineApp::SubmitMeshDrawCommands(RHICommandContext* ctx, const std::vector<MeshDrawCommand>& commands)
 {
-    bool instancingBound = false;
+    m_GPUScene.UploadDrawInstanceIds();
+    m_GPUScene.Bind(ctx);
+
     RHIPipelineState* lastPSO = nullptr;
     RHIShader* lastVS = nullptr;
     RHIShader* lastPS = nullptr;
@@ -55,15 +81,6 @@ void KiwiEngineApp::SubmitMeshDrawCommands(RHICommandContext* ctx, const std::ve
 
     for (const MeshDrawCommand& command : commands)
     {
-        if (command.bInstanced)
-        {
-            if (!instancingBound)
-            {
-                m_GPUScene.BindForInstancing(ctx);
-                instancingBound = true;
-            }
-        }
-
         const bool shaderChanged = !hasLastShader
             || command.Shader.PSO != lastPSO
             || command.Shader.VertexShader != lastVS
@@ -99,16 +116,8 @@ void KiwiEngineApp::SubmitMeshDrawCommands(RHICommandContext* ctx, const std::ve
             lastMesh = command.Mesh;
         }
 
-        if (command.bInstanced)
-        {
-            m_GPUScene.SetBatchStartIndex(ctx, command.InstanceOffset);
-            ctx->DrawIndexedInstanced(command.IndexCount, command.NumInstances, command.FirstIndex, command.BaseVertexIndex, 0);
-        }
-        else
-        {
-            m_GPUScene.BindPrimitive(ctx, command.PrimitiveId);
-            ctx->DrawIndexed(command.IndexCount, command.FirstIndex, command.BaseVertexIndex);
-        }
+        m_GPUScene.SetDrawInstanceOffset(ctx, command.DrawInstanceOffset);
+        ctx->DrawIndexedInstanced(command.IndexCount, command.NumInstances, command.FirstIndex, command.BaseVertexIndex, 0);
     }
 }
 
@@ -208,7 +217,7 @@ void KiwiEngineApp::RenderDeferred(
     PrepareMeshBatches();
     
     ShadowDepthPassProcessor shadowPass;
-    shadowPass.Process(m_GPUScene.GetMeshBatches());
+    shadowPass.Process(m_VisibleMeshBatches, m_GPUScene);
 
     // ==== PASS 1: Shadow Pass (CSM) ====
     UpdateShadowData();
@@ -256,7 +265,7 @@ void KiwiEngineApp::RenderDeferred(
     gbufferConfig.MaterialPass = EMaterialPass::GBuffer;
     gbufferConfig.bBindMaterials = true;
     BasePassProcessor gbufferPass(gbufferConfig);
-    gbufferPass.Process(m_GPUScene.GetMeshBatches());
+    gbufferPass.Process(m_VisibleMeshBatches, m_GPUScene);
     SubmitMeshDrawCommands(ctx, gbufferPass.GetCommands());
 
     m_PassTimer.End();
@@ -468,7 +477,7 @@ void KiwiEngineApp::RenderForward(
     forwardConfig.ForcedShader = forwardShader;
     forwardConfig.Shaders = &m_ShaderLibrary;
     BasePassProcessor forwardPass(forwardConfig);
-    forwardPass.Process(m_GPUScene.GetMeshBatches());
+    forwardPass.Process(m_VisibleMeshBatches, m_GPUScene);
     SubmitMeshDrawCommands(ctx, forwardPass.GetCommands());
     m_PassTimer.End();
     ctx->EndEvent();

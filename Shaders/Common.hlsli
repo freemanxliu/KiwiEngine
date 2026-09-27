@@ -55,38 +55,61 @@ cbuffer ObjectUB : register(b1)
     float3 g_Reserved2;      // (116 + 128 + 12 = 256)
 };
 
-// ---- GPU Scene StructuredBuffer (t8) — for instanced draws ----
-// Each element = one PrimitiveUniformBuffer (16 floats4 = 256 bytes)
-// Shader reads: g_GPUScene[batchStartIndex + SV_InstanceID]
-struct GPUSceneData
+// GPU Scene. SV_InstanceID selects a slot in this draw; that slot stores the scene InstanceId.
+struct PrimitiveSceneData
+{
+    float4 ObjectColor;
+    float4 Material0; // selected, roughness, metallic, hasBaseColorTex
+    float4 Material1; // hasNormalTex, shadingModel, emissive.r, emissive.g
+    float4 Material2; // emissive.b
+    uint4  Ids;       // x = InstanceSceneDataOffset, y = NumInstances
+};
+
+struct InstanceSceneData
 {
     row_major float4x4 World;
-    float4 ObjectColor;
-    float  Selected;
-    float  Roughness;
-    float  Metallic;
-    float  HasBaseColorTex;
-    float  HasNormalTex;
-    float  ShadingModelID;
-    float3 Padding;
-    float4 Reserved[8];
-    float3 Reserved2;
+    uint4 PrimitiveId; // x
 };
 
-StructuredBuffer<GPUSceneData> g_GPUScene : register(t8);
-
-// ---- Batch Start Index (b4) — per-batch constant ----
-// Tells the shader where this batch starts in g_GPUScene
-cbuffer BatchUB : register(b4)
+struct GPUObject
 {
-    uint g_BatchStartIndex;
-    uint3 g_BatchPadding;
+    float4x4 World;
+    float4 Color;
+    float Selected;
+    float Roughness;
+    float Metallic;
+    float HasBaseColorTex;
+    float HasNormalTex;
+    float ShadingModelID;
+    float3 Emissive;
 };
 
-// Helper: Get per-instance object data from GPU Scene
-GPUSceneData GetInstanceData(uint instanceID)
+StructuredBuffer<InstanceSceneData>  g_InstanceSceneData  : register(t8);
+StructuredBuffer<PrimitiveSceneData> g_PrimitiveSceneData : register(t9);
+StructuredBuffer<uint4>              g_DrawInstanceIds    : register(t10);
+
+cbuffer DrawInstanceUB : register(b4)
 {
-    return g_GPUScene[g_BatchStartIndex + instanceID];
+    uint g_DrawInstanceOffset;
+    uint3 g_DrawInstancePad;
+};
+
+GPUObject GetGPUObject(uint svInstanceId)
+{
+    uint instanceId = g_DrawInstanceIds[g_DrawInstanceOffset + svInstanceId].x;
+    InstanceSceneData inst = g_InstanceSceneData[instanceId];
+    PrimitiveSceneData prim = g_PrimitiveSceneData[inst.PrimitiveId.x];
+    GPUObject obj;
+    obj.World = inst.World;
+    obj.Color = prim.ObjectColor;
+    obj.Selected = prim.Material0.x;
+    obj.Roughness = prim.Material0.y;
+    obj.Metallic = prim.Material0.z;
+    obj.HasBaseColorTex = prim.Material0.w;
+    obj.HasNormalTex = prim.Material1.x;
+    obj.ShadingModelID = prim.Material1.y;
+    obj.Emissive = float3(prim.Material1.z, prim.Material1.w, prim.Material2.x);
+    return obj;
 }
 
 #endif // KIWI_COMMON_HLSLI

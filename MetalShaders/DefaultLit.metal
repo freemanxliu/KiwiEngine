@@ -39,11 +39,20 @@ struct KiwiObject
     float4 material1;
 };
 
+struct InstanceSceneData { float4x4 world; uint4 primitiveId; };
+struct PrimitiveSceneData { float4 objectColor; float4 material0; float4 material1; float4 material2; uint4 ids; };
+
 vertex VSOut kiwi_vertex(VSIn in [[stage_in]],
                          constant KiwiView& viewUB [[buffer(0)]],
-                         constant KiwiObject& objUB [[buffer(1)]])
+                         constant uint4& drawInfo [[buffer(4)]],
+                         const device InstanceSceneData* instances [[buffer(8)]],
+                         const device PrimitiveSceneData* primitives [[buffer(9)]],
+                         const device uint4* drawIds [[buffer(10)]],
+                         uint svInstanceId [[instance_id]])
 {
-    float4x4 world = objUB.world;
+    uint instanceId = drawIds[drawInfo.x + svInstanceId].x;
+    float4x4 world = instances[instanceId].world;
+    float4 objColor = primitives[instances[instanceId].primitiveId.x].objectColor;
     float4x4 view  = viewUB.view;
     float4x4 proj  = viewUB.projection;
 
@@ -52,7 +61,7 @@ vertex VSOut kiwi_vertex(VSIn in [[stage_in]],
     out.position = proj * view * worldPos;
     out.positionWS = worldPos.xyz;
     out.normalWS = float3x3(world[0].xyz, world[1].xyz, world[2].xyz) * in.normal;
-    out.color = in.color * objUB.color;
+    out.color = in.color * objColor;
     out.uv = in.uv;
     return out;
 }

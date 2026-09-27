@@ -3,6 +3,8 @@
 #include "Scene/MeshBatch.h"
 #include <vector>
 
+namespace Kiwi { class GPUScene; }
+
 namespace Kiwi
 {
 
@@ -15,7 +17,7 @@ class MeshPassProcessor
 public:
     virtual ~MeshPassProcessor() = default;
 
-    void Process(const std::vector<MeshBatch>& batches);
+    void Process(const std::vector<MeshBatch>& batches, GPUScene& gpuScene);
 
     const std::vector<MeshDrawCommand>& GetCommands() const { return m_Commands; }
 
@@ -74,7 +76,6 @@ protected:
 
 private:
     MeshPassShader ResolveSingleShader(const MeshBatch& batch) const;
-    bool CanInstance(const MeshBatch& batch) const;
 
     Config m_Config;
 };

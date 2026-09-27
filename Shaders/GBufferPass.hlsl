@@ -47,6 +47,7 @@ struct VSOutput
     nointerpolation float  HasNormalTex    : TEXCOORD8;
     nointerpolation float  Selected       : TEXCOORD9;
     nointerpolation float  ShadingModelID : TEXCOORD10;
+    nointerpolation float3 Emissive      : TEXCOORD11;
 };
 
 // UE5-matching G-Buffer MRT output
@@ -81,28 +82,15 @@ VSOutput VSMain(VSInput input)
 {
     VSOutput output;
 
-#ifdef USE_GPU_SCENE_INSTANCING
-    // Instanced path: read per-object data from StructuredBuffer (t8)
-    GPUSceneData inst = GetInstanceData(input.InstanceID);
-    float4x4 world       = inst.World;
-    float4   objColor    = inst.ObjectColor;
-    float    roughness   = inst.Roughness;
-    float    metallic    = inst.Metallic;
-    float    hasBaseTex  = inst.HasBaseColorTex;
-    float    hasNormTex  = inst.HasNormalTex;
-    float    selected    = inst.Selected;
-    float    shadingModel = inst.ShadingModelID;
-#else
-    // Single draw path: read from ObjectUB (b1) bound via CB offset
-    float4x4 world       = g_World;
-    float4   objColor    = g_ObjectColor;
-    float    roughness   = g_Roughness;
-    float    metallic    = g_Metallic;
-    float    hasBaseTex  = g_HasBaseColorTex;
-    float    hasNormTex  = g_HasNormalTex;
-    float    selected    = g_Selected;
-    float    shadingModel = g_ShadingModelID;
-#endif
+    GPUObject obj = GetGPUObject(input.InstanceID);
+    float4x4 world       = obj.World;
+    float4   objColor    = obj.Color;
+    float    roughness   = obj.Roughness;
+    float    metallic    = obj.Metallic;
+    float    hasBaseTex  = obj.HasBaseColorTex;
+    float    hasNormTex  = obj.HasNormalTex;
+    float    selected    = obj.Selected;
+    float    shadingModel = obj.ShadingModelID;
 
     float3 n = input.Normal;
     if (dot(n, n) < 1e-8)
@@ -142,6 +130,7 @@ VSOutput VSMain(VSInput input)
     output.HasNormalTex    = hasNormTex;
     output.Selected        = selected;
     output.ShadingModelID  = shadingModel;
+    output.Emissive        = obj.Emissive;
 
     return output;
 }
@@ -206,7 +195,7 @@ GBufferOutput PSMain(VSOutput input)
 
     float ao = 1.0;
     output.GBufferC = float4(baseColor, ao);
-    output.GBufferD = float4(g_ObjectPadding, 0.0);
+    output.GBufferD = float4(input.Emissive, 0.0);
 
     return output;
 }

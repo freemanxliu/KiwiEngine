@@ -29,12 +29,8 @@ VSOutput VSMain(VSInput input)
 {
     VSOutput output;
 
-#ifdef USE_GPU_SCENE_INSTANCING
-    GPUSceneData inst = GetInstanceData(input.InstanceID);
-    float4 worldPos = mul(float4(input.Position, 1.0), inst.World);
-#else
-    float4 worldPos = mul(float4(input.Position, 1.0), g_World);
-#endif
+    GPUObject obj = GetGPUObject(input.InstanceID);
+    float4 worldPos = mul(float4(input.Position, 1.0), obj.World);
 
     float4 viewPos = mul(worldPos, g_View);
     float4 projPos = mul(viewPos, g_Projection);
