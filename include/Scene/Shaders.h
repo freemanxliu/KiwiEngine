@@ -45,7 +45,8 @@ namespace Kiwi
         float NearPlane;                // g_NearPlane
         float FarPlane;                 // g_FarPlane
         int32_t NumLights;              // g_NumLights
-        float ViewPadding2[3];          // pad to 16-byte
+        int32_t NumDirectionalLights;   // g_NumDirectionalLights — Lights holds directional lights first
+        float ViewPadding2[2];          // pad to 16-byte
         GPULightData Lights[MAX_LIGHTS]; // g_Lights[8]
     };
     // Size: 4*64 + 16 + 16 + 16 + 8*32 = 560 bytes
@@ -106,17 +107,6 @@ namespace Kiwi
         int32_t NumCascades;
         float ShadowMapSize;                          // Shadow map resolution
         float ShadowPadding[3];                       // Pad to 16-byte alignment
-    };
-
-    // ---- Light Uniform Buffer (b3) — per-light pass ----
-    // UE5 multi-pass deferred: one draw call per light, light params in dedicated CB
-    struct LightUniformBuffer
-    {
-        float ColorIntensity[3];   // Light color * intensity
-        int32_t LightType;         // 0 = Directional, 1 = Point
-        float DirectionOrPos[3];   // Direction (dir light) or Position (point light)
-        float Radius;              // Point light radius (0 for directional)
-        float LightPadding[8];    // Pad to 48 bytes (3 x float4)
     };
 
     // ============================================================

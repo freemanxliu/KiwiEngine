@@ -61,7 +61,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 - **G-Buffer Geometry Pass** — All scene meshes are rendered with the `GBufferPass` shader into the 3 MRT targets + depth buffer. MRT PSO created via `CreateGraphicsPipelineState()` with `PipelineStateDesc`. Vertex shader passes per-object material data (Roughness, Metallic, texture flags, Selected, **ShadingModelID**) to pixel shader via interpolants. Unlit materials bypass normal mapping and write emissive-only G-Buffer data; DefaultLit materials follow the standard PBR path.
 - **Multi-Pass Deferred Lighting (UE5)** — Lighting is split into multiple passes instead of a single fullscreen draw:
   - **Ambient pass** — Opaque fullscreen pass computes ambient/IBL contribution. Unlit surfaces output their base color directly as emissive (no lighting).
-  - **Per-light additive passes** — Each lit surface gets its own fullscreen draw with additive blending (`SrcAlpha ONE`). Unlit surfaces receive no direct lighting (output zero). No hard cap on light count; each pass binds a dedicated `LightUniformBuffer` (b3) with per-light parameters.
+  - **Instanced light draws** — Additive blending (`SrcAlpha ONE`), one instance per light, two draws total: directional lights as fullscreen triangles, point lights as icosahedron light volumes with front faces culled so only covered pixels are shaded. Instances read `g_Lights` in `ViewUB` (b0), sorted directional-first. Unlit surfaces receive no direct lighting (output zero).
   - **PipelineStateDesc.AdditiveBlend** — New blend state for multi-pass light accumulation.
 - **Deferred Lighting BRDF** — Matches UE5's `DefaultLitBxDF`: **D_GGX** (Trowbridge-Reitz NDF), **Vis_SmithJointApprox** (joint Smith visibility with baked-in denominator), **F_Schlick** (with 2% reflectance shadow threshold), **Diffuse_Burley** (Disney diffuse, roughness-dependent), and **EnvBRDFApprox** (Lazarov 2013 analytical approximation, no LUT needed) for indirect specular. Applies cascaded shadow maps.
 - **Shadow Pass (CSM)** — Cascaded Shadow Mapping with up to 4 cascades rendered into a **single shadow atlas** (2x2 layout). Each cascade occupies one quadrant of the atlas texture (`R32_TYPELESS`, `2*cascadeSize × 2*cascadeSize`). PSSM (Practical Split Scheme) blends logarithmic and uniform cascade splits. Shader selects cascade by view-space distance and computes UV offset into the atlas. 5-tap PCF filtering with comparison sampler for soft shadow edges.
@@ -141,7 +141,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **Wireframe** | Normal visualization — maps world-space normals to RGB |
   | **GBufferPass** | G-Buffer geometry pass — octahedron normal encoding, **TBN normal mapping** (tangent-space normal map → world-space via Gram-Schmidt TBN with handedness), outputs Normal+PerObjectData, Metallic+Specular+Roughness+ShadingModelID, BaseColor+AO to 3 MRT. **Unlit path**: writes neutral normal + emissive BaseColor (no lighting). **DefaultLit path**: standard PBR with normal mapping |
   | **DeferredAmbient** | Fullscreen ambient pass — computes ambient/IBL contribution. **Unlit surfaces output BaseColor directly as emissive** (bypass lighting). Additive-friendly output for subsequent light passes |
-  | **DeferredLighting** | Per-light fullscreen additive PBR pass (UE5 DefaultLitBxDF) — D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox, CSM shadow atlas sampling. One draw call per light with additive blending. **Unlit surfaces receive no direct lighting** (output zero) |
+  | **DeferredLighting** | Instanced additive PBR lighting (UE5 DefaultLitBxDF) — D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox, CSM shadow atlas sampling. `VSMain` draws directional lights fullscreen, `VSPointLight` draws point light volumes. **Unlit surfaces receive no direct lighting** (output zero) |
   | **ShadowPass** | Depth-only vertex shader for shadow map generation (no pixel shader). Supports both CB offset (default) and SV_InstanceID (USE_GPU_SCENE_INSTANCING) vertex shader paths |
   | **BufferVisualization** | Debug fullscreen pass — visualizes individual G-Buffer channels (BaseColor, Roughness, Metallic, Normal, Specular, AO) |
   | **Skybox** | Fullscreen pass — equirectangular HDR environment map sampling on depth==1 pixels, inverse ViewProj direction reconstruction |
@@ -154,7 +154,6 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
   | **b0** | `ViewUniformBuffer` | Per-frame (1×) | View, Projection, ViewProjection, InvViewProj, CameraPos, ScreenSize, Near/Far, NumLights, Lights[8] |
   | **b1** | `ObjectUniformBuffer` | Per-draw call | World matrix, ObjectColor, Selected, Roughness, Metallic, texture flags, VisualizeMode |
   | **b2** | `ShadowUniformBuffer` | Per-frame (1×) | LightViewProj[4], CascadeSplits, ShadowBias/Strength, NumCascades |
-  | **b3** | `LightUniformBuffer` | Per-light pass | LightColor, LightDirection, LightPosition, LightType, LightRadius, ShadowAtlasUV |
   | **b4** | `BatchUniformBuffer` | Per-batch (reserved) | BatchStartIndex for GPU Scene instanced drawing |
 - **Custom Shaders** — Create a `.hlsl` with `VSMain`/`PSMain` entry points, `#include "Common.hlsli"` for the CB layout, drop into `Shaders/`, and it's available at runtime.
 
@@ -202,9 +201,9 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 
 - **Multi-Pass Deferred Lighting** — Each light renders as a separate fullscreen additive pass:
   - **Ambient pass** (opaque) — Computes ambient/IBL contribution.
-  - **Per-light pass** (additive blend) — One fullscreen draw per light with its own `LightUniformBuffer` (b3). No hard cap on light count.
+  - **Instanced light draws** (additive blend) — One fullscreen draw for all directional lights and one light volume draw for all point lights, indexing `g_Lights` in `ViewUB`.
 - **Unlimited Lights** — Light count is not bounded by a fixed array size. Each light pass binds an independent CB.
-- **GPU Light Data** — Per-light `LightUniformBuffer`: color+intensity, type (0=Directional, 1=Point), direction/position, radius, shadow atlas UV parameters.
+- **GPU Light Data** — `g_Lights[8]` in `ViewUB`: color+intensity, type (0=Directional, 1=Point), direction/position, radius. Directional lights come first; `g_NumDirectionalLights` marks where point lights start.
 - **Cascaded Shadow Mapping (CSM)** — Directional lights support real-time cascaded shadow maps:
   - Up to **4 cascades** rendered into a **single shadow atlas** (2x2 layout, `2*cascadeSize × 2*cascadeSize`)
   - **Shadow Atlas** — All cascades share one `R32_TYPELESS` depth texture; each cascade rendered via viewport/scissor into its quadrant

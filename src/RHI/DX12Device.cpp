@@ -230,7 +230,7 @@ namespace Kiwi
         //   Slot 1: Descriptor table with 16 SRVs at t0-t15 (t0-t7 textures, t8 GPU Scene StructuredBuffer)
         //   Slot 2: CBV b1 — PrimitiveUniformBuffer (per-draw)
         //   Slot 3: CBV b2 — ShadowUniformBuffer (per-frame)
-        //   Slot 4: CBV b3 — LightUniformBuffer (per-light pass)
+        //   Slot 4: CBV b3 — currently unused
         //   Slot 5: CBV b4 — BatchUB (GPU Scene batch start index)
         D3D12_DESCRIPTOR_RANGE srvRange = {};
         srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;

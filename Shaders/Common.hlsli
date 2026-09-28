@@ -35,7 +35,8 @@ cbuffer ViewUB : register(b0)
     float  g_NearPlane;
     float  g_FarPlane;
     int    g_NumLights;
-    float3 g_ViewPadding2;
+    int    g_NumDirectionalLights; // g_Lights holds directional lights first
+    float2 g_ViewPadding2;
     LightData g_Lights[MAX_LIGHTS];
 };
 

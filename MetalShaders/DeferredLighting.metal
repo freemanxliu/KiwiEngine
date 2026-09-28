@@ -1,27 +1,14 @@
-// Per-light deferred lighting. Output is additively blended.
+// Instanced deferred lighting. Output is additively blended.
+// VSMain draws directional lights as a fullscreen triangle; VSPointLight draws
+// point lights as icosahedron volumes with front faces culled. Instances index
+// viewUB.lights, which holds directional lights first.
 // Scene depth and the shadow atlas are depth2d textures on Metal.
 
 //!VERTEX
-struct VSOut
+struct KiwiLight
 {
-    float4 position [[position]];
-    float2 uv;
-};
-
-vertex VSOut VSMain(uint vertexID [[vertex_id]])
-{
-    float2 uv = float2(float((vertexID << 1) & 2), float(vertexID & 2));
-    VSOut out;
-    out.position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
-    out.uv = float2(uv.x, 1.0 - uv.y);
-    return out;
-}
-
-//!FRAGMENT
-struct FSIn
-{
-    float4 position [[position]];
-    float2 uv;
+    float4 colorAndType; // xyz color, w = light type bits
+    float4 dirAndRadius; // xyz direction or position, w = radius
 };
 
 struct KiwiView
@@ -32,7 +19,81 @@ struct KiwiView
     float4x4 invViewProjection;
     float4 cameraAndMode;
     float4 screenParams;
-    float4 lightHeader;
+    float4 lightHeader; // x = numLights, y = numDirectionalLights (int bits)
+    KiwiLight lights[8];
+};
+
+struct LightVSOut
+{
+    float4 position [[position]];
+    float4 clipPos; // unclamped clip position, divided per pixel for the G-Buffer UV
+    uint lightIndex [[flat]];
+};
+
+vertex LightVSOut VSMain(uint vertexID [[vertex_id]], uint instanceID [[instance_id]])
+{
+    float2 uv = float2(float((vertexID << 1) & 2), float(vertexID & 2));
+    LightVSOut out;
+    out.position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.clipPos = out.position;
+    out.lightIndex = min(instanceID, 7u);
+    return out;
+}
+
+// Unit-circumradius icosahedron. Winding matches the engine's clockwise front faces.
+constant float3 kIcosahedron[12] = {
+    float3(-0.5257311,  0.8506508,  0.0), float3( 0.5257311,  0.8506508,  0.0),
+    float3(-0.5257311, -0.8506508,  0.0), float3( 0.5257311, -0.8506508,  0.0),
+    float3( 0.0, -0.5257311,  0.8506508), float3( 0.0,  0.5257311,  0.8506508),
+    float3( 0.0, -0.5257311, -0.8506508), float3( 0.0,  0.5257311, -0.8506508),
+    float3( 0.8506508,  0.0, -0.5257311), float3( 0.8506508,  0.0,  0.5257311),
+    float3(-0.8506508,  0.0, -0.5257311), float3(-0.8506508,  0.0,  0.5257311),
+};
+// Scale by radius / inradius so the faces enclose the whole light sphere.
+constant float kIcosahedronInradius = 0.7946545;
+
+vertex LightVSOut VSPointLight(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
+                               constant KiwiView& viewUB [[buffer(0)]])
+{
+    uint lightIndex = min(uint(as_type<int>(viewUB.lightHeader.y)) + instanceID, 7u);
+    KiwiLight light = viewUB.lights[lightIndex];
+    float scale = max(light.dirAndRadius.w, 0.001) / kIcosahedronInradius;
+    float3 worldPos = light.dirAndRadius.xyz + kIcosahedron[vertexID % 12] * scale;
+    float4 clip = viewUB.viewProjection * float4(worldPos, 1.0);
+
+    LightVSOut out;
+    out.clipPos = clip;
+    // Depth testing is off, so clamping to the far plane only keeps volumes that cross it from being clipped.
+    clip.z = min(clip.z, clip.w);
+    out.position = clip;
+    out.lightIndex = lightIndex;
+    return out;
+}
+
+//!FRAGMENT
+struct LightVSOut
+{
+    float4 position [[position]];
+    float4 clipPos;
+    uint lightIndex [[flat]];
+};
+
+struct KiwiLight
+{
+    float4 colorAndType; // xyz color, w = light type bits
+    float4 dirAndRadius; // xyz direction or position, w = radius
+};
+
+struct KiwiView
+{
+    float4x4 view;
+    float4x4 projection;
+    float4x4 viewProjection;
+    float4x4 invViewProjection;
+    float4 cameraAndMode;
+    float4 screenParams;
+    float4 lightHeader; // x = numLights, y = numDirectionalLights (int bits)
+    KiwiLight lights[8];
 };
 
 struct KiwiShadow
@@ -41,14 +102,6 @@ struct KiwiShadow
     float4 cascadeSplits;
     float4 biasPack;   // bias, normalBias, strength, numCascades bitcast
     float4 mapSizePad; // x = shadow map size
-};
-
-struct KiwiLight
-{
-    float4 colorAndType; // xyz color, w = light type bits
-    float4 dirAndRadius; // xyz direction or position, w = radius
-    float4 pad0;
-    float4 pad1;
 };
 
 float3 DecodeNormal(float4 gbufferA)
@@ -155,10 +208,9 @@ float ComputeShadow(constant KiwiShadow& shadow, depth2d<float> atlas, float3 wo
     return mix(1.0, visibility, shadow.biasPack.z);
 }
 
-fragment float4 PSMain(FSIn in [[stage_in]],
+fragment float4 PSMain(LightVSOut in [[stage_in]],
                        constant KiwiView& viewUB [[buffer(0)]],
                        constant KiwiShadow& shadowUB [[buffer(2)]],
-                       constant KiwiLight& lightUB [[buffer(3)]],
                        texture2d<float> gbufferA [[texture(0)]],
                        texture2d<float> gbufferB [[texture(1)]],
                        texture2d<float> gbufferC [[texture(2)]],
@@ -166,13 +218,44 @@ fragment float4 PSMain(FSIn in [[stage_in]],
                        depth2d<float> depthTex [[texture(7)]],
                        sampler linearSampler [[sampler(0)]])
 {
-    float depth = depthTex.sample(linearSampler, in.uv);
+    float2 ndc = in.clipPos.xy / in.clipPos.w;
+    float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    KiwiLight light = viewUB.lights[in.lightIndex];
+
+    float depth = depthTex.sample(linearSampler, uv);
     if (depth >= 1.0)
         return float4(0.0);
 
-    float4 gA = gbufferA.sample(linearSampler, in.uv);
-    float4 gB = gbufferB.sample(linearSampler, in.uv);
-    float4 gC = gbufferC.sample(linearSampler, in.uv);
+    float3 worldPos = ReconstructWorldPos(viewUB.invViewProjection, uv, depth);
+
+    float3 L;
+    float attenuation = 1.0;
+    int lightType = as_type<int>(light.colorAndType.w);
+    if (lightType == 0)
+    {
+        L = normalize(light.dirAndRadius.xyz);
+    }
+    else
+    {
+        float3 toLight = light.dirAndRadius.xyz - worldPos;
+        float distSq = dot(toLight, toLight);
+        float radius = max(light.dirAndRadius.w, 0.001);
+        // The volume is a coarse icosahedron, so reject pixels outside the sphere before reading the G-Buffer.
+        if (distSq >= radius * radius)
+            return float4(0.0);
+
+        float dist = sqrt(distSq);
+        L = toLight / max(dist, 0.0001);
+        float invSq = 1.0 / max(distSq, 0.0001);
+        float nd = dist / radius;
+        float nd4 = nd * nd * nd * nd;
+        float window = saturate(1.0 - nd4);
+        attenuation = invSq * window * window;
+    }
+
+    float4 gA = gbufferA.sample(linearSampler, uv);
+    float4 gB = gbufferB.sample(linearSampler, uv);
+    float4 gC = gbufferC.sample(linearSampler, uv);
     uint shadingModelId = (uint(gB.a * 255.0 + 0.5)) >> 4;
     if (shadingModelId == 0)
         return float4(0.0);
@@ -184,44 +267,27 @@ fragment float4 PSMain(FSIn in [[stage_in]],
     float3 baseColor = gC.rgb;
     float ao = gC.a;
 
-    float3 worldPos = ReconstructWorldPos(viewUB.invViewProjection, in.uv, depth);
+    float NoL = saturate(dot(N, L));
+    if (NoL <= 0.0)
+        return float4(0.0);
+
+    if (lightType == 0)
+    {
+        float viewZ = (viewUB.view * float4(worldPos, 1.0)).z;
+        attenuation *= ComputeShadow(shadowUB, shadowAtlas, worldPos, viewZ);
+    }
+
     float3 V = normalize(viewUB.cameraAndMode.xyz - worldPos);
     float NoV = saturate(abs(dot(N, V)) + 1e-5);
 
     float3 diffuseColor = baseColor * (1.0 - metallic);
     float3 specularColor = mix(float3(0.08) * specular, baseColor, metallic);
 
-    float3 L;
-    float attenuation = 1.0;
-    int lightType = as_type<int>(lightUB.colorAndType.w);
-    if (lightType == 0)
-    {
-        L = normalize(lightUB.dirAndRadius.xyz);
-        float viewZ = (viewUB.view * float4(worldPos, 1.0)).z;
-        attenuation *= ComputeShadow(shadowUB, shadowAtlas, worldPos, viewZ);
-    }
-    else
-    {
-        float3 toLight = lightUB.dirAndRadius.xyz - worldPos;
-        float distSq = dot(toLight, toLight);
-        float dist = sqrt(distSq);
-        L = toLight / max(dist, 0.0001);
-        float invSq = 1.0 / max(distSq, 0.0001);
-        float nd = dist / max(lightUB.dirAndRadius.w, 0.001);
-        float nd4 = nd * nd * nd * nd;
-        float window = saturate(1.0 - nd4);
-        attenuation = invSq * window * window;
-    }
-
-    float NoL = saturate(dot(N, L));
-    if (NoL <= 0.0)
-        return float4(0.0);
-
     float3 H = normalize(V + L);
     float NoH = saturate(dot(N, H));
     float VoH = saturate(dot(V, H));
     float3 diffBRDF = Diffuse_Burley(diffuseColor, roughness, NoV, NoL, VoH);
     float3 specBRDF = SpecularGGX(roughness, specularColor, NoV, NoL, NoH, VoH);
-    float3 radiance = lightUB.colorAndType.xyz * NoL * attenuation;
+    float3 radiance = light.colorAndType.xyz * NoL * attenuation;
     return float4((diffBRDF + specBRDF) * radiance * ao, 0.0);
 }

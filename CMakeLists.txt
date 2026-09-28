@@ -55,6 +55,19 @@ set(SOURCES
     src/main.cpp
     src/Core/Renderer.cpp
     src/Core/RayTracing.cpp
+    src/Core/KiwiEngineApp.cpp
+    src/Core/RenderResources.cpp
+    src/Core/PostProcess.cpp
+    src/Core/Shadows.cpp
+    src/Core/RendererUtils.cpp
+    src/Math/RayMath.cpp
+    src/Editor/EditorUI.cpp
+    src/Editor/EditorToolbar.cpp
+    src/Editor/DetailsPanel.cpp
+    src/Editor/ContentBrowser.cpp
+    src/Editor/MaterialEditor.cpp
+    src/Editor/TransformGizmo.cpp
+    src/Editor/GizmoMesh.cpp
     src/Core/Application.cpp
     src/Core/EngineConfig.cpp
     src/Core/Platform.cpp
@@ -106,6 +119,12 @@ set(HEADERS
     include/KiwiEngineApp.h
     include/Core/EngineConfig.h
     include/Math/Math.h
+    include/Math/RayMath.h
+    include/Core/PassTimer.h
+    include/Core/RendererUtils.h
+    include/Editor/AssetTypes.h
+    include/Editor/GizmoMesh.h
+    include/Editor/TransformGizmo.h
     include/Scene/Mesh.h
     include/Scene/Shaders.h
     include/Scene/ShaderLibrary.h

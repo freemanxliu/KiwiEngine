@@ -61,7 +61,7 @@
 - **G-Buffer 几何 Pass** — 所有场景网格使用 `GBufferPass` 着色器渲染到 3 个 MRT + 深度缓冲。顶点着色器通过 interpolants 将 per-object 材质数据（粗糙度、金属度、纹理标志、选中状态、**ShadingModelID**）传递到像素着色器。Unlit 材质跳过法线贴图，写入 emissive-only G-Buffer 数据；DefaultLit 材质走标准 PBR 路径。
 - **Multi-Pass 延迟光照（UE5）** — 光照拆分为多个 Pass，而非单次全屏绘制：
   - **Ambient pass** — 不透明全屏 Pass，计算环境光/IBL 贡献。**Unlit 表面直接输出 BaseColor 作为自发光**（跳过光照计算）。
-  - **Per-light additive passes** — 每个光照表面一次全屏绘制，使用 additive blending (`SrcAlpha ONE`)。**Unlit 表面不接受直接光照**（输出零）。无硬性光源数量限制；每个 Pass 绑定独立的 `LightUniformBuffer` (b3)。
+  - **实例化光照绘制** — 使用 additive blending (`SrcAlpha ONE`)，每个光源一个实例，总共两次绘制：方向光画全屏三角形，点光源画二十面体光源体积并剔除正面，只着色体积覆盖的像素。实例从 `ViewUB` (b0) 的 `g_Lights` 读取光源，方向光排在前面。**Unlit 表面不接受直接光照**（输出零）。
   - **PipelineStateDesc.AdditiveBlend** — 新增 blend state 用于多光源累积。
 - **延迟光照 BRDF** — 对齐 UE5 `DefaultLitBxDF`：**D_GGX**（Trowbridge-Reitz NDF）、**Vis_SmithJointApprox**（联合 Smith 可见性，分母已内置）、**F_Schlick**（含 2% 反射率阴影阈值）、**Diffuse_Burley**（Disney 漫反射，粗糙度相关）、**EnvBRDFApprox**（Lazarov 2013 解析近似，无需 LUT）用于间接高光。支持级联阴影贴图。
 - **阴影 Pass（CSM）** — 级联阴影贴图，支持最多 4 级级联，所有级联渲染到**单张阴影 Atlas**（2x2 布局）。每个级联占 Atlas 纹理的一个象限（`R32_TYPELESS`，`2*cascadeSize × 2*cascadeSize`）。PSSM 混合对数和均匀分割方案。着色器根据视空间距离选择级联并计算 UV 偏移到 Atlas 对应区域。5 次 PCF 采样配合比较采样器实现柔和阴影边缘。
@@ -140,7 +140,7 @@
   | **Wireframe** | 法线可视化 — 将世界空间法线映射为 RGB 颜色 |
   | **GBufferPass** | G-Buffer 几何 Pass — Octahedron 法线编码，**TBN 法线贴图**（切线空间法线→世界空间，Gram-Schmidt 正交化 + handedness），输出法线+PerObjectData、金属度+Specular+粗糙度+ShadingModelID、BaseColor+AO 到 3 个 MRT。**Unlit 路径**：写入中性法线 + emissive BaseColor（无光照）。**DefaultLit 路径**：标准 PBR + 法线贴图 |
   | **DeferredAmbient** | 全屏环境光 Pass — 计算环境光/IBL 贡献。**Unlit 表面直接输出 BaseColor 作为自发光**（跳过光照计算）。Additive-friendly 输出 |
-  | **DeferredLighting** | Per-light 全屏 additive PBR Pass（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样。每个光源一次全屏绘制，additive blending。**Unlit 表面不接受直接光照**（输出零） |
+  | **DeferredLighting** | 实例化 additive PBR 光照（UE5 DefaultLitBxDF）— D_GGX + Vis_SmithJointApprox + F_Schlick + Diffuse_Burley + EnvBRDFApprox、CSM 阴影 Atlas 采样。`VSMain` 全屏绘制方向光，`VSPointLight` 绘制点光源体积。**Unlit 表面不接受直接光照**（输出零） |
   | **ShadowPass** | 仅深度顶点着色器，用于阴影贴图生成（无像素着色器）。支持 CB offset（默认）和 SV_InstanceID（USE_GPU_SCENE_INSTANCING）两种顶点着色器路径 |
   | **BufferVisualization** | 调试全屏 Pass — 可视化单独的 G-Buffer 通道（BaseColor、Roughness、Metallic、Normal、Specular、AO） |
   | **Skybox** | 全屏 Pass — 在 depth==1 像素上采样 HDR Equirectangular 环境贴图，逆 ViewProj 方向重建 |
@@ -153,7 +153,6 @@
   | **b0** | `ViewUniformBuffer` | 每帧 1 次 | View/Proj/ViewProj/InvViewProj 矩阵、CameraPos、屏幕尺寸、Near/Far、灯光数量 + 灯光数组[8] |
   | **b1** | `ObjectUniformBuffer` | 每次绘制 | World 矩阵、物体颜色、选中状态、粗糙度、金属度、纹理标志、可视化模式 |
   | **b2** | `ShadowUniformBuffer` | 每帧 1 次 | LightViewProj[4]、级联分割距离、阴影偏移/强度、级联数量 |
-  | **b3** | `LightUniformBuffer` | 每光源 Pass | LightColor、LightDirection、LightPosition、LightType、LightRadius、ShadowAtlasUV |
   | **b4** | `BatchUniformBuffer` | 每 Batch（预留） | BatchStartIndex，用于 GPU Scene instanced drawing |
 - **自定义着色器** — 创建 `.hlsl` 文件，`#include "Common.hlsli"` 获取 CB 布局，定义 `VSMain`/`PSMain` 入口点，放入 `Shaders/` 即可运行。
 
@@ -202,9 +201,9 @@
 
 - **Multi-Pass 延迟光照** — 每个光源作为独立的 fullscreen additive pass 渲染：
   - **Ambient pass**（不透明）— 计算环境光/IBL 贡献。
-  - **Per-light pass**（additive blend）— 每个光源一次全屏绘制，绑定独立的 `LightUniformBuffer` (b3)。无硬性光源数量限制。
+  - **实例化光照绘制**（additive blend）— 所有方向光一次全屏绘制，所有点光源一次光源体积绘制，都从 `ViewUB` 的 `g_Lights` 取光源。
 - **无限光源** — 光源数量不受固定数组大小限制。每个光源 Pass 绑定独立的 CB。
-- **GPU 灯光数据** — Per-light `LightUniformBuffer`：颜色+强度、类型（0=方向光、1=点光源）、方向/位置、半径、阴影 Atlas UV 参数。
+- **GPU 灯光数据** — `ViewUB` 中的 `g_Lights[8]`：颜色+强度、类型（0=方向光、1=点光源）、方向/位置、半径。方向光排在前面，`g_NumDirectionalLights` 标出点光源的起始位置。
 - **级联阴影贴图（CSM）** — 方向光支持实时级联阴影贴图：
   - 最多 **4 级级联**，渲染到**单张阴影 Atlas**（2x2 布局，`2*cascadeSize × 2*cascadeSize`）
   - **Shadow Atlas** — 所有级联共享一张 `R32_TYPELESS` 深度纹理；每个级联通过 viewport/scissor 渲染到各自象限

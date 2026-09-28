@@ -324,37 +324,43 @@ void KiwiEngineApp::RenderDeferred(
         }
         ctx->EndEvent();
 
-        // ---- Step 2: Per-Light Passes (additive blend) ----
-        if (m_DeferredLightingAdditivePSO && m_NumActiveLights > 0)
+        // ---- Step 2: Instanced light draws (additive blend) ----
+        // Lights come from g_Lights in ViewUB: directional first, then point lights.
+        const uint32_t numDirectional = (uint32_t)m_NumDirectionalLights;
+        const uint32_t numPoint = (uint32_t)(m_NumActiveLights - m_NumDirectionalLights);
+        if (m_LightVolumeIB && m_NumActiveLights > 0)
         {
-            ctx->SetPipelineState(m_DeferredLightingAdditivePSO.get());
-            ctx->SetVertexShader(m_DeferredLightingVS.get());
-            ctx->SetPixelShader(m_DeferredLightingPS.get());
             ctx->SetInputLayout(nullptr);
             ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+            IndexBufferView ibView;
+            ibView.BufferLocation = 0;
+            ibView.SizeInBytes = (LIGHT_VOLUME_INDEX_COUNT + 3) * sizeof(uint32_t);
+            ibView.Format = EFormat::R32_UINT;
+            ctx->SetIndexBuffer(m_LightVolumeIB.get(), &ibView);
 
-            // Shadow atlas + comparison sampler
+            // Shadow atlas + comparison sampler (the shared pixel shader declares them for both draws)
             ctx->SetShaderResourceView(3, m_ShadowAtlasSRV.get());
             ctx->SetSampler(2, m_ShadowSampler.get());
             UploadShadowUB();
             ctx->SetConstantBuffer(2, m_ShadowCB.get());
 
-            for (int li = 0; li < m_NumActiveLights; li++)
+            if (m_DeferredLightingAdditivePSO && numDirectional > 0)
             {
-                ctx->BeginEvent("Light Pass");
+                ctx->BeginEvent("Directional Lights");
+                ctx->SetPipelineState(m_DeferredLightingAdditivePSO.get());
+                ctx->SetVertexShader(m_DeferredLightingVS.get());
+                ctx->SetPixelShader(m_DeferredLightingPS.get());
+                ctx->DrawIndexedInstanced(3, numDirectional, LIGHT_VOLUME_INDEX_COUNT, 0, 0);
+                ctx->EndEvent();
+            }
 
-                // Upload LightUB (b3)
-                LightUniformBuffer lub = {};
-                memcpy(lub.ColorIntensity, m_LightDataCache[li].ColorIntensity, sizeof(float) * 3);
-                lub.LightType = m_LightDataCache[li].Type;
-                memcpy(lub.DirectionOrPos, m_LightDataCache[li].DirectionOrPos, sizeof(float) * 3);
-                lub.Radius = m_LightDataCache[li].Radius;
-
-                void* mapped = m_LightCB->Map();
-                if (mapped) { memcpy(mapped, &lub, sizeof(lub)); m_LightCB->Unmap(); }
-                ctx->SetConstantBuffer(3, m_LightCB.get());
-
-                ctx->Draw(3, 0);
+            if (m_DeferredPointLightPSO && numPoint > 0)
+            {
+                ctx->BeginEvent("Point Lights");
+                ctx->SetPipelineState(m_DeferredPointLightPSO.get());
+                ctx->SetVertexShader(m_DeferredPointLightVS.get());
+                ctx->SetPixelShader(m_DeferredLightingPS.get());
+                ctx->DrawIndexedInstanced(LIGHT_VOLUME_INDEX_COUNT, numPoint, 0, 0, 0);
                 ctx->EndEvent();
             }
         }
@@ -491,4 +497,150 @@ void KiwiEngineApp::RenderForward(
     ctx->ClearCullModeOverride();
     m_PassTimer.End();
     ctx->EndEvent();
+}
+
+// Fill the camera ViewUniformBuffer. Binding is a separate SetConstantBuffer(0).
+void KiwiEngineApp::UploadViewUB()
+{
+    if (!m_ViewUB) return;
+
+    Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
+    Mat4 invViewProj = viewProj.Inverse();
+
+    ViewUniformBuffer vub = {};
+    memcpy(vub.ViewMatrix, m_ViewMatrix.m, sizeof(m_ViewMatrix.m));
+    memcpy(vub.ProjectionMatrix, m_ProjectionMatrix.m, sizeof(m_ProjectionMatrix.m));
+    memcpy(vub.ViewProjectionMatrix, viewProj.m, sizeof(viewProj.m));
+    memcpy(vub.InvViewProjectionMatrix, invViewProj.m, sizeof(invViewProj.m));
+    vub.CameraPos[0] = m_CameraPosition.x;
+    vub.CameraPos[1] = m_CameraPosition.y;
+    vub.CameraPos[2] = m_CameraPosition.z;
+    vub.ViewPadding1 = (float)(int)m_ViewMode;
+    vub.ScreenWidth = (float)GetWindow()->GetWidth();
+    vub.ScreenHeight = (float)GetWindow()->GetHeight();
+    vub.NearPlane = 0.1f;
+    vub.FarPlane = 1000.0f;
+    vub.NumLights = m_NumActiveLights;
+    vub.NumDirectionalLights = m_NumDirectionalLights;
+    vub.ViewPadding2[0] = vub.ViewPadding2[1] = 0.0f;
+    memcpy(vub.Lights, m_LightDataCache, sizeof(m_LightDataCache));
+
+    void* mapped = m_ViewUB->Map();
+    if (mapped) { memcpy(mapped, &vub, sizeof(vub)); m_ViewUB->Unmap(); }
+}
+
+// Helper: Bind material textures for the current object
+void KiwiEngineApp::BindMaterialTextures(RHICommandContext* ctx, MeshComponent* meshComp)
+{
+    Material* mat = m_MaterialLibrary.GetMaterial(meshComp->Material.Parent);
+    std::string baseColorTex = meshComp->Material.GetTexture(mat, "_BaseColorTex");
+    std::string normalTex    = meshComp->Material.GetTexture(mat, "_NormalTex");
+    std::string mrTex        = meshComp->Material.GetTexture(mat, "_MetallicRoughnessTex");
+
+    // t4 = BaseColor texture
+    if (!baseColorTex.empty())
+    {
+        GPUTexture* tex = m_TextureManager.GetTexture(baseColorTex);
+        if (!tex) tex = m_TextureManager.LoadTexture(baseColorTex);
+        if (tex && tex->SRV)
+            ctx->SetShaderResourceView(4, tex->SRV.get());
+        else
+            ctx->SetShaderResourceView(4, m_TextureManager.GetWhiteTexture()->SRV.get());
+    }
+    else
+    {
+        if (m_TextureManager.GetWhiteTexture())
+            ctx->SetShaderResourceView(4, m_TextureManager.GetWhiteTexture()->SRV.get());
+    }
+
+    // t5 = Normal map texture
+    if (!normalTex.empty())
+    {
+        GPUTexture* tex = m_TextureManager.GetTexture(normalTex);
+        if (!tex) tex = m_TextureManager.LoadTexture(normalTex);
+        if (tex && tex->SRV)
+            ctx->SetShaderResourceView(5, tex->SRV.get());
+        else
+            ctx->SetShaderResourceView(5, m_TextureManager.GetDefaultNormalTexture()->SRV.get());
+    }
+    else
+    {
+        if (m_TextureManager.GetDefaultNormalTexture())
+            ctx->SetShaderResourceView(5, m_TextureManager.GetDefaultNormalTexture()->SRV.get());
+    }
+
+    // t6 = MetallicRoughness texture (optional; not yet sampled in shader but bound for future use)
+    if (!mrTex.empty())
+    {
+        GPUTexture* tex = m_TextureManager.GetTexture(mrTex);
+        if (!tex) tex = m_TextureManager.LoadTexture(mrTex);
+        if (tex && tex->SRV)
+            ctx->SetShaderResourceView(6, tex->SRV.get());
+    }
+}
+
+// Update CBs for deferred lighting fullscreen pass
+void KiwiEngineApp::UpdateDeferredLightingCB()
+{
+    auto ctx = GetContext();
+
+    // Upload PrimitiveUniformBuffer (identity world + no selection)
+    PrimitiveUniformBuffer oub = {};
+    Mat4 identity = Mat4::Identity();
+    memcpy(oub.WorldMatrix, identity.m, sizeof(identity.m));
+    oub.Selected = 0.0f;
+    oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
+
+    void* mapped = m_ObjectUB->Map();
+    if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
+    ctx->SetConstantBuffer(1, m_ObjectUB.get());
+}
+
+// Update CBs for buffer visualization fullscreen pass
+void KiwiEngineApp::UpdateBufferVisualizationCB()
+{
+    auto ctx = GetContext();
+
+    // Upload PrimitiveUniformBuffer with visualize mode
+    PrimitiveUniformBuffer oub = {};
+    Mat4 identity = Mat4::Identity();
+    memcpy(oub.WorldMatrix, identity.m, sizeof(identity.m));
+    oub.Selected = 0.0f;
+
+    // Use g_ShadingModelID field to pass the visualization mode (repurposed for this pass)
+    switch (m_ViewMode)
+    {
+    case EViewMode::BaseColor: oub.ShadingModelID = 0.0f; break;
+    case EViewMode::Roughness: oub.ShadingModelID = 1.0f; break;
+    case EViewMode::Metallic:  oub.ShadingModelID = 2.0f; break;
+    default:                   oub.ShadingModelID = 0.0f; break;
+    }
+    oub.ObjectPadding[0] = oub.ObjectPadding[1] = oub.ObjectPadding[2] = 0.0f;
+
+    void* mapped = m_ObjectUB->Map();
+    if (mapped) { memcpy(mapped, &oub, sizeof(oub)); m_ObjectUB->Unmap(); }
+    ctx->SetConstantBuffer(1, m_ObjectUB.get());
+}
+
+void KiwiEngineApp::DrawGizmo(RHICommandContext* ctx)
+{
+    SceneObject* sel = m_Scene.GetSelectedObject();
+    if (!sel) return;
+
+    // Skip gizmo for the active Main Camera (you're looking through it)
+    auto* camComp = sel->GetComponent<CameraComponent>();
+    if (camComp && camComp->IsMainCamera)
+        return;
+
+    // Gizmo always uses the Default shader
+    CompiledShader* defaultShader = m_ShaderLibrary.GetDefault();
+    if (defaultShader)
+    {
+        if (defaultShader->PSO)
+            ctx->SetPipelineState(defaultShader->PSO.get());
+        ctx->SetVertexShader(defaultShader->VertexShader.get());
+        ctx->SetPixelShader(defaultShader->PixelShader.get());
+    }
+
+    m_Gizmo.Draw(ctx, *sel, m_CameraPosition, m_ObjectUB.get());
 }

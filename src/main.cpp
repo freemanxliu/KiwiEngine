@@ -1,5 +1,12 @@
 #include "KiwiEngineApp.h"
 
+#include "Core/EngineConfig.h"
+#include "Core/Platform.h"
+#include "Debug/RenderDocIntegration.h"
+
+#include <iostream>
+#include <string>
+
 // ============================================================
 // Main
 // ============================================================

@@ -1,8 +1,12 @@
 // ============================================================
-// Deferred Lighting Pass — Per-Light (UE5 Multi-Pass Architecture)
+// Deferred Lighting Pass — instanced, additive blend
 //
-// This shader is drawn ONCE per light source with additive blend.
-// Each draw call receives light parameters via LightUB (b3).
+// Two draws per frame, one instance per light:
+//   VSMain       — directional lights, fullscreen triangle
+//   VSPointLight — point lights, icosahedron light volume drawn with
+//                  front faces culled so only pixels the volume covers are shaded
+// Instances index g_Lights in ViewUB. Lights are sorted so that directional
+// lights occupy [0, g_NumDirectionalLights) and point lights follow.
 //
 // G-Buffer layout (UE5, all R8G8B8A8_UNORM):
 //   t0 GBufferA: Normal(RG octahedron + B=z) + PerObjectData(A)
@@ -12,9 +16,8 @@
 //   t7 DepthBuffer: Hardware depth (R32_FLOAT)
 //
 // Constant Buffers:
-//   b0 = ViewUB   (camera, screen — NO light data)
-//   b2 = ShadowUB (CSM data — only for directional light pass)
-//   b3 = LightUB  (per-light: color, direction/position, radius, type)
+//   b0 = ViewUB   (camera, screen, lights)
+//   b2 = ShadowUB (CSM data — only used by directional lights)
 // ============================================================
 
 #include "Common.hlsli"
@@ -35,16 +38,6 @@ cbuffer ShadowUB : register(b2)
     float3 g_ShadowPadding;
 };
 
-// Light Uniform Buffer (b3) — per-light pass
-cbuffer LightUB : register(b3)
-{
-    float3 g_LightColor;      // Color * Intensity
-    int    g_LightType;        // 0 = Directional, 1 = Point
-    float3 g_LightDirOrPos;   // Direction (directional) or Position (point)
-    float  g_LightRadius;     // Point light radius
-    float2 g_LightPadding[4]; // Pad to 48 bytes
-};
-
 // G-Buffer textures
 Texture2D g_GBufferA    : register(t0);
 Texture2D g_GBufferB    : register(t1);
@@ -58,16 +51,47 @@ SamplerComparisonState g_ShadowSampler : register(s2);
 struct VSOutput
 {
     float4 Position : SV_POSITION;
-    float2 TexCoord : TEXCOORD0;
+    float4 ClipPos  : TEXCOORD0; // unclamped clip position, divided per pixel for the G-Buffer UV
+    nointerpolation uint LightIndex : TEXCOORD1;
 };
 
-// ---- Fullscreen Triangle VS ----
-VSOutput VSMain(uint vertexID : SV_VertexID)
+// ---- Directional lights: fullscreen triangle ----
+VSOutput VSMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
 {
     VSOutput output;
     float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
     output.Position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
-    output.TexCoord = float2(uv.x, 1.0 - uv.y);
+    output.ClipPos = output.Position;
+    output.LightIndex = min(instanceID, (uint)(MAX_LIGHTS - 1));
+    return output;
+}
+
+// Unit-circumradius icosahedron. Winding matches the engine's clockwise front faces.
+static const float3 kIcosahedron[12] = {
+    float3(-0.5257311,  0.8506508,  0.0), float3( 0.5257311,  0.8506508,  0.0),
+    float3(-0.5257311, -0.8506508,  0.0), float3( 0.5257311, -0.8506508,  0.0),
+    float3( 0.0, -0.5257311,  0.8506508), float3( 0.0,  0.5257311,  0.8506508),
+    float3( 0.0, -0.5257311, -0.8506508), float3( 0.0,  0.5257311, -0.8506508),
+    float3( 0.8506508,  0.0, -0.5257311), float3( 0.8506508,  0.0,  0.5257311),
+    float3(-0.8506508,  0.0, -0.5257311), float3(-0.8506508,  0.0,  0.5257311),
+};
+// Scale by radius / inradius so the faces enclose the whole light sphere.
+static const float kIcosahedronInradius = 0.7946545;
+
+// ---- Point lights: light volume ----
+VSOutput VSPointLight(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
+{
+    VSOutput output;
+    uint lightIndex = min((uint)g_NumDirectionalLights + instanceID, (uint)(MAX_LIGHTS - 1));
+    LightData light = g_Lights[lightIndex];
+    float scale = max(light.Radius, 0.001) / kIcosahedronInradius;
+    float3 worldPos = light.DirectionOrPos + kIcosahedron[vertexID % 12] * scale;
+    float4 clip = mul(float4(worldPos, 1.0), g_ViewProjection);
+    output.ClipPos = clip;
+    // Depth testing is off, so clamping to the far plane only keeps volumes that cross it from being clipped.
+    clip.z = min(clip.z, clip.w);
+    output.Position = clip;
+    output.LightIndex = lightIndex;
     return output;
 }
 
@@ -178,13 +202,46 @@ float3 SpecularGGX(float Roughness, float3 F0, float NoV, float NoL, float NoH, 
 // ============================================================
 float4 PSMain(VSOutput input) : SV_TARGET
 {
-    float depth = g_DepthBuffer.Sample(g_Sampler, input.TexCoord).r;
+    float2 ndc = input.ClipPos.xy / input.ClipPos.w;
+    float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    LightData light = g_Lights[input.LightIndex];
+
+    float depth = g_DepthBuffer.Sample(g_Sampler, uv).r;
     if (depth >= 1.0) return float4(0, 0, 0, 0); // Sky — no contribution
 
+    float3 worldPos = ReconstructWorldPos(uv, depth);
+
+    // ---- Light direction and distance attenuation ----
+    float3 L;
+    float attenuation = 1.0;
+
+    if (light.Type == 0) // Directional
+    {
+        L = normalize(light.DirectionOrPos);
+    }
+    else // Point
+    {
+        float3 toLight = light.DirectionOrPos - worldPos;
+        float distSq = dot(toLight, toLight);
+        float radius = max(light.Radius, 0.001);
+        // The volume is a coarse icosahedron, so reject pixels outside the sphere before reading the G-Buffer.
+        if (distSq >= radius * radius) return float4(0, 0, 0, 0);
+
+        float dist = sqrt(distSq);
+        L = toLight / max(dist, 0.0001);
+
+        // UE5 inverse-square + windowing: 1/d^2 * (1 - (d/r)^4)^2
+        float invSq = 1.0 / max(distSq, 0.0001);
+        float nd = dist / radius;
+        float nd4 = nd * nd * nd * nd;
+        float window = saturate(1.0 - nd4);
+        attenuation = invSq * window * window;
+    }
+
     // Decode G-Buffer
-    float4 gA = g_GBufferA.Sample(g_Sampler, input.TexCoord);
-    float4 gB = g_GBufferB.Sample(g_Sampler, input.TexCoord);
-    float4 gC = g_GBufferC.Sample(g_Sampler, input.TexCoord);
+    float4 gA = g_GBufferA.Sample(g_Sampler, uv);
+    float4 gB = g_GBufferB.Sample(g_Sampler, uv);
+    float4 gC = g_GBufferC.Sample(g_Sampler, uv);
 
     // Decode ShadingModel from GBufferB.a
     uint shadingModelId = (uint(gB.a * 255.0 + 0.5)) >> 4;
@@ -199,43 +256,22 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float3 baseColor = gC.rgb;
     float  ao        = gC.a;
 
-    float3 worldPos = ReconstructWorldPos(input.TexCoord, depth);
+    float NoL = saturate(dot(N, L));
+    if (NoL <= 0.0) return float4(0, 0, 0, 0); // Back-facing — no contribution
+
+    if (light.Type == 0)
+    {
+        // CSM shadow
+        float4 viewPos = mul(float4(worldPos, 1.0), g_View);
+        attenuation *= ComputeShadow(worldPos, viewPos.z);
+    }
+
     float3 V   = normalize(g_CameraPos - worldPos);
     float  NoV = saturate(abs(dot(N, V)) + 1e-5);
 
     // Material properties (UE5 metallic workflow)
     float3 diffuseColor  = baseColor * (1.0 - metallic);
     float3 specularColor = lerp(float3(0.08, 0.08, 0.08) * specular, baseColor, metallic);
-
-    // ---- Compute light direction and attenuation ----
-    float3 L;
-    float attenuation = 1.0;
-
-    if (g_LightType == 0) // Directional
-    {
-        L = normalize(g_LightDirOrPos);
-
-        // CSM shadow
-        float4 viewPos = mul(float4(worldPos, 1.0), g_View);
-        attenuation *= ComputeShadow(worldPos, viewPos.z);
-    }
-    else // Point
-    {
-        float3 toLight = g_LightDirOrPos - worldPos;
-        float distSq = dot(toLight, toLight);
-        float dist = sqrt(distSq);
-        L = toLight / max(dist, 0.0001);
-
-        // UE5 inverse-square + windowing: 1/d^2 * (1 - (d/r)^4)^2
-        float invSq = 1.0 / max(distSq, 0.0001);
-        float nd = dist / max(g_LightRadius, 0.001);
-        float nd4 = nd * nd * nd * nd;
-        float window = saturate(1.0 - nd4);
-        attenuation = invSq * window * window;
-    }
-
-    float NoL = saturate(dot(N, L));
-    if (NoL <= 0.0) return float4(0, 0, 0, 0); // Back-facing — no contribution
 
     float3 H   = normalize(V + L);
     float  NoH = saturate(dot(N, H));
@@ -245,7 +281,7 @@ float4 PSMain(VSOutput input) : SV_TARGET
     float3 diffBRDF = Diffuse_Burley(diffuseColor, roughness, NoV, NoL, VoH);
     float3 specBRDF = SpecularGGX(roughness, specularColor, NoV, NoL, NoH, VoH);
 
-    float3 radiance = g_LightColor * NoL * attenuation;
+    float3 radiance = light.ColorIntensity * NoL * attenuation;
     float3 result = (diffBRDF + specBRDF) * radiance * ao;
 
     return float4(result, 0.0);
