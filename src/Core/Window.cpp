@@ -9,19 +9,19 @@ namespace Kiwi
 {
 
     Window::Window(const WindowDesc& desc)
-        : m_Width(desc.Width)
-        , m_Height(desc.Height)
+        : Width(desc.Width)
+        , Height(desc.Height)
     {
         // 注册窗口类
         std::wstring className = L"KiwiEngineWindow";
-        m_WndClass.lpfnWndProc = WindowProc;
-        m_WndClass.hInstance = GetModuleHandleW(nullptr);
-        m_WndClass.lpszClassName = className.c_str();
-        m_WndClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        m_WndClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-        m_WndClass.style = CS_HREDRAW | CS_VREDRAW;
+        WndClass.lpfnWndProc = WindowProc;
+        WndClass.hInstance = GetModuleHandleW(nullptr);
+        WndClass.lpszClassName = className.c_str();
+        WndClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        WndClass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        WndClass.style = CS_HREDRAW | CS_VREDRAW;
 
-        RegisterClassW(&m_WndClass);
+        RegisterClassW(&WndClass);
 
         // 计算窗口大小（包含边框）
         RECT rect = { 0, 0, (LONG)desc.Width, (LONG)desc.Height };
@@ -32,7 +32,7 @@ namespace Kiwi
 
         // 创建窗口
         std::wstring title(desc.Title, desc.Title + strlen(desc.Title));
-        m_Hwnd = CreateWindowExW(
+        Hwnd = CreateWindowExW(
             0,
             className.c_str(),
             title.c_str(),
@@ -41,10 +41,10 @@ namespace Kiwi
             windowWidth, windowHeight,
             nullptr,
             nullptr,
-            m_WndClass.hInstance,
+            WndClass.hInstance,
             this); // 传入 this 作为用户数据
 
-        if (!m_Hwnd)
+        if (!Hwnd)
         {
             throw std::runtime_error("Failed to create window");
         }
@@ -52,35 +52,35 @@ namespace Kiwi
 
     Window::~Window()
     {
-        if (m_Hwnd)
+        if (Hwnd)
         {
-            DestroyWindow(m_Hwnd);
+            DestroyWindow(Hwnd);
         }
-        UnregisterClassW(m_WndClass.lpszClassName, m_WndClass.hInstance);
+        UnregisterClassW(WndClass.lpszClassName, WndClass.hInstance);
     }
 
     void Window::Show()
     {
-        ShowWindow(m_Hwnd, SW_SHOW);
-        UpdateWindow(m_Hwnd);
+        ShowWindow(Hwnd, SW_SHOW);
+        UpdateWindow(Hwnd);
     }
 
     void Window::Hide()
     {
-        ShowWindow(m_Hwnd, SW_HIDE);
+        ShowWindow(Hwnd, SW_HIDE);
     }
 
     void Window::PumpMessages()
     {
         // Reset per-frame state
-        m_Mouse.LeftClicked = false;
+        Mouse.LeftClicked = false;
 
         MSG msg = {};
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
             {
-                m_ShouldClose = true;
+                bShouldClose = true;
                 return;
             }
             TranslateMessage(&msg);
@@ -124,42 +124,42 @@ namespace Kiwi
             uint32_t height = (uint32_t)(HIWORD(lParam));
             if (width > 0 && height > 0)
             {
-                window->m_Width = width;
-                window->m_Height = height;
-                if (window->m_OnResize)
+                window->Width = width;
+                window->Height = height;
+                if (window->OnResize)
                 {
-                    window->m_OnResize(width, height);
+                    window->OnResize(width, height);
                 }
             }
             break;
         }
 
         case WM_MOUSEMOVE:
-            window->m_Mouse.X = (int32_t)(short)LOWORD(lParam);
-            window->m_Mouse.Y = (int32_t)(short)HIWORD(lParam);
+            window->Mouse.X = (int32_t)(short)LOWORD(lParam);
+            window->Mouse.Y = (int32_t)(short)HIWORD(lParam);
             break;
 
         case WM_LBUTTONDOWN:
-            window->m_Mouse.X = (int32_t)(short)LOWORD(lParam);
-            window->m_Mouse.Y = (int32_t)(short)HIWORD(lParam);
-            window->m_Mouse.LeftDown = true;
-            window->m_Mouse.LeftClicked = true;
+            window->Mouse.X = (int32_t)(short)LOWORD(lParam);
+            window->Mouse.Y = (int32_t)(short)HIWORD(lParam);
+            window->Mouse.LeftDown = true;
+            window->Mouse.LeftClicked = true;
             break;
 
         case WM_LBUTTONUP:
-            window->m_Mouse.LeftDown = false;
+            window->Mouse.LeftDown = false;
             break;
 
         case WM_RBUTTONDOWN:
-            window->m_Mouse.RightDown = true;
+            window->Mouse.RightDown = true;
             break;
 
         case WM_RBUTTONUP:
-            window->m_Mouse.RightDown = false;
+            window->Mouse.RightDown = false;
             break;
 
         case WM_KEYDOWN:
-            window->m_Keys.SetKeyDown((uint8_t)wParam);
+            window->Keys.SetKeyDown((uint8_t)wParam);
             if (wParam == VK_ESCAPE)
             {
                 window->SetShouldClose(true);
@@ -168,7 +168,7 @@ namespace Kiwi
             break;
 
         case WM_KEYUP:
-            window->m_Keys.SetKeyUp((uint8_t)wParam);
+            window->Keys.SetKeyUp((uint8_t)wParam);
             break;
 
         default:
@@ -181,7 +181,7 @@ namespace Kiwi
     void Window::SetTitle(const std::string& title)
     {
         std::wstring wide(title.begin(), title.end());
-        SetWindowTextW(m_Hwnd, wide.c_str());
+        SetWindowTextW(Hwnd, wide.c_str());
     }
 
 } // namespace Kiwi

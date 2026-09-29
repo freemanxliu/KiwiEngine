@@ -1,93 +1,137 @@
 #include "Core/Application.h"
+#include "Core/EngineConfig.h"
 #include <iostream>
 
 namespace Kiwi
 {
 
     Application::Application(const WindowDesc& windowDesc, const RHIInitParams& rhiParams)
-        : m_RHIParams(rhiParams)
-        , m_CurrentRHIType(rhiParams.ApiType)
+        : RHIParams(rhiParams)
+        , CurrentRHIType(rhiParams.ApiType)
     {
         // 创建窗口
-        m_Window = std::make_unique<Window>(windowDesc);
+        Window = std::make_unique<Kiwi::Window>(windowDesc);
 
-        // 创建 RHI 设备
-        CreateRHI(rhiParams, m_Device, m_Context);
-
-        // 创建 SwapChain
-        SwapChainDesc scDesc;
-        scDesc.WindowHandle = m_Window->GetNativeHandle();
-        scDesc.Width = m_Window->GetWidth();
-        scDesc.Height = m_Window->GetHeight();
-        scDesc.BufferCount = 2;
-        scDesc.Format = EFormat::R8G8B8A8_UNORM;
-        scDesc.Windowed = true;
-
-        m_SwapChain = m_Device->CreateSwapChain(scDesc);
-
-        // 创建深度缓冲。用窗口的像素尺寸，Retina 下它大于 WindowDesc 里的点尺寸。
-        RecreateDepthStencil(m_Window->GetWidth(), m_Window->GetHeight());
+        CreateDeviceAndSwapChain();
     }
 
     Application::~Application()
     {
+        StopRenderingThreads();
         // 释放顺序：SwapChain -> Context -> Device（RAII 自动管理）
+    }
+
+    void Application::CreateDeviceAndSwapChain()
+    {
+        // 创建 RHI 设备
+        CreateRHI(RHIParams, Device, Context);
+        LockedDevice = std::make_unique<LockedRHIDevice>(Device.get());
+
+        // 创建 SwapChain
+        SwapChainDesc scDesc;
+        scDesc.WindowHandle = Window->GetNativeHandle();
+        scDesc.Width = Window->GetWidth();
+        scDesc.Height = Window->GetHeight();
+        scDesc.BufferCount = 2;
+        scDesc.Format = EFormat::R8G8B8A8_UNORM;
+        scDesc.Windowed = true;
+
+        SwapChain = Device->CreateSwapChain(scDesc);
+        SwapChainWidth = Window->GetWidth();
+        SwapChainHeight = Window->GetHeight();
+
+        // 创建深度缓冲。用窗口的像素尺寸，Retina 下它大于 WindowDesc 里的点尺寸。
+        RecreateDepthStencil(Window->GetWidth(), Window->GetHeight());
+    }
+
+    EThreadingMode Application::ResolveThreadingMode() const
+    {
+        // The GL context is current on the main thread only.
+        if (CurrentRHIType == RHI_API_TYPE::OPENGL)
+            return EThreadingMode::SingleThreaded;
+
+        std::string Mode = EngineConfig::Get().GetString("Rendering", "ThreadingMode", "RenderAndRHIThread");
+        if (Mode == "SingleThreaded")
+            return EThreadingMode::SingleThreaded;
+        if (Mode == "RenderThread")
+            return EThreadingMode::RenderThread;
+        return EThreadingMode::RenderAndRHIThread;
+    }
+
+    void Application::StartRenderingThreads()
+    {
+        EThreadingMode Mode = ResolveThreadingMode();
+        RenderingThread.Start(Mode, Context.get(), Device.get());
+        std::cout << "[Kiwi] Threading mode: " << GetThreadingModeName(Mode) << std::endl;
+    }
+
+    void Application::StopRenderingThreads()
+    {
+        RenderingThread.Stop();
     }
 
     void Application::Run()
     {
-        m_Window->Show();
+        Window->Show();
 
-        if (!m_Initialized)
+        if (!Initialized)
         {
             OnInit();
-            m_Initialized = true;
+            Initialized = true;
         }
+        StartRenderingThreads();
 
-        m_LastTime = Clock::now();
+        LastTime = Clock::now();
 
-        while (!m_Window->ShouldClose())
+        while (!Window->ShouldClose())
         {
             // 检查是否有 pending RHI 切换
-            if (m_PendingRHISwitch)
+            if (PendingRHISwitch)
             {
-                m_PendingRHISwitch = false;
-                SwitchRHI(m_PendingRHIType);
+                PendingRHISwitch = false;
+                SwitchRHI(PendingRHIType);
             }
 
             Frame();
         }
+
+        StopRenderingThreads();
     }
 
     void Application::Frame()
     {
-        m_Window->PumpMessages();
+        Window->PumpMessages();
 
-        if (m_Window->ShouldClose())
+        if (Window->ShouldClose())
             return;
+
+        // The swap chain and depth buffer are only touched while the renderer is idle.
+        if (Window->GetWidth() != SwapChainWidth || Window->GetHeight() != SwapChainHeight)
+        {
+            RenderingThread.FlushRenderingCommands();
+            OnResize(Window->GetWidth(), Window->GetHeight());
+        }
 
         // 计算 deltaTime
         auto now = Clock::now();
-        m_DeltaTime = std::chrono::duration<float>(now - m_LastTime).count();
-        m_LastTime = now;
+        DeltaTime = std::chrono::duration<float>(now - LastTime).count();
+        LastTime = now;
 
         // 更新
-        OnUpdate(m_DeltaTime);
+        OnUpdate(DeltaTime);
 
-        // 渲染
+        // 渲染：enqueue this frame, then wait until the render thread is at most one frame behind.
         OnRender();
-
-        // 呈现
-        m_SwapChain->Present(1); // VSync ON
+        RenderingThread.FrameEndSync();
     }
 
     void Application::RecreateDepthStencil(uint32_t width, uint32_t height)
     {
         if (width == 0 || height == 0) return;
 
-        m_DepthStencil.reset();
-        m_DSV.reset();
-        m_DepthSRV.reset();
+        DepthStencil.reset();
+        DSV.reset();
+        DepthSRV.reset();
 
         TextureDesc depthDesc;
         depthDesc.Width = width;
@@ -98,9 +142,9 @@ namespace Kiwi
         depthDesc.BindFlags = TEXTURE_HINT_DEPTH_STENCIL | TEXTURE_BIND_SHADER_RESOURCE;
         depthDesc.DebugName = "MainDepthBuffer";
 
-        m_DepthStencil = m_Device->CreateTexture(depthDesc);
-        m_DSV = m_Device->CreateTextureView(m_DepthStencil.get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
-        m_DepthSRV = m_Device->CreateTextureView(m_DepthStencil.get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
+        DepthStencil = Device->CreateTexture(depthDesc);
+        DSV = Device->CreateTextureView(DepthStencil.get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
+        DepthSRV = Device->CreateTextureView(DepthStencil.get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
     }
 
     void Application::OnResize(uint32_t width, uint32_t height)
@@ -108,42 +152,25 @@ namespace Kiwi
         if (width == 0 || height == 0) return;
 
         // 释放旧的深度缓冲
-        m_DepthStencil.reset();
-        m_DSV.reset();
-        m_DepthSRV.reset();
+        DepthStencil.reset();
+        DSV.reset();
+        DepthSRV.reset();
 
         // Resize SwapChain
-        if (m_SwapChain)
+        if (SwapChain)
         {
-            m_SwapChain->ResizeBuffers(width, height);
+            SwapChain->ResizeBuffers(width, height);
         }
+        SwapChainWidth = width;
+        SwapChainHeight = height;
 
-        // 重建深度缓冲
+        // 重建深度缓冲。Viewports are set by the renderer every frame.
         RecreateDepthStencil(width, height);
-
-        // 设置视口
-        Viewport vp;
-        vp.TopLeftX = 0.0f;
-        vp.TopLeftY = 0.0f;
-        vp.Width = (float)width;
-        vp.Height = (float)height;
-        vp.MinDepth = 0.0f;
-        vp.MaxDepth = 1.0f;
-
-        m_Context->SetViewports(&vp, 1);
-
-        ScissorRect sr;
-        sr.Left = 0;
-        sr.Top = 0;
-        sr.Right = (int32_t)width;
-        sr.Bottom = (int32_t)height;
-
-        m_Context->SetScissorRects(&sr, 1);
     }
 
     void Application::SwitchRHI(RHI_API_TYPE newType)
     {
-        if (newType == m_CurrentRHIType)
+        if (newType == CurrentRHIType)
             return;
 
         auto rhiName = [](RHI_API_TYPE t) -> const char* {
@@ -158,63 +185,34 @@ namespace Kiwi
         };
 
         std::cout << "[Kiwi] Switching RHI from "
-                  << rhiName(m_CurrentRHIType) << " to "
+                  << rhiName(CurrentRHIType) << " to "
                   << rhiName(newType) << "..." << std::endl;
 
-        // 1. 通知子类释放 GPU 资源
+        // 1. 停止渲染线程，then let the subclass release its GPU resources
+        StopRenderingThreads();
         OnRHIShutdown();
 
         // 2. 释放深度缓冲
-        m_DepthStencil.reset();
-        m_DSV.reset();
-        m_DepthSRV.reset();
+        DepthStencil.reset();
+        DSV.reset();
+        DepthSRV.reset();
 
         // 3. 释放 SwapChain
-        m_SwapChain.reset();
+        SwapChain.reset();
 
         // 4. 释放 Context 和 Device
-        m_Context.reset();
-        m_Device.reset();
+        Context.reset();
+        LockedDevice.reset();
+        Device.reset();
 
-        // 5. 创建新的 RHI
-        m_CurrentRHIType = newType;
-        m_RHIParams.ApiType = newType;
+        // 5. 创建新的 RHI、SwapChain 和深度缓冲
+        CurrentRHIType = newType;
+        RHIParams.ApiType = newType;
+        CreateDeviceAndSwapChain();
 
-        CreateRHI(m_RHIParams, m_Device, m_Context);
-
-        // 6. 创建新的 SwapChain
-        SwapChainDesc scDesc;
-        scDesc.WindowHandle = m_Window->GetNativeHandle();
-        scDesc.Width = m_Window->GetWidth();
-        scDesc.Height = m_Window->GetHeight();
-        scDesc.BufferCount = 2;
-        scDesc.Format = EFormat::R8G8B8A8_UNORM;
-        scDesc.Windowed = true;
-
-        m_SwapChain = m_Device->CreateSwapChain(scDesc);
-
-        // 7. 重建深度缓冲
-        RecreateDepthStencil(m_Window->GetWidth(), m_Window->GetHeight());
-
-        // 8. 设置视口
-        Viewport vp;
-        vp.TopLeftX = 0.0f;
-        vp.TopLeftY = 0.0f;
-        vp.Width = (float)m_Window->GetWidth();
-        vp.Height = (float)m_Window->GetHeight();
-        vp.MinDepth = 0.0f;
-        vp.MaxDepth = 1.0f;
-        m_Context->SetViewports(&vp, 1);
-
-        ScissorRect sr;
-        sr.Left = 0;
-        sr.Top = 0;
-        sr.Right = (int32_t)m_Window->GetWidth();
-        sr.Bottom = (int32_t)m_Window->GetHeight();
-        m_Context->SetScissorRects(&sr, 1);
-
-        // 9. 通知子类重建 GPU 资源
+        // 6. 通知子类重建 GPU 资源，then restart the rendering threads for the new backend
         OnRHIReady();
+        StartRenderingThreads();
 
         std::cout << "[Kiwi] RHI switch complete! Now using "
                   << rhiName(newType) << std::endl;

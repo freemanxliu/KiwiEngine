@@ -236,12 +236,12 @@ namespace Kiwi
 
     void MaterialLibrary::Initialize(const std::string& materialsDir)
     {
-        m_Materials.clear();
-        m_MaterialsDir = materialsDir;
+        Materials.clear();
+        MaterialsDir = materialsDir;
 
         // Create built-in default material
         auto defaultMat = std::make_unique<Material>(Material::CreateDefault());
-        m_Materials["Default-Material"] = std::move(defaultMat);
+        Materials["Default-Material"] = std::move(defaultMat);
 
         // Ensure directory exists
         namespace fs = std::filesystem;
@@ -253,14 +253,14 @@ namespace Kiwi
         std::string defaultPath = materialsDir + "/Default-Material.mat";
         if (!fs::exists(defaultPath, ec))
         {
-            m_Materials["Default-Material"]->SaveToFile(defaultPath);
+            Materials["Default-Material"]->SaveToFile(defaultPath);
             std::cout << "[Kiwi] MaterialLibrary: Created Default-Material.mat" << std::endl;
         }
 
         // Scan for existing .mat files
         ScanAndLoad(materialsDir);
 
-        std::cout << "[Kiwi] MaterialLibrary: " << m_Materials.size() << " material(s) loaded." << std::endl;
+        std::cout << "[Kiwi] MaterialLibrary: " << Materials.size() << " material(s) loaded." << std::endl;
     }
 
     void MaterialLibrary::ScanAndLoad(const std::string& dir)
@@ -275,22 +275,28 @@ namespace Kiwi
             if (entry.path().extension() != ".mat") continue;
 
             std::string name = entry.path().stem().string();
-            if (m_Materials.count(name)) continue; // already loaded (e.g. default)
+            if (Materials.count(name)) continue; // already loaded (e.g. default)
 
             auto mat = std::make_unique<Material>();
             if (mat->LoadFromFile(entry.path().string()))
             {
                 if (mat->Name.empty()) mat->Name = name;
                 std::cout << "[Kiwi] MaterialLibrary: Loaded '" << name << "'" << std::endl;
-                m_Materials[name] = std::move(mat);
+                Materials[name] = std::move(mat);
             }
         }
     }
 
     Material* MaterialLibrary::GetMaterial(const std::string& name)
     {
-        auto it = m_Materials.find(name);
-        return (it != m_Materials.end()) ? it->second.get() : nullptr;
+        auto it = Materials.find(name);
+        return (it != Materials.end()) ? it->second.get() : nullptr;
+    }
+
+    const Material* MaterialLibrary::GetMaterial(const std::string& name) const
+    {
+        auto it = Materials.find(name);
+        return (it != Materials.end()) ? it->second.get() : nullptr;
     }
 
     Material* MaterialLibrary::GetOrCreateMaterial(const std::string& name)
@@ -302,7 +308,7 @@ namespace Kiwi
         auto mat = std::make_unique<Material>(Material::CreateDefault());
         mat->Name = name;
         Material* ptr = mat.get();
-        m_Materials[name] = std::move(mat);
+        Materials[name] = std::move(mat);
         return ptr;
     }
 
@@ -310,14 +316,14 @@ namespace Kiwi
     {
         std::string name = mat->Name;
         Material* ptr = mat.get();
-        m_Materials[name] = std::move(mat);
+        Materials[name] = std::move(mat);
         return ptr;
     }
 
     std::vector<std::string> MaterialLibrary::GetMaterialNames() const
     {
         std::vector<std::string> names;
-        for (const auto& [key, val] : m_Materials)
+        for (const auto& [key, val] : Materials)
             names.push_back(key);
         std::sort(names.begin(), names.end());
         return names;
@@ -327,13 +333,13 @@ namespace Kiwi
     {
         auto* mat = GetMaterial(name);
         if (!mat) return false;
-        std::string path = m_MaterialsDir + "/" + name + ".mat";
+        std::string path = MaterialsDir + "/" + name + ".mat";
         return mat->SaveToFile(path);
     }
 
     void MaterialLibrary::SaveAll()
     {
-        for (const auto& [name, mat] : m_Materials)
+        for (const auto& [name, mat] : Materials)
             SaveMaterial(name);
     }
 

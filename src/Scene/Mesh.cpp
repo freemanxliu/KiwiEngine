@@ -68,17 +68,17 @@ namespace Kiwi
                 v.Tangent = { tangent.x, tangent.y, tangent.z, 1.0f };
                 v.Color = color;
                 v.TexCoord = faceUVs[i];
-                mesh.m_Vertices.push_back(v);
+                mesh.Vertices.push_back(v);
             }
 
             uint32_t base = (uint32_t)(f * 4);
-            mesh.m_Indices.push_back(base + 0);
-            mesh.m_Indices.push_back(base + 1);
-            mesh.m_Indices.push_back(base + 2);
+            mesh.Indices.push_back(base + 0);
+            mesh.Indices.push_back(base + 1);
+            mesh.Indices.push_back(base + 2);
 
-            mesh.m_Indices.push_back(base + 0);
-            mesh.m_Indices.push_back(base + 2);
-            mesh.m_Indices.push_back(base + 3);
+            mesh.Indices.push_back(base + 0);
+            mesh.Indices.push_back(base + 2);
+            mesh.Indices.push_back(base + 3);
         }
 
         return mesh;
@@ -113,7 +113,7 @@ namespace Kiwi
                     (float)x / (float)segments,
                     (float)y / (float)segments);
 
-                mesh.m_Vertices.push_back(v);
+                mesh.Vertices.push_back(v);
             }
         }
 
@@ -126,13 +126,13 @@ namespace Kiwi
                 uint32_t c = a + (segments + 1);
                 uint32_t d = c + 1;
 
-                mesh.m_Indices.push_back(a);
-                mesh.m_Indices.push_back(c);
-                mesh.m_Indices.push_back(b);
+                mesh.Indices.push_back(a);
+                mesh.Indices.push_back(c);
+                mesh.Indices.push_back(b);
 
-                mesh.m_Indices.push_back(b);
-                mesh.m_Indices.push_back(c);
-                mesh.m_Indices.push_back(d);
+                mesh.Indices.push_back(b);
+                mesh.Indices.push_back(c);
+                mesh.Indices.push_back(d);
             }
         }
 
@@ -162,7 +162,7 @@ namespace Kiwi
             vBot.Tangent = { tangent.x, tangent.y, tangent.z, 1.0f };
             vBot.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             vBot.TexCoord = { u, 1.0f };
-            mesh.m_Vertices.push_back(vBot);
+            mesh.Vertices.push_back(vBot);
 
             // Top vertex
             Vertex vTop;
@@ -171,24 +171,24 @@ namespace Kiwi
             vTop.Tangent = { tangent.x, tangent.y, tangent.z, 1.0f };
             vTop.Color = vBot.Color;
             vTop.TexCoord = { u, 0.0f };
-            mesh.m_Vertices.push_back(vTop);
+            mesh.Vertices.push_back(vTop);
         }
 
         // Side indices
         for (uint32_t i = 0; i < segments; i++)
         {
             uint32_t base = i * 2;
-            mesh.m_Indices.push_back(base);
-            mesh.m_Indices.push_back(base + 2);
-            mesh.m_Indices.push_back(base + 1);
+            mesh.Indices.push_back(base);
+            mesh.Indices.push_back(base + 2);
+            mesh.Indices.push_back(base + 1);
 
-            mesh.m_Indices.push_back(base + 1);
-            mesh.m_Indices.push_back(base + 2);
-            mesh.m_Indices.push_back(base + 3);
+            mesh.Indices.push_back(base + 1);
+            mesh.Indices.push_back(base + 2);
+            mesh.Indices.push_back(base + 3);
         }
 
         // Top cap
-        uint32_t topCenter = (uint32_t)mesh.m_Vertices.size();
+        uint32_t topCenter = (uint32_t)mesh.Vertices.size();
         {
             Vertex vc;
             vc.Position = { 0, halfH, 0 };
@@ -196,7 +196,7 @@ namespace Kiwi
             vc.Tangent = { 1, 0, 0, 1 };
             vc.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             vc.TexCoord = { 0.5f, 0.5f };
-            mesh.m_Vertices.push_back(vc);
+            mesh.Vertices.push_back(vc);
         }
 
         for (uint32_t i = 0; i <= segments; i++)
@@ -210,18 +210,18 @@ namespace Kiwi
             v.Tangent = { 1, 0, 0, 1 };
             v.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             v.TexCoord = { 0.5f + 0.5f * ct, 0.5f + 0.5f * st };
-            mesh.m_Vertices.push_back(v);
+            mesh.Vertices.push_back(v);
         }
 
         for (uint32_t i = 0; i < segments; i++)
         {
-            mesh.m_Indices.push_back(topCenter);
-            mesh.m_Indices.push_back(topCenter + 1 + i);
-            mesh.m_Indices.push_back(topCenter + 2 + i);
+            mesh.Indices.push_back(topCenter);
+            mesh.Indices.push_back(topCenter + 1 + i);
+            mesh.Indices.push_back(topCenter + 2 + i);
         }
 
         // Bottom cap
-        uint32_t botCenter = (uint32_t)mesh.m_Vertices.size();
+        uint32_t botCenter = (uint32_t)mesh.Vertices.size();
         {
             Vertex vc;
             vc.Position = { 0, -halfH, 0 };
@@ -229,7 +229,7 @@ namespace Kiwi
             vc.Tangent = { 1, 0, 0, 1 };
             vc.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             vc.TexCoord = { 0.5f, 0.5f };
-            mesh.m_Vertices.push_back(vc);
+            mesh.Vertices.push_back(vc);
         }
 
         for (uint32_t i = 0; i <= segments; i++)
@@ -243,14 +243,14 @@ namespace Kiwi
             v.Tangent = { 1, 0, 0, 1 };
             v.Color = { 1.0f, 1.0f, 1.0f, 1.0f };
             v.TexCoord = { 0.5f + 0.5f * ct, 0.5f - 0.5f * st };
-            mesh.m_Vertices.push_back(v);
+            mesh.Vertices.push_back(v);
         }
 
         for (uint32_t i = 0; i < segments; i++)
         {
-            mesh.m_Indices.push_back(botCenter);
-            mesh.m_Indices.push_back(botCenter + 2 + i);
-            mesh.m_Indices.push_back(botCenter + 1 + i);
+            mesh.Indices.push_back(botCenter);
+            mesh.Indices.push_back(botCenter + 2 + i);
+            mesh.Indices.push_back(botCenter + 1 + i);
         }
 
         return mesh;
@@ -269,12 +269,12 @@ namespace Kiwi
         Vertex v2; v2.Position = {  hw, 0,  hh }; v2.Normal = { 0, 1, 0 }; v2.Tangent = { 1, 0, 0, 1 }; v2.Color = { 1, 1, 1, 1 }; v2.TexCoord = { 1, 1 };
         Vertex v3; v3.Position = { -hw, 0,  hh }; v3.Normal = { 0, 1, 0 }; v3.Tangent = { 1, 0, 0, 1 }; v3.Color = { 1, 1, 1, 1 }; v3.TexCoord = { 0, 1 };
 
-        mesh.m_Vertices.push_back(v0);
-        mesh.m_Vertices.push_back(v1);
-        mesh.m_Vertices.push_back(v2);
-        mesh.m_Vertices.push_back(v3);
+        mesh.Vertices.push_back(v0);
+        mesh.Vertices.push_back(v1);
+        mesh.Vertices.push_back(v2);
+        mesh.Vertices.push_back(v3);
 
-        mesh.m_Indices = { 0, 1, 2, 0, 2, 3 };
+        mesh.Indices = { 0, 1, 2, 0, 2, 3 };
 
         return mesh;
     }

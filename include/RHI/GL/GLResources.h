@@ -16,50 +16,50 @@ namespace Kiwi
     {
     public:
         GLBuffer(GLuint id, const BufferDesc& desc)
-            : m_ID(id), m_Desc(desc) {}
+            : ID(id), Desc(desc) {}
 
         ~GLBuffer() override
         {
-            if (m_ID) glDeleteBuffers(1, &m_ID);
+            if (ID) glDeleteBuffers(1, &ID);
         }
 
-        void* GetNativeHandle() const override { return (void*)(uintptr_t)m_ID; }
-        const BufferDesc& GetDesc() const override { return m_Desc; }
+        void* GetNativeHandle() const override { return (void*)(uintptr_t)ID; }
+        const BufferDesc& GetDesc() const override { return Desc; }
 
         void* Map(uint32_t subresource = 0) override
         {
             GLenum target = GetTarget();
-            glBindBuffer(target, m_ID);
+            glBindBuffer(target, ID);
             return glMapBuffer(target, GL_WRITE_ONLY);
         }
 
         void Unmap(uint32_t subresource = 0) override
         {
             GLenum target = GetTarget();
-            glBindBuffer(target, m_ID);
+            glBindBuffer(target, ID);
             glUnmapBuffer(target);
         }
 
         void UpdateData(const void* data, uint32_t size, uint32_t offset = 0) override
         {
             GLenum target = GetTarget();
-            glBindBuffer(target, m_ID);
+            glBindBuffer(target, ID);
             glBufferSubData(target, offset, size, data);
         }
 
-        GLuint GetID() const { return m_ID; }
+        GLuint GetID() const { return ID; }
 
         GLenum GetTarget() const
         {
-            if (m_Desc.BindFlags & BUFFER_USAGE_VERTEX)   return GL_ARRAY_BUFFER;
-            if (m_Desc.BindFlags & BUFFER_USAGE_INDEX)    return GL_ELEMENT_ARRAY_BUFFER;
-            if (m_Desc.BindFlags & BUFFER_USAGE_CONSTANT) return GL_UNIFORM_BUFFER;
+            if (Desc.BindFlags & BUFFER_USAGE_VERTEX)   return GL_ARRAY_BUFFER;
+            if (Desc.BindFlags & BUFFER_USAGE_INDEX)    return GL_ELEMENT_ARRAY_BUFFER;
+            if (Desc.BindFlags & BUFFER_USAGE_CONSTANT) return GL_UNIFORM_BUFFER;
             return GL_ARRAY_BUFFER;
         }
 
     private:
-        GLuint m_ID = 0;
-        BufferDesc m_Desc;
+        GLuint ID = 0;
+        BufferDesc Desc;
     };
 
     // ============================================================
@@ -70,20 +70,20 @@ namespace Kiwi
     {
     public:
         GLTexture(GLuint id, const TextureDesc& desc)
-            : m_ID(id), m_Desc(desc) {}
+            : ID(id), Desc(desc) {}
 
         ~GLTexture() override
         {
-            if (m_ID) glDeleteTextures(1, &m_ID);
+            if (ID) glDeleteTextures(1, &ID);
         }
 
-        void* GetNativeHandle() const override { return (void*)(uintptr_t)m_ID; }
-        const TextureDesc& GetDesc() const override { return m_Desc; }
-        GLuint GetID() const { return m_ID; }
+        void* GetNativeHandle() const override { return (void*)(uintptr_t)ID; }
+        const TextureDesc& GetDesc() const override { return Desc; }
+        GLuint GetID() const { return ID; }
 
     private:
-        GLuint m_ID = 0;
-        TextureDesc m_Desc;
+        GLuint ID = 0;
+        TextureDesc Desc;
     };
 
     // ============================================================
@@ -98,17 +98,17 @@ namespace Kiwi
         enum class Type { RTV, DSV, SRV };
 
         GLTextureView(GLuint textureID, Type type, GLenum internalFormat = GL_RGBA8)
-            : m_TextureID(textureID), m_Type(type), m_InternalFormat(internalFormat) {}
+            : TextureID(textureID), ViewType(type), InternalFormat(internalFormat) {}
 
-        void* GetNativeHandle() const override { return (void*)(uintptr_t)m_TextureID; }
-        GLuint GetTextureID() const { return m_TextureID; }
-        Type GetViewType() const { return m_Type; }
-        GLenum GetInternalFormat() const { return m_InternalFormat; }
+        void* GetNativeHandle() const override { return (void*)(uintptr_t)TextureID; }
+        GLuint GetTextureID() const { return TextureID; }
+        Type GetViewType() const { return ViewType; }
+        GLenum GetInternalFormat() const { return InternalFormat; }
 
     private:
-        GLuint m_TextureID = 0;
-        Type m_Type;
-        GLenum m_InternalFormat;
+        GLuint TextureID = 0;
+        Type ViewType;
+        GLenum InternalFormat;
     };
 
     // ============================================================
@@ -121,22 +121,22 @@ namespace Kiwi
     {
     public:
         GLShader(EShaderType type, GLuint shaderID, const std::string& source)
-            : m_Type(type), m_ShaderID(shaderID), m_Source(source) {}
+            : Type(type), ShaderID(shaderID), Source(source) {}
 
         ~GLShader() override
         {
-            if (m_ShaderID) glDeleteShader(m_ShaderID);
+            if (ShaderID) glDeleteShader(ShaderID);
         }
 
-        void* GetNativeHandle() const override { return (void*)(uintptr_t)m_ShaderID; }
-        EShaderType GetType() const override { return m_Type; }
-        GLuint GetShaderID() const { return m_ShaderID; }
-        const std::string& GetSource() const { return m_Source; }
+        void* GetNativeHandle() const override { return (void*)(uintptr_t)ShaderID; }
+        EShaderType GetType() const override { return Type; }
+        GLuint GetShaderID() const { return ShaderID; }
+        const std::string& GetSource() const { return Source; }
 
     private:
-        EShaderType m_Type;
-        GLuint m_ShaderID = 0;
-        std::string m_Source;
+        EShaderType Type;
+        GLuint ShaderID = 0;
+        std::string Source;
     };
 
     // ============================================================
@@ -148,13 +148,13 @@ namespace Kiwi
     {
     public:
         GLInputLayout(const std::vector<InputElementDesc>& elements)
-            : m_Elements(elements) {}
+            : Elements(elements) {}
 
         void* GetNativeHandle() const override { return nullptr; }
-        const std::vector<InputElementDesc>& GetElements() const { return m_Elements; }
+        const std::vector<InputElementDesc>& GetElements() const { return Elements; }
 
     private:
-        std::vector<InputElementDesc> m_Elements;
+        std::vector<InputElementDesc> Elements;
     };
 
     // ============================================================
@@ -168,19 +168,19 @@ namespace Kiwi
 
         ~GLPipelineState() override
         {
-            if (m_Program) glDeleteProgram(m_Program);
+            if (Program) glDeleteProgram(Program);
         }
 
-        void* GetNativeHandle() const override { return (void*)(uintptr_t)m_Program; }
-        GLuint GetProgram() const { return m_Program; }
-        void SetProgram(GLuint prog) { m_Program = prog; }
+        void* GetNativeHandle() const override { return (void*)(uintptr_t)Program; }
+        GLuint GetProgram() const { return Program; }
+        void SetProgram(GLuint prog) { Program = prog; }
 
         bool DepthEnabled = true;
         bool DepthWrite = true;
         RasterizerStateDesc Rasterizer;
 
     private:
-        GLuint m_Program = 0;
+        GLuint Program = 0;
     };
 
     // ============================================================
@@ -190,18 +190,18 @@ namespace Kiwi
     class GLSampler : public RHISampler
     {
     public:
-        GLSampler(GLuint id) : m_ID(id) {}
+        GLSampler(GLuint id) : ID(id) {}
 
         ~GLSampler() override
         {
-            if (m_ID) glDeleteSamplers(1, &m_ID);
+            if (ID) glDeleteSamplers(1, &ID);
         }
 
-        void* GetNativeHandle() const override { return (void*)(uintptr_t)m_ID; }
-        GLuint GetID() const { return m_ID; }
+        void* GetNativeHandle() const override { return (void*)(uintptr_t)ID; }
+        GLuint GetID() const { return ID; }
 
     private:
-        GLuint m_ID = 0;
+        GLuint ID = 0;
     };
 
 } // namespace Kiwi

@@ -10,19 +10,14 @@ void KiwiEngineApp::InitPostProcessResources(RHIDevice* device)
 {
     auto api = device->GetApiType();
     // PostProcess shader library
-    m_PostProcessLibrary.Initialize(m_PostProcessShaderDir, device);
+    PostProcessLibrary.Initialize(PostProcessShaderDir, device);
 
     // Post-process constant buffer
-    BufferDesc ppCbDesc;
-    ppCbDesc.SizeInBytes = sizeof(PostProcessCBData);
-    ppCbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-    ppCbDesc.Usage = EResourceUsage::Dynamic;
-    ppCbDesc.DebugName = "PostProcessCB";
-    m_PostProcessCB = device->CreateBuffer(ppCbDesc);
+    PostProcessCB = TUniformBufferRef<PostProcessCBData>::CreateEmptyUniformBufferImmediate(device, EUniformBufferUsage::SingleDraw, "PostProcessCB");
 
     // DX11 sampler for post-process (linear clamp)
     // DX12 uses static sampler in root signature, so this is only for DX11
-    m_PostProcessSampler = device->CreateSampler();
+    PostProcessSampler = device->CreateSampler();
 
     // Compile passthrough shader (for final blit from offscreen to backbuffer)
     const char* ppVSSrc = g_PostProcessVS;
@@ -37,20 +32,20 @@ void KiwiEngineApp::InitPostProcessResources(RHIDevice* device)
         ppVSSrc = g_PostProcessVS_MSL;
         ppPSSrc = g_PostProcessPassthroughPS_MSL;
     }
-    m_PassthroughVS = device->CompileShader(
+    PassthroughVS = device->CompileShader(
         EShaderType::Vertex, ppVSSrc, "VSMain", "vs_5_0");
-    m_PassthroughPS = device->CompileShader(
+    PassthroughPS = device->CompileShader(
         EShaderType::Pixel, ppPSSrc, "PSMain", "ps_5_0");
-    if (m_PassthroughVS && m_PassthroughPS)
+    if (PassthroughVS && PassthroughPS)
     {
         GraphicsPipelineStateInitializer passthroughInit;
-        passthroughInit.VertexShader = m_PassthroughVS.get();
-        passthroughInit.PixelShader = m_PassthroughPS.get();
+        passthroughInit.VertexShader = PassthroughVS.get();
+        passthroughInit.PixelShader = PassthroughPS.get();
         passthroughInit.DepthEnabled = false;
         passthroughInit.DepthWrite = false;
         passthroughInit.RasterizerState = RasterizerStateDesc(
             ERasterizerFillMode::Solid, ECullMode::None);
-        m_PassthroughPSO = device->CreateGraphicsPipelineState(passthroughInit);
+        PassthroughPSO = device->CreateGraphicsPipelineState(passthroughInit);
     }
 
     // Create offscreen render targets
@@ -65,13 +60,13 @@ void KiwiEngineApp::CreateOffscreenRenderTargets(RHIDevice* device, uint32_t wid
     // Release existing
     for (int i = 0; i < 2; i++)
     {
-        m_OffscreenSRV[i].reset();
-        m_OffscreenRTV[i].reset();
-        m_OffscreenRT[i].reset();
+        OffscreenSRV[i].reset();
+        OffscreenRTV[i].reset();
+        OffscreenRT[i].reset();
     }
 
-    m_OffscreenWidth = width;
-    m_OffscreenHeight = height;
+    OffscreenWidth = width;
+    OffscreenHeight = height;
 
     for (int i = 0; i < 2; i++)
     {
@@ -85,11 +80,11 @@ void KiwiEngineApp::CreateOffscreenRenderTargets(RHIDevice* device, uint32_t wid
         rtDesc.SampleCount = 1;
         rtDesc.DebugName = (i == 0) ? "OffscreenRT_0" : "OffscreenRT_1";
 
-        m_OffscreenRT[i] = device->CreateTexture(rtDesc);
-        m_OffscreenRTV[i] = device->CreateTextureView(
-            m_OffscreenRT[i].get(), EDescriptorHeapType::RTV);
-        m_OffscreenSRV[i] = device->CreateTextureView(
-            m_OffscreenRT[i].get(), EDescriptorHeapType::CBV_SRV_UAV);
+        OffscreenRT[i] = device->CreateTexture(rtDesc);
+        OffscreenRTV[i] = device->CreateTextureView(
+            OffscreenRT[i].get(), EDescriptorHeapType::RTV);
+        OffscreenSRV[i] = device->CreateTextureView(
+            OffscreenRT[i].get(), EDescriptorHeapType::CBV_SRV_UAV);
     }
 
     std::cout << "[Kiwi] Offscreen RT created: " << width << "x" << height << std::endl;
@@ -99,43 +94,40 @@ void KiwiEngineApp::ReleasePostProcessResources()
 {
     for (int i = 0; i < 2; i++)
     {
-        m_OffscreenSRV[i].reset();
-        m_OffscreenRTV[i].reset();
-        m_OffscreenRT[i].reset();
+        OffscreenSRV[i].reset();
+        OffscreenRTV[i].reset();
+        OffscreenRT[i].reset();
     }
-    m_PostProcessCB.reset();
-    m_PostProcessSampler.reset();
-    m_PassthroughVS.reset();
-    m_PassthroughPS.reset();
-    m_PassthroughPSO.reset();
-    m_PostProcessLibrary.ReleaseAll();
+    PostProcessCB.SafeRelease();
+    PostProcessSampler.reset();
+    PassthroughVS.reset();
+    PassthroughPS.reset();
+    PassthroughPSO.reset();
+    PostProcessLibrary.ReleaseAll();
 }
 
-void KiwiEngineApp::CollectActivePostProcessEffects(std::vector<PostProcessMaterial*>& outEffects)
+void KiwiEngineApp::CollectActivePostProcessEffects(std::vector<PostProcessMaterial>& outEffects)
 {
     outEffects.clear();
-    for (auto& objPtr : m_Scene.GetObjects())
+    for (auto& objPtr : Scene.GetObjects())
     {
         auto* ppComp = objPtr->GetComponent<PostProcessComponent>();
         if (!ppComp || !ppComp->Enabled) continue;
 
         for (auto& mat : ppComp->Materials)
         {
-            if (mat.Enabled && m_PostProcessLibrary.HasShader(mat.ShaderName))
+            if (mat.Enabled && PostProcessLibrary.HasShader(mat.ShaderName))
             {
-                outEffects.push_back(&mat);
+                outEffects.push_back(mat);
             }
         }
     }
 }
 
-void KiwiEngineApp::ExecutePostProcessPasses(
-    RHICommandContext* ctx, RHIDevice* device,
-    const std::vector<PostProcessMaterial*>& effects,
-    RHISwapChain* swapChain)
+void KiwiEngineApp::ExecutePostProcessPasses(RHICommandContext* ctx, const std::vector<PostProcessMaterial>& effects)
 {
-    uint32_t winW = GetWindow()->GetWidth();
-    uint32_t winH = GetWindow()->GetHeight();
+    uint32_t winW = RenderParams.ViewWidth;
+    uint32_t winH = RenderParams.ViewHeight;
 
     // Viewport and scissor for fullscreen passes
     Viewport vp;
@@ -156,11 +148,11 @@ void KiwiEngineApp::ExecutePostProcessPasses(
 
     for (size_t passIdx = 0; passIdx < effects.size(); passIdx++)
     {
-        auto* mat = effects[passIdx];
+        const PostProcessMaterial* mat = &effects[passIdx];
         bool isLastPass = (passIdx == effects.size() - 1);
 
         CompiledPostProcessShader* ppShader =
-            m_PostProcessLibrary.GetShader(mat->ShaderName);
+            PostProcessLibrary.GetShader(mat->ShaderName);
         if (!ppShader) continue;
 
         // Determine output target
@@ -168,18 +160,18 @@ void KiwiEngineApp::ExecutePostProcessPasses(
         if (isLastPass)
         {
             // Last pass writes directly to backbuffer
-            outputRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
+            outputRTV = GetBackBufferRTV();
         }
         else
         {
             // Intermediate pass writes to ping-pong buffer
-            ctx->ResourceBarrier(m_OffscreenRT[dstIdx].get(),
+            ctx->ResourceBarrier(OffscreenRT[dstIdx].get(),
                 RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET);
-            outputRTV = m_OffscreenRTV[dstIdx].get();
+            outputRTV = OffscreenRTV[dstIdx].get();
         }
 
         // Transition source to SRV
-        ctx->ResourceBarrier(m_OffscreenRT[srcIdx].get(),
+        ctx->ResourceBarrier(OffscreenRT[srcIdx].get(),
             RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         // Set render target (no depth for post-process)
@@ -203,25 +195,20 @@ void KiwiEngineApp::ExecutePostProcessPasses(
         ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
         // Bind source texture as SRV
-        ctx->SetShaderResourceView(0, m_OffscreenSRV[srcIdx].get());
+        ctx->SetShaderResourceView(0, OffscreenSRV[srcIdx].get());
 
         // Bind sampler (DX11 only; DX12 uses static sampler)
-        ctx->SetSampler(0, m_PostProcessSampler.get());
+        ctx->SetSampler(0, PostProcessSampler.get());
 
         // Update post-process constant buffer
         PostProcessCBData ppCB;
         ppCB.ScreenWidth = (float)winW;
         ppCB.ScreenHeight = (float)winH;
         ppCB.Intensity = mat->Intensity;
-        ppCB.Time = m_TotalTime;
+        ppCB.Time = RenderParams.TotalTime;
 
-        void* mapped = m_PostProcessCB->Map();
-        if (mapped)
-        {
-            memcpy(mapped, &ppCB, sizeof(ppCB));
-            m_PostProcessCB->Unmap();
-        }
-        ctx->SetConstantBuffer(0, m_PostProcessCB.get());
+        PostProcessCB.UpdateUniformBufferImmediate(ppCB);
+        ctx->SetConstantBuffer(0, PostProcessCB.GetReference());
 
         // Draw fullscreen triangle (3 vertices, no vertex buffer)
         ctx->Draw(3, 0);
@@ -239,15 +226,15 @@ void KiwiEngineApp::ExecutePostProcessPasses(
     // ---- Built-in Tonemap Pass (always last) ----
     // Reads from current srcIdx (HDR), writes to backbuffer (LDR)
     {
-        auto* tonemapShader = m_PostProcessLibrary.GetShader("Tonemap");
+        auto* tonemapShader = PostProcessLibrary.GetShader("Tonemap");
         if (tonemapShader && tonemapShader->PixelShader)
         {
             // Source: current ping-pong buffer (HDR)
-            ctx->ResourceBarrier(m_OffscreenRT[srcIdx].get(),
+            ctx->ResourceBarrier(OffscreenRT[srcIdx].get(),
                 RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
             // Destination: backbuffer
-            RHITextureView* bbRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
+            RHITextureView* bbRTV = GetBackBufferRTV();
             ctx->SetRenderTargets(&bbRTV, 1, nullptr);
             ctx->SetViewports(&vp, 1);
             ctx->SetScissorRects(&sr, 1);
@@ -258,14 +245,13 @@ void KiwiEngineApp::ExecutePostProcessPasses(
             ctx->SetInputLayout(nullptr);
             ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
 
-            ctx->SetShaderResourceView(0, m_OffscreenSRV[srcIdx].get());
-            ctx->SetSampler(0, m_PostProcessSampler.get());
+            ctx->SetShaderResourceView(0, OffscreenSRV[srcIdx].get());
+            ctx->SetSampler(0, PostProcessSampler.get());
 
             // Upload exposure via PostProcessCB
-            float ppData[4] = { 1.0f, 0.0f, 0.0f, 0.0f }; // exposure = 1.0
-            void* mapped = m_PostProcessCB->Map();
-            if (mapped) { memcpy(mapped, ppData, sizeof(ppData)); m_PostProcessCB->Unmap(); }
-            ctx->SetConstantBuffer(0, m_PostProcessCB.get());
+            PostProcessCBData tonemapCB = { 1.0f, 0.0f, 0.0f, 0.0f }; // x = exposure
+            PostProcessCB.UpdateUniformBufferImmediate(tonemapCB);
+            ctx->SetConstantBuffer(0, PostProcessCB.GetReference());
 
             ctx->Draw(3, 0);
             ctx->SetShaderResourceView(0, nullptr);

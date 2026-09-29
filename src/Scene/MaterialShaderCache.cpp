@@ -35,10 +35,10 @@ namespace Kiwi
         const std::string& surfaceDir, const std::string& templateDir)
     {
         ReleaseAll();
-        m_Device = device;
-        m_Layout = layout;
-        m_SurfaceDir = surfaceDir;
-        m_TemplateDir = templateDir;
+        Device = device;
+        Layout = layout;
+        SurfaceDir = surfaceDir;
+        TemplateDir = templateDir;
 
         namespace fs = std::filesystem;
         std::error_code ec;
@@ -52,9 +52,9 @@ namespace Kiwi
             if (!entry.is_regular_file())
                 continue;
             if (entry.path().extension() == ext)
-                m_SurfaceNames.push_back(entry.path().stem().string());
+                SurfaceNames.push_back(entry.path().stem().string());
         }
-        std::cout << "[Kiwi] MaterialShaderCache: " << m_SurfaceNames.size()
+        std::cout << "[Kiwi] MaterialShaderCache: " << SurfaceNames.size()
                   << " surface shader(s) in " << surfaceDir << std::endl;
     }
 
@@ -71,77 +71,77 @@ namespace Kiwi
 
     void MaterialShaderCache::ReleaseAll()
     {
-        m_Shaders.clear();
-        m_ShaderMaps.clear();
-        m_SurfaceNames.clear();
-        m_Device = nullptr;
-        m_Layout = nullptr;
+        Shaders.clear();
+        ShaderMaps.clear();
+        SurfaceNames.clear();
+        Device = nullptr;
+        Layout = nullptr;
         for (int pass = 0; pass < (int)EMaterialPass::Count; ++pass)
         {
-            m_Shared[pass][0] = {};
-            m_Shared[pass][1] = {};
-            m_Fallback[pass] = {};
+            Shared[pass][0] = {};
+            Shared[pass][1] = {};
+            Fallback[pass] = {};
         }
     }
 
     MaterialPassShader* MaterialShaderCache::Get(const std::string& surfaceName, EMaterialPass pass)
     {
-        if (!m_Device || surfaceName.empty() || pass == EMaterialPass::Depth)
+        if (!Device || surfaceName.empty() || pass == EMaterialPass::Depth)
             return nullptr;
         const std::string key = surfaceName + "|" + PassName(pass);
-        auto it = m_Shaders.find(key);
-        if (it != m_Shaders.end())
+        auto it = Shaders.find(key);
+        if (it != Shaders.end())
             return it->second.get();
         return Compile(surfaceName, pass);
     }
 
     void MaterialShaderCache::SetSharedShader(EMaterialPass pass, bool bInstanced, MeshPassShader shader)
     {
-        m_Shared[(int)pass][bInstanced ? 1 : 0] = shader;
+        Shared[(int)pass][bInstanced ? 1 : 0] = shader;
     }
 
     void MaterialShaderCache::SetFallback(EMaterialPass pass, MeshPassShader shader)
     {
-        m_Fallback[(int)pass] = shader;
+        Fallback[(int)pass] = shader;
     }
 
     MeshPassShader MaterialShaderCache::ShaderOrFallback(const std::string& surfaceName, EMaterialPass pass)
     {
         if (MaterialPassShader* shader = Get(surfaceName, pass))
             return { shader->PSO.get(), shader->VertexShader.get(), shader->PixelShader.get() };
-        return m_Fallback[(int)pass];
+        return Fallback[(int)pass];
     }
 
     const MaterialShaderMap* MaterialShaderCache::GetShaderMap(const std::string& surfaceName)
     {
         const std::string surface = surfaceName.empty() ? std::string("DefaultSurface") : surfaceName;
-        auto it = m_ShaderMaps.find(surface);
-        if (it == m_ShaderMaps.end())
-            it = m_ShaderMaps.emplace(surface, std::make_unique<MaterialShaderMap>()).first;
+        auto it = ShaderMaps.find(surface);
+        if (it == ShaderMaps.end())
+            it = ShaderMaps.emplace(surface, std::make_unique<MaterialShaderMap>()).first;
 
         MaterialShaderMap& map = *it->second;
         map.SurfaceShader = surface;
-        map.Set(EMaterialPass::Depth, false, m_Shared[(int)EMaterialPass::Depth][0]);
-        map.Set(EMaterialPass::Depth, true, m_Shared[(int)EMaterialPass::Depth][1]);
+        map.Set(EMaterialPass::Depth, false, Shared[(int)EMaterialPass::Depth][0]);
+        map.Set(EMaterialPass::Depth, true, Shared[(int)EMaterialPass::Depth][1]);
         map.Set(EMaterialPass::GBuffer, false, ShaderOrFallback(surface, EMaterialPass::GBuffer));
         // The instanced G-Buffer shader is the shared default-surface permutation.
         if (surface == "DefaultSurface")
-            map.Set(EMaterialPass::GBuffer, true, m_Shared[(int)EMaterialPass::GBuffer][1]);
+            map.Set(EMaterialPass::GBuffer, true, Shared[(int)EMaterialPass::GBuffer][1]);
         else
             map.Set(EMaterialPass::GBuffer, true, {});
         map.Set(EMaterialPass::Forward, false, ShaderOrFallback(surface, EMaterialPass::Forward));
-        map.Set(EMaterialPass::Forward, true, m_Shared[(int)EMaterialPass::Forward][1]);
+        map.Set(EMaterialPass::Forward, true, Shared[(int)EMaterialPass::Forward][1]);
         return &map;
     }
 
     MaterialPassShader* MaterialShaderCache::Compile(const std::string& surfaceName, EMaterialPass pass)
     {
-        const bool metal = m_Device->GetApiType() == RHI_API_TYPE::METAL;
+        const bool metal = Device->GetApiType() == RHI_API_TYPE::METAL;
         const char* ext = metal ? ".metal" : ".hlsl";
         const char* passName = PassName(pass);
 
-        std::string surface = ReadText(m_SurfaceDir + "/" + surfaceName + ext);
-        std::string templ = ReadText(m_TemplateDir + "/" + passName + ext);
+        std::string surface = ReadText(SurfaceDir + "/" + surfaceName + ext);
+        std::string templ = ReadText(TemplateDir + "/" + passName + ext);
         if (surface.empty() || templ.empty())
         {
             std::cerr << "[Kiwi] Material shader missing: " << surfaceName << " " << passName << std::endl;
@@ -154,10 +154,10 @@ namespace Kiwi
             return nullptr;
         templ.replace(pos, marker.size(), surface);
         if (!metal)
-            templ = ExpandCommon(templ, m_TemplateDir);
+            templ = ExpandCommon(templ, TemplateDir);
 
-        auto vs = m_Device->CompileShader(EShaderType::Vertex, templ.c_str(), "VSMain", "vs_5_0");
-        auto ps = m_Device->CompileShader(EShaderType::Pixel, templ.c_str(), "PSMain", "ps_5_0");
+        auto vs = Device->CompileShader(EShaderType::Vertex, templ.c_str(), "VSMain", "vs_5_0");
+        auto ps = Device->CompileShader(EShaderType::Pixel, templ.c_str(), "PSMain", "ps_5_0");
         if (!vs || !ps)
             return nullptr;
 
@@ -168,7 +168,7 @@ namespace Kiwi
         GraphicsPipelineStateInitializer init;
         init.VertexShader = shader->VertexShader.get();
         init.PixelShader = shader->PixelShader.get();
-        init.VertexDeclaration = m_Layout;
+        init.VertexDeclaration = Layout;
         init.DepthEnabled = true;
         init.DepthWrite = true;
         init.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::Back);
@@ -184,13 +184,13 @@ namespace Kiwi
             init.RenderTargetsEnabled = 1;
             init.RenderTargetFormats[0] = EFormat::R8G8B8A8_UNORM;
         }
-        shader->PSO = m_Device->CreateGraphicsPipelineState(init);
+        shader->PSO = Device->CreateGraphicsPipelineState(init);
         if (!shader->PSO)
             return nullptr;
 
         const std::string key = surfaceName + "|" + PassName(pass);
         auto* raw = shader.get();
-        m_Shaders[key] = std::move(shader);
+        Shaders[key] = std::move(shader);
         std::cout << "[Kiwi] Compiled material surface " << surfaceName << " (" << passName << ")" << std::endl;
         return raw;
     }

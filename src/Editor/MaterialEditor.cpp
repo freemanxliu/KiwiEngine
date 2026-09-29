@@ -13,10 +13,10 @@
 // Opens a modal listing all textures in Textures/ and lets the user pick one.
 void KiwiEngineApp::DrawTexturePicker()
 {
-    if (!m_ShowTexturePicker) return;
+    if (!ShowTexturePicker) return;
 
     ImGui::OpenPopup("##KiwiTexPicker");
-    m_ShowTexturePicker = false;
+    ShowTexturePicker = false;
 }
 
 void KiwiEngineApp::DrawTexturePickerModal()
@@ -33,9 +33,9 @@ void KiwiEngineApp::DrawTexturePickerModal()
     namespace fs = std::filesystem;
 
     bool selected = false;
-    if (fs::exists(m_TexturesDir))
+    if (fs::exists(TexturesDir))
     {
-        for (auto& entry : fs::directory_iterator(m_TexturesDir))
+        for (auto& entry : fs::directory_iterator(TexturesDir))
         {
             if (!entry.is_regular_file()) continue;
             std::string ext = entry.path().extension().string();
@@ -49,13 +49,19 @@ void KiwiEngineApp::DrawTexturePickerModal()
             ImGui::SameLine();
             if (ImGui::Selectable(fname.c_str(), false, 0, ImVec2(280, 0)))
             {
-                if (m_TexturePickerMesh)
-                    m_TexturePickerMesh->Material.SetTexture(m_TexturePickerPropKey, fname);
-                else if (Material* mat = m_MaterialLibrary.GetMaterial(m_TexturePickerMatTarget))
-                    mat->SetTexture(m_TexturePickerPropKey, fname);
-                m_TexturePickerMesh = nullptr;
-                m_TexturePickerMatTarget.clear();
-                m_TexturePickerPropKey.clear();
+                if (TexturePickerMesh)
+                {
+                    TexturePickerMesh->Material.SetTexture(TexturePickerPropKey, fname);
+                    TexturePickerMesh->MarkRenderStateDirty();
+                }
+                else if (Material* mat = MaterialLibrary.GetMaterial(TexturePickerMatTarget))
+                {
+                    mat->SetTexture(TexturePickerPropKey, fname);
+                    RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+                }
+                TexturePickerMesh = nullptr;
+                TexturePickerMatTarget.clear();
+                TexturePickerPropKey.clear();
                 selected = true;
                 ImGui::CloseCurrentPopup();
             }
@@ -107,9 +113,15 @@ void KiwiEngineApp::DrawTextureSlotRow(const std::string& slotLabel, const std::
         {
             const char* droppedFile = static_cast<const char*>(payload->Data);
             if (mesh)
+            {
                 mesh->Material.SetTexture(propKey, droppedFile);
+                mesh->MarkRenderStateDirty();
+            }
             else if (mat)
+            {
                 mat->SetTexture(propKey, droppedFile);
+                RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+            }
         }
         ImGui::EndDragDropTarget();
     }
@@ -118,10 +130,10 @@ void KiwiEngineApp::DrawTextureSlotRow(const std::string& slotLabel, const std::
     ImGui::SameLine();
     if (ImGui::Button(("Pick##pick_" + uniqueId).c_str(), ImVec2(pickBtnW, 0)))
     {
-        m_TexturePickerMesh = mesh;
-        m_TexturePickerMatTarget = mat ? mat->Name : "";
-        m_TexturePickerPropKey   = propKey;
-        m_ShowTexturePicker      = true;
+        TexturePickerMesh = mesh;
+        TexturePickerMatTarget = mat ? mat->Name : "";
+        TexturePickerPropKey   = propKey;
+        ShowTexturePicker      = true;
     }
 
     // Clear (X) button
@@ -131,21 +143,27 @@ void KiwiEngineApp::DrawTextureSlotRow(const std::string& slotLabel, const std::
         if (ImGui::SmallButton(("X##clr_" + uniqueId).c_str()))
         {
             if (mesh)
+            {
                 mesh->Material.SetTexture(propKey, "");
+                mesh->MarkRenderStateDirty();
+            }
             else if (mat)
+            {
                 mat->SetTexture(propKey, "");
+                RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+            }
         }
     }
 }
 
 void KiwiEngineApp::DrawMaterialEditor()
 {
-    if (!m_ShowMaterialEditor) return;
+    if (!ShowMaterialEditor) return;
 
-    Material* mat = m_MaterialLibrary.GetMaterial(m_MaterialEditorTarget);
+    Material* mat = MaterialLibrary.GetMaterial(MaterialEditorTarget);
     if (!mat)
     {
-        m_ShowMaterialEditor = false;
+        ShowMaterialEditor = false;
         return;
     }
 
@@ -184,7 +202,10 @@ void KiwiEngineApp::DrawMaterialEditor()
         const char* smNames[] = { "Unlit", "DefaultLit" };
         int smIdx = (int)mat->ShadingModel;
         if (ImGui::Combo("##MatEdShadingModel", &smIdx, smNames, IM_ARRAYSIZE(smNames)))
+        {
             mat->ShadingModel = (EShadingModel)smIdx;
+            RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+        }
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -201,7 +222,7 @@ void KiwiEngineApp::DrawMaterialEditor()
             case EShadingModel::DefaultLit: shaderFile = "DefaultLit"; break;
             default:                        shaderFile = "DefaultLit"; break;
             }
-            std::string shaderPath = m_ShaderDir + "/" + shaderFile + ".hlsl";
+            std::string shaderPath = ShaderDir + "/" + shaderFile + ".hlsl";
             std::ifstream sf(shaderPath);
             if (sf.is_open())
             {
@@ -224,7 +245,10 @@ void KiwiEngineApp::DrawMaterialEditor()
                 {
                     float v = mat->GetFloat(def.Name, def.DefaultFloat);
                     if (ImGui::DragFloat((def.DisplayName + "##me_f").c_str(), &v, 0.01f))
+                    {
                         mat->SetFloat(def.Name, v);
+                        RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+                    }
                     break;
                 }
                 case EShaderPropertyType::Range:
@@ -232,14 +256,20 @@ void KiwiEngineApp::DrawMaterialEditor()
                     float v = mat->GetFloat(def.Name, def.DefaultFloat);
                     if (ImGui::SliderFloat((def.DisplayName + "##me_r").c_str(), &v,
                                            def.RangeMin, def.RangeMax))
+                    {
                         mat->SetFloat(def.Name, v);
+                        RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+                    }
                     break;
                 }
                 case EShaderPropertyType::Color:
                 {
                     Vec4 c = mat->GetColor(def.Name, def.DefaultColor);
                     if (ImGui::ColorEdit4((def.DisplayName + "##me_c").c_str(), &c.x))
+                    {
                         mat->SetColor(def.Name, c);
+                        RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+                    }
                     break;
                 }
                 case EShaderPropertyType::Texture2D:
@@ -256,21 +286,30 @@ void KiwiEngineApp::DrawMaterialEditor()
             {
                 Vec4 c = mat->GetColor("_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
                 if (ImGui::ColorEdit4("Color##me_color", &c.x))
+                {
                     mat->SetColor("_Color", c);
+                    RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+                }
             }
 
             // Roughness
             {
                 float v = mat->GetFloat("_Roughness", 0.5f);
                 if (ImGui::SliderFloat("Roughness##me_r", &v, 0.0f, 1.0f))
+                {
                     mat->SetFloat("_Roughness", v);
+                    RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+                }
             }
 
             // Metallic
             {
                 float v = mat->GetFloat("_Metallic", 0.0f);
                 if (ImGui::SliderFloat("Metallic##me_m", &v, 0.0f, 1.0f))
+                {
                     mat->SetFloat("_Metallic", v);
+                    RenderScene.UpdatePrimitivesUsingMaterial(mat->Name);
+                }
             }
 
             ImGui::Spacing();
@@ -290,7 +329,7 @@ void KiwiEngineApp::DrawMaterialEditor()
         bool saved = false;
         if (ImGui::Button("Save##MatEdSave", ImVec2(120, 0)))
         {
-            saved = m_MaterialLibrary.SaveMaterial(mat->Name);
+            saved = MaterialLibrary.SaveMaterial(mat->Name);
         }
         if (saved)
         {
@@ -317,7 +356,7 @@ void KiwiEngineApp::DrawMaterialEditor()
 
     if (!open)
     {
-        m_ShowMaterialEditor = false;
-        m_MaterialEditorTarget.clear();
+        ShowMaterialEditor = false;
+        MaterialEditorTarget.clear();
     }
 }

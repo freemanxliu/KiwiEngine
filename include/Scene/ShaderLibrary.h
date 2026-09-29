@@ -38,11 +38,11 @@ namespace Kiwi
         // Call after RHI device is ready.
         void Initialize(const std::string& shaderDir, RHIDevice* device, RHIInputLayout* inputLayout)
         {
-            m_ShaderDir = shaderDir;
-            m_Device = device;
-            m_InputLayout = inputLayout;
-            m_Shaders.clear();
-            m_ShaderNames.clear();
+            ShaderDir = shaderDir;
+            Device = device;
+            InputLayout = inputLayout;
+            Shaders.clear();
+            ShaderNames.clear();
 
             // Always register the built-in default shader first (from Shaders.h)
             CompileBuiltinDefault(device, inputLayout);
@@ -50,23 +50,23 @@ namespace Kiwi
             // Scan folder for .hlsl files
             ScanAndCompile(shaderDir, device, inputLayout);
 
-            std::cout << "[Kiwi] ShaderLibrary: " << m_Shaders.size() << " shader(s) loaded." << std::endl;
-            for (auto& name : m_ShaderNames)
+            std::cout << "[Kiwi] ShaderLibrary: " << Shaders.size() << " shader(s) loaded." << std::endl;
+            for (auto& name : ShaderNames)
                 std::cout << "  - " << name << std::endl;
         }
 
         // Release all GPU resources (call before RHI switch)
         void ReleaseAll()
         {
-            m_Shaders.clear();
-            m_ShaderNames.clear();
+            Shaders.clear();
+            ShaderNames.clear();
         }
 
         // Get a compiled shader by name. Returns nullptr if not found.
         CompiledShader* GetShader(const std::string& name)
         {
-            auto it = m_Shaders.find(name);
-            if (it != m_Shaders.end())
+            auto it = Shaders.find(name);
+            if (it != Shaders.end())
                 return it->second.get();
             return nullptr;
         }
@@ -80,20 +80,20 @@ namespace Kiwi
         // Get all shader names (for UI dropdown)
         const std::vector<std::string>& GetShaderNames() const
         {
-            return m_ShaderNames;
+            return ShaderNames;
         }
 
         // Check if a shader name exists
         bool HasShader(const std::string& name) const
         {
-            return m_Shaders.find(name) != m_Shaders.end();
+            return Shaders.find(name) != Shaders.end();
         }
 
         // Get the source file path for a shader (empty string for built-in shaders)
         std::string GetShaderFilePath(const std::string& name) const
         {
-            auto it = m_Shaders.find(name);
-            if (it != m_Shaders.end())
+            auto it = Shaders.find(name);
+            if (it != Shaders.end())
                 return it->second->FilePath;
             return "";
         }
@@ -102,18 +102,18 @@ namespace Kiwi
         // Returns the number of shaders recompiled.
         int ReloadModifiedShaders()
         {
-            if (!m_Device || !m_InputLayout) return 0;
+            if (!Device || !InputLayout) return 0;
 
             int recompiled = 0;
             namespace fs = std::filesystem;
 
-            for (auto& [name, shader] : m_Shaders)
+            for (auto& [name, shader] : Shaders)
             {
                 if (shader->FilePath.empty()) continue; // Skip built-in shaders
 
                 auto lastWrite = fs::last_write_time(shader->FilePath);
-                auto it = m_FileTimestamps.find(name);
-                if (it != m_FileTimestamps.end() && it->second == lastWrite)
+                auto it = FileTimestamps.find(name);
+                if (it != FileTimestamps.end() && it->second == lastWrite)
                     continue; // Not modified
 
                 // File was modified (or new) — recompile
@@ -129,10 +129,10 @@ namespace Kiwi
 
                 hlslSource = ResolveIncludes(hlslSource, fs::path(shader->FilePath).parent_path().string());
 
-                bool ok = CompileShaderFromSource(shader.get(), hlslSource, m_Device, m_InputLayout);
+                bool ok = CompileShaderFromSource(shader.get(), hlslSource, Device, InputLayout);
                 if (ok)
                 {
-                    m_FileTimestamps[name] = fs::last_write_time(shader->FilePath);
+                    FileTimestamps[name] = fs::last_write_time(shader->FilePath);
                     std::cout << "[Kiwi] ShaderLibrary: Hot-reloaded '" << name << "'" << std::endl;
                     recompiled++;
                 }
@@ -185,8 +185,8 @@ namespace Kiwi
                 inputLayout ? ECullMode::Back : ECullMode::None);
             shader->PSO = device->CreateGraphicsPipelineState(psoInit);
 
-            m_ShaderNames.push_back("Default");
-            m_Shaders["Default"] = std::move(shader);
+            ShaderNames.push_back("Default");
+            Shaders["Default"] = std::move(shader);
         }
 
         // Scan a directory for .hlsl files and compile each one
@@ -243,9 +243,9 @@ namespace Kiwi
                 bool ok = CompileShaderFromSource(shader.get(), hlslSource, device, inputLayout);
                 if (ok)
                 {
-                    m_ShaderNames.push_back(name);
-                    m_Shaders[name] = std::move(shader);
-                    m_FileTimestamps[name] = fs::last_write_time(entry.path());
+                    ShaderNames.push_back(name);
+                    Shaders[name] = std::move(shader);
+                    FileTimestamps[name] = fs::last_write_time(entry.path());
                     std::cout << "[Kiwi] ShaderLibrary: Compiled '" << name << "'" << std::endl;
                 }
                 else
@@ -290,14 +290,14 @@ namespace Kiwi
             }
         }
 
-        std::unordered_map<std::string, std::unique_ptr<CompiledShader>> m_Shaders;
-        std::vector<std::string> m_ShaderNames;
+        std::unordered_map<std::string, std::unique_ptr<CompiledShader>> Shaders;
+        std::vector<std::string> ShaderNames;
 
         // Cached state for incremental reload
-        RHIDevice* m_Device = nullptr;
-        RHIInputLayout* m_InputLayout = nullptr;
-        std::string m_ShaderDir;
-        std::unordered_map<std::string, std::filesystem::file_time_type> m_FileTimestamps;
+        RHIDevice* Device = nullptr;
+        RHIInputLayout* InputLayout = nullptr;
+        std::string ShaderDir;
+        std::unordered_map<std::string, std::filesystem::file_time_type> FileTimestamps;
 
         // Simple #include preprocessor for HLSL files
         static std::string ResolveIncludes(const std::string& source, const std::string& parentDir)

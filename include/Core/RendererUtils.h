@@ -1,11 +1,17 @@
 #pragma once
 
+#include "Math/Math.h"
 #include "RHI/RHI.h"
 
 #include <string>
 
 namespace Kiwi
 {
+
+class MeshComponent;
+
+// World-space AABB of a mesh's vertices. Collapses to the mesh position when it has no vertices.
+void ComputeWorldAABB(const MeshComponent& mesh, Vec3& outMin, Vec3& outMax);
 
 // Backends with a G-Buffer path. GL/Vulkan only render forward.
 bool IsDeferredRHI(RHI_API_TYPE api);

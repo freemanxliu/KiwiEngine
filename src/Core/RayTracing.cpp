@@ -1,4 +1,5 @@
 #include "KiwiEngineApp.h"
+#include "Renderer/DeferredShadingRenderer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -32,145 +33,145 @@ struct BvhNode
     int Count = 0;
 };
 
-float Sample01(uint32_t n)
+float Sample01(uint32_t N)
 {
-    n ^= n >> 16;
-    n *= 0x7feb352du;
-    n ^= n >> 15;
-    n *= 0x846ca68bu;
-    n ^= n >> 16;
-    return (n & 0x00ffffffu) / float(0x01000000u);
+    N ^= N >> 16;
+    N *= 0x7feb352du;
+    N ^= N >> 15;
+    N *= 0x846ca68bu;
+    N ^= N >> 16;
+    return (N & 0x00ffffffu) / float(0x01000000u);
 }
 
-Vec3 TransformPoint(const Mat4& world, const Vec3& p)
+Vec3 TransformPoint(const Mat4& World, const Vec3& P)
 {
     return {
-        p.x * world.m[0][0] + p.y * world.m[1][0] + p.z * world.m[2][0] + world.m[3][0],
-        p.x * world.m[0][1] + p.y * world.m[1][1] + p.z * world.m[2][1] + world.m[3][1],
-        p.x * world.m[0][2] + p.y * world.m[1][2] + p.z * world.m[2][2] + world.m[3][2]
+        P.x * World.m[0][0] + P.y * World.m[1][0] + P.z * World.m[2][0] + World.m[3][0],
+        P.x * World.m[0][1] + P.y * World.m[1][1] + P.z * World.m[2][1] + World.m[3][1],
+        P.x * World.m[0][2] + P.y * World.m[1][2] + P.z * World.m[2][2] + World.m[3][2]
     };
 }
 
-Vec3 TransformDirection(const Mat4& m, float x, float y, float z, float w, float& outW)
+Vec3 TransformDirection(const Mat4& M, float X, float Y, float Z, float W, float& OutW)
 {
-    outW = x * m.m[0][3] + y * m.m[1][3] + z * m.m[2][3] + w * m.m[3][3];
+    OutW = X * M.m[0][3] + Y * M.m[1][3] + Z * M.m[2][3] + W * M.m[3][3];
     return {
-        x * m.m[0][0] + y * m.m[1][0] + z * m.m[2][0] + w * m.m[3][0],
-        x * m.m[0][1] + y * m.m[1][1] + z * m.m[2][1] + w * m.m[3][1],
-        x * m.m[0][2] + y * m.m[1][2] + z * m.m[2][2] + w * m.m[3][2]
+        X * M.m[0][0] + Y * M.m[1][0] + Z * M.m[2][0] + W * M.m[3][0],
+        X * M.m[0][1] + Y * M.m[1][1] + Z * M.m[2][1] + W * M.m[3][1],
+        X * M.m[0][2] + Y * M.m[1][2] + Z * M.m[2][2] + W * M.m[3][2]
     };
 }
 
-TraceRay MakeRay(const Vec3& origin, const Vec3& direction)
+TraceRay MakeRay(const Vec3& Origin, const Vec3& Direction)
 {
-    TraceRay ray;
-    ray.Origin = origin;
-    ray.Direction = direction;
-    const float kHuge = 1.0e30f;
-    ray.InvDirection = {
-        std::abs(direction.x) > 1.0e-8f ? 1.0f / direction.x : std::copysign(kHuge, direction.x),
-        std::abs(direction.y) > 1.0e-8f ? 1.0f / direction.y : std::copysign(kHuge, direction.y),
-        std::abs(direction.z) > 1.0e-8f ? 1.0f / direction.z : std::copysign(kHuge, direction.z)
+    TraceRay Ray;
+    Ray.Origin = Origin;
+    Ray.Direction = Direction;
+    const float KHuge = 1.0e30f;
+    Ray.InvDirection = {
+        std::abs(Direction.x) > 1.0e-8f ? 1.0f / Direction.x : std::copysign(KHuge, Direction.x),
+        std::abs(Direction.y) > 1.0e-8f ? 1.0f / Direction.y : std::copysign(KHuge, Direction.y),
+        std::abs(Direction.z) > 1.0e-8f ? 1.0f / Direction.z : std::copysign(KHuge, Direction.z)
     };
-    return ray;
+    return Ray;
 }
 
-void Expand(Vec3& mn, Vec3& mx, const Vec3& p)
+void Expand(Vec3& Mn, Vec3& Mx, const Vec3& P)
 {
-    mn.x = std::min(mn.x, p.x); mn.y = std::min(mn.y, p.y); mn.z = std::min(mn.z, p.z);
-    mx.x = std::max(mx.x, p.x); mx.y = std::max(mx.y, p.y); mx.z = std::max(mx.z, p.z);
+    Mn.x = std::min(Mn.x, P.x); Mn.y = std::min(Mn.y, P.y); Mn.z = std::min(Mn.z, P.z);
+    Mx.x = std::max(Mx.x, P.x); Mx.y = std::max(Mx.y, P.y); Mx.z = std::max(Mx.z, P.z);
 }
 
-bool RayBox(const TraceRay& ray, const Vec3& mn, const Vec3& mx, float tMax)
+bool RayBox(const TraceRay& Ray, const Vec3& Mn, const Vec3& Mx, float TMax)
 {
-    float t0 = (mn.x - ray.Origin.x) * ray.InvDirection.x;
-    float t1 = (mx.x - ray.Origin.x) * ray.InvDirection.x;
-    if (t0 > t1) std::swap(t0, t1);
-    float ty0 = (mn.y - ray.Origin.y) * ray.InvDirection.y;
-    float ty1 = (mx.y - ray.Origin.y) * ray.InvDirection.y;
-    if (ty0 > ty1) std::swap(ty0, ty1);
-    t0 = std::max(t0, ty0);
-    t1 = std::min(t1, ty1);
-    float tz0 = (mn.z - ray.Origin.z) * ray.InvDirection.z;
-    float tz1 = (mx.z - ray.Origin.z) * ray.InvDirection.z;
-    if (tz0 > tz1) std::swap(tz0, tz1);
-    t0 = std::max(t0, tz0);
-    t1 = std::min(t1, tz1);
-    return t1 >= std::max(t0, 0.0f) && t0 < tMax;
+    float T0 = (Mn.x - Ray.Origin.x) * Ray.InvDirection.x;
+    float T1 = (Mx.x - Ray.Origin.x) * Ray.InvDirection.x;
+    if (T0 > T1) std::swap(T0, T1);
+    float Ty0 = (Mn.y - Ray.Origin.y) * Ray.InvDirection.y;
+    float Ty1 = (Mx.y - Ray.Origin.y) * Ray.InvDirection.y;
+    if (Ty0 > Ty1) std::swap(Ty0, Ty1);
+    T0 = std::max(T0, Ty0);
+    T1 = std::min(T1, Ty1);
+    float Tz0 = (Mn.z - Ray.Origin.z) * Ray.InvDirection.z;
+    float Tz1 = (Mx.z - Ray.Origin.z) * Ray.InvDirection.z;
+    if (Tz0 > Tz1) std::swap(Tz0, Tz1);
+    T0 = std::max(T0, Tz0);
+    T1 = std::min(T1, Tz1);
+    return T1 >= std::max(T0, 0.0f) && T0 < TMax;
 }
 
-bool IntersectTriangle(const Triangle& tri, const TraceRay& ray, float tMax, float& tHit, Vec3& normal)
+bool IntersectTriangle(const Triangle& Tri, const TraceRay& Ray, float TMax, float& THit, Vec3& Normal)
 {
-    const float eps = 1.0e-6f;
-    Vec3 e1 = tri.B - tri.A;
-    Vec3 e2 = tri.C - tri.A;
-    Vec3 p = ray.Direction.Cross(e2);
-    float det = e1.Dot(p);
-    if (std::abs(det) < eps)
+    const float Eps = 1.0e-6f;
+    Vec3 E1 = Tri.B - Tri.A;
+    Vec3 E2 = Tri.C - Tri.A;
+    Vec3 P = Ray.Direction.Cross(E2);
+    float Det = E1.Dot(P);
+    if (std::abs(Det) < Eps)
         return false;
-    float invDet = 1.0f / det;
-    Vec3 s = ray.Origin - tri.A;
-    float u = s.Dot(p) * invDet;
-    if (u < 0.0f || u > 1.0f)
+    float InvDet = 1.0f / Det;
+    Vec3 S = Ray.Origin - Tri.A;
+    float U = S.Dot(P) * InvDet;
+    if (U < 0.0f || U > 1.0f)
         return false;
-    Vec3 q = s.Cross(e1);
-    float v = ray.Direction.Dot(q) * invDet;
-    if (v < 0.0f || u + v > 1.0f)
+    Vec3 Q = S.Cross(E1);
+    float V = Ray.Direction.Dot(Q) * InvDet;
+    if (V < 0.0f || U + V > 1.0f)
         return false;
-    float t = e2.Dot(q) * invDet;
-    if (t < 1.0e-3f || t > tMax)
+    float T = E2.Dot(Q) * InvDet;
+    if (T < 1.0e-3f || T > TMax)
         return false;
-    tHit = t;
-    normal = tri.Normal;
-    if (normal.Dot(ray.Direction) > 0.0f)
-        normal = normal * -1.0f;
+    THit = T;
+    Normal = Tri.Normal;
+    if (Normal.Dot(Ray.Direction) > 0.0f)
+        Normal = Normal * -1.0f;
     return true;
 }
 
-int BuildBvh(std::vector<BvhNode>& nodes, std::vector<int>& order, const std::vector<Triangle>& tris, int begin, int end)
+int BuildBvh(std::vector<BvhNode>& Nodes, std::vector<int>& Order, const std::vector<Triangle>& Tris, int Begin, int End)
 {
-    int index = (int)nodes.size();
-    nodes.push_back({});
-    Vec3 mn{ 1.0e30f, 1.0e30f, 1.0e30f };
-    Vec3 mx{ -1.0e30f, -1.0e30f, -1.0e30f };
-    for (int i = begin; i < end; ++i)
+    int Index = (int)Nodes.size();
+    Nodes.push_back({});
+    Vec3 Mn{ 1.0e30f, 1.0e30f, 1.0e30f };
+    Vec3 Mx{ -1.0e30f, -1.0e30f, -1.0e30f };
+    for (int I = Begin; I < End; ++I)
     {
-        const Triangle& tri = tris[order[i]];
-        Expand(mn, mx, tri.A);
-        Expand(mn, mx, tri.B);
-        Expand(mn, mx, tri.C);
+        const Triangle& Tri = Tris[Order[I]];
+        Expand(Mn, Mx, Tri.A);
+        Expand(Mn, Mx, Tri.B);
+        Expand(Mn, Mx, Tri.C);
     }
-    nodes[index].Min = mn;
-    nodes[index].Max = mx;
-    int count = end - begin;
-    if (count <= 8)
+    Nodes[Index].Min = Mn;
+    Nodes[Index].Max = Mx;
+    int Count = End - Begin;
+    if (Count <= 8)
     {
-        nodes[index].Start = begin;
-        nodes[index].Count = count;
-        return index;
+        Nodes[Index].Start = Begin;
+        Nodes[Index].Count = Count;
+        return Index;
     }
 
-    Vec3 extent = mx - mn;
-    int axis = 0;
-    if (extent.y > extent.x && extent.y >= extent.z) axis = 1;
-    else if (extent.z > extent.x) axis = 2;
-    int mid = begin + count / 2;
-    std::nth_element(order.begin() + begin, order.begin() + mid, order.begin() + end,
-        [&](int a, int b)
+    Vec3 Extent = Mx - Mn;
+    int Axis = 0;
+    if (Extent.y > Extent.x && Extent.y >= Extent.z) Axis = 1;
+    else if (Extent.z > Extent.x) Axis = 2;
+    int Mid = Begin + Count / 2;
+    std::nth_element(Order.begin() + Begin, Order.begin() + Mid, Order.begin() + End,
+        [&](int A, int B)
         {
-            auto center = [&](int id)
+            auto Center = [&](int Id)
             {
-                const Triangle& tri = tris[id];
-                Vec3 c = (tri.A + tri.B + tri.C) * (1.0f / 3.0f);
-                return axis == 0 ? c.x : axis == 1 ? c.y : c.z;
+                const Triangle& Tri = Tris[Id];
+                Vec3 C = (Tri.A + Tri.B + Tri.C) * (1.0f / 3.0f);
+                return Axis == 0 ? C.x : Axis == 1 ? C.y : C.z;
             };
-            return center(a) < center(b);
+            return Center(A) < Center(B);
         });
-    int left = BuildBvh(nodes, order, tris, begin, mid);
-    int right = BuildBvh(nodes, order, tris, mid, end);
-    nodes[index].Left = left;
-    nodes[index].Right = right;
-    return index;
+    int Left = BuildBvh(Nodes, Order, Tris, Begin, Mid);
+    int Right = BuildBvh(Nodes, Order, Tris, Mid, End);
+    Nodes[Index].Left = Left;
+    Nodes[Index].Right = Right;
+    return Index;
 }
 
 struct Hit
@@ -180,73 +181,73 @@ struct Hit
     Vec3 Color;
 };
 
-bool ClosestHit(const std::vector<BvhNode>& nodes, const std::vector<int>& order,
-    const std::vector<Triangle>& tris, const TraceRay& ray, float tMax, Hit& hit)
+bool ClosestHit(const std::vector<BvhNode>& Nodes, const std::vector<int>& Order,
+    const std::vector<Triangle>& Tris, const TraceRay& Ray, float TMax, Hit& Hit)
 {
-    if (nodes.empty())
+    if (Nodes.empty())
         return false;
-    int stack[64];
-    int top = 0;
-    stack[top++] = 0;
-    bool found = false;
-    while (top > 0)
+    int Stack[64];
+    int Top = 0;
+    Stack[Top++] = 0;
+    bool Found = false;
+    while (Top > 0)
     {
-        const BvhNode& node = nodes[stack[--top]];
-        if (!RayBox(ray, node.Min, node.Max, tMax))
+        const BvhNode& Node = Nodes[Stack[--Top]];
+        if (!RayBox(Ray, Node.Min, Node.Max, TMax))
             continue;
-        if (node.Left < 0)
+        if (Node.Left < 0)
         {
-            for (int i = 0; i < node.Count; ++i)
+            for (int I = 0; I < Node.Count; ++I)
             {
-                const Triangle& tri = tris[order[node.Start + i]];
-                float t = 0.0f;
-                Vec3 n;
-                if (IntersectTriangle(tri, ray, tMax, t, n))
+                const Triangle& Tri = Tris[Order[Node.Start + I]];
+                float T = 0.0f;
+                Vec3 N;
+                if (IntersectTriangle(Tri, Ray, TMax, T, N))
                 {
-                    tMax = t;
-                    hit.T = t;
-                    hit.Normal = n;
-                    hit.Color = tri.Color;
-                    found = true;
+                    TMax = T;
+                    Hit.T = T;
+                    Hit.Normal = N;
+                    Hit.Color = Tri.Color;
+                    Found = true;
                 }
             }
         }
-        else if (top < 62)
+        else if (Top < 62)
         {
-            stack[top++] = node.Left;
-            stack[top++] = node.Right;
+            Stack[Top++] = Node.Left;
+            Stack[Top++] = Node.Right;
         }
     }
-    return found;
+    return Found;
 }
 
-bool AnyHit(const std::vector<BvhNode>& nodes, const std::vector<int>& order,
-    const std::vector<Triangle>& tris, const TraceRay& ray, float tMax)
+bool AnyHit(const std::vector<BvhNode>& Nodes, const std::vector<int>& Order,
+    const std::vector<Triangle>& Tris, const TraceRay& Ray, float TMax)
 {
-    if (nodes.empty())
+    if (Nodes.empty())
         return false;
-    int stack[64];
-    int top = 0;
-    stack[top++] = 0;
-    while (top > 0)
+    int Stack[64];
+    int Top = 0;
+    Stack[Top++] = 0;
+    while (Top > 0)
     {
-        const BvhNode& node = nodes[stack[--top]];
-        if (!RayBox(ray, node.Min, node.Max, tMax))
+        const BvhNode& Node = Nodes[Stack[--Top]];
+        if (!RayBox(Ray, Node.Min, Node.Max, TMax))
             continue;
-        if (node.Left < 0)
+        if (Node.Left < 0)
         {
-            for (int i = 0; i < node.Count; ++i)
+            for (int I = 0; I < Node.Count; ++I)
             {
-                float t = 0.0f;
-                Vec3 n;
-                if (IntersectTriangle(tris[order[node.Start + i]], ray, tMax, t, n))
+                float T = 0.0f;
+                Vec3 N;
+                if (IntersectTriangle(Tris[Order[Node.Start + I]], Ray, TMax, T, N))
                     return true;
             }
         }
-        else if (top < 62)
+        else if (Top < 62)
         {
-            stack[top++] = node.Left;
-            stack[top++] = node.Right;
+            Stack[Top++] = Node.Left;
+            Stack[Top++] = Node.Right;
         }
     }
     return false;
@@ -314,212 +315,216 @@ void main()
 
 } // namespace
 
-void KiwiEngineApp::RenderRayTracing(RHICommandContext* ctx, RHITextureView* sceneRTV, const Viewport& vp, const ScissorRect& sr)
+void Kiwi::DeferredShadingSceneRenderer::RenderRayTracing(RHICommandContext* Ctx, RHITextureView* SceneRTV, const Viewport& Vp, const ScissorRect& Sr)
 {
-    ctx->BeginEvent("Ray Tracing");
-    m_PassTimer.Begin("Ray Tracing");
 
-    ctx->SetRenderTargets(&sceneRTV, 1, nullptr);
-    ctx->SetViewports(&vp, 1);
-    ctx->SetScissorRects(&sr, 1);
-    ClearColorValue clearColor = { 0.05f, 0.06f, 0.08f, 1.0f };
-    ctx->ClearRenderTargetView(sceneRTV, clearColor);
+    Ctx->BeginEvent("Ray Tracing");
+    App.PassTimer.Begin("Ray Tracing");
 
-    const uint32_t screenW = std::max(1u, (uint32_t)vp.Width);
-    const uint32_t screenH = std::max(1u, (uint32_t)vp.Height);
-    const float resolutionScale = std::min(1.0f, std::max(0.01f, m_RayTracingResolutionPercent / 100.0f));
-    const int samplesPerPixel = std::max(1, m_RayTracingSamplesPerPixel);
-    const uint32_t traceW = std::max(1u, (uint32_t)(screenW * resolutionScale));
-    const uint32_t traceH = std::max(1u, (uint32_t)(screenH * resolutionScale));
-    m_RayTraceWidth = traceW;
-    m_RayTraceHeight = traceH;
+    Ctx->SetRenderTargets(&SceneRTV, 1, nullptr);
+    Ctx->SetViewports(&Vp, 1);
+    Ctx->SetScissorRects(&Sr, 1);
+    ClearColorValue ClearColor = { 0.05f, 0.06f, 0.08f, 1.0f };
+    Ctx->ClearRenderTargetView(SceneRTV, ClearColor);
 
-    std::vector<Triangle> triangles;
-    for (const RenderItem& item : m_RenderList)
+    const uint32_t ScreenW = std::max(1u, (uint32_t)Vp.Width);
+    const uint32_t ScreenH = std::max(1u, (uint32_t)Vp.Height);
+    const float ResolutionScale = std::min(1.0f, std::max(0.01f, App.RenderParams.RayTracingResolutionPercent / 100.0f));
+    const int SamplesPerPixel = std::max(1, App.RenderParams.RayTracingSamplesPerPixel);
+    const uint32_t TraceW = std::max(1u, (uint32_t)(ScreenW * ResolutionScale));
+    const uint32_t TraceH = std::max(1u, (uint32_t)(ScreenH * ResolutionScale));
+    App.RayTraceWidth = TraceW;
+    App.RayTraceHeight = TraceH;
+
+    std::vector<Triangle> Triangles;
+    for (const RenderItem& Item : View.VisibleItems)
     {
-        MeshComponent* mesh = item.MeshComp;
-        if (!mesh)
+        const PrimitiveSceneProxy& Proxy = Item.Primitive->Proxy;
+        if (!Proxy.MeshData)
             continue;
-        const auto& verts = mesh->MeshData.GetVertices();
-        const auto& indices = mesh->MeshData.GetIndices();
-        if (verts.empty() || indices.size() < 3)
+        const auto& Verts = Proxy.MeshData->GetVertices();
+        const auto& Indices = Proxy.MeshData->GetIndices();
+        if (Verts.empty() || Indices.size() < 3)
             continue;
-        Material* parent = m_MaterialLibrary.GetMaterial(mesh->Material.Parent);
-        Vec4 color = mesh->Material.GetColor(parent, "_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
-        Mat4 world = mesh->GetWorldMatrix();
-        for (size_t i = 0; i + 2 < indices.size(); i += 3)
+        const Vec4& Color = Proxy.Color;
+        const Mat4& World = Proxy.LocalToWorld;
+        for (size_t I = 0; I + 2 < Indices.size(); I += 3)
         {
-            uint32_t i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
-            if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size())
+            uint32_t I0 = Indices[I], I1 = Indices[I + 1], I2 = Indices[I + 2];
+            if (I0 >= Verts.size() || I1 >= Verts.size() || I2 >= Verts.size())
                 continue;
-            Triangle tri;
-            tri.A = TransformPoint(world, verts[i0].Position);
-            tri.B = TransformPoint(world, verts[i1].Position);
-            tri.C = TransformPoint(world, verts[i2].Position);
-            tri.Normal = (tri.B - tri.A).Cross(tri.C - tri.A);
-            if (tri.Normal.Dot(tri.Normal) < 1.0e-12f)
+            Triangle Tri;
+            Tri.A = TransformPoint(World, Verts[I0].Position);
+            Tri.B = TransformPoint(World, Verts[I1].Position);
+            Tri.C = TransformPoint(World, Verts[I2].Position);
+            Tri.Normal = (Tri.B - Tri.A).Cross(Tri.C - Tri.A);
+            if (Tri.Normal.Dot(Tri.Normal) < 1.0e-12f)
                 continue;
-            tri.Normal = tri.Normal.Normalize();
-            tri.Color = { color.x, color.y, color.z };
-            triangles.push_back(tri);
+            Tri.Normal = Tri.Normal.Normalize();
+            Tri.Color = { Color.x, Color.y, Color.z };
+            Triangles.push_back(Tri);
         }
     }
 
-    std::vector<int> order(triangles.size());
-    std::vector<BvhNode> nodes;
-    if (!triangles.empty())
+    std::vector<int> Order(Triangles.size());
+    std::vector<BvhNode> Nodes;
+    if (!Triangles.empty())
     {
-        for (int i = 0; i < (int)triangles.size(); ++i)
-            order[i] = i;
-        nodes.reserve(triangles.size() * 2);
-        BuildBvh(nodes, order, triangles, 0, (int)triangles.size());
+        for (int I = 0; I < (int)Triangles.size(); ++I)
+            Order[I] = I;
+        Nodes.reserve(Triangles.size() * 2);
+        BuildBvh(Nodes, Order, Triangles, 0, (int)Triangles.size());
     }
 
-    Mat4 viewProj = m_ViewMatrix * m_ProjectionMatrix;
-    Mat4 invViewProj = viewProj.Inverse();
-    const bool unlit = m_ViewMode == EViewMode::Unlit;
-    std::vector<uint8_t> pixels((size_t)traceW * traceH * 4);
+    const Mat4& InvViewProj = View.Matrices.GetInvViewProjectionMatrix();
+    const Vec3& ViewOrigin = View.Matrices.GetViewOrigin();
+    const bool Unlit = View.ViewMode == EViewMode::Unlit;
+    std::vector<uint8_t> Pixels((size_t)TraceW * TraceH * 4);
 
-    for (uint32_t y = 0; y < traceH; ++y)
+    for (uint32_t Y = 0; Y < TraceH; ++Y)
     {
-        for (uint32_t x = 0; x < traceW; ++x)
+        for (uint32_t X = 0; X < TraceW; ++X)
         {
-            Vec3 radiance = { 0.0f, 0.0f, 0.0f };
-            for (int sample = 0; sample < samplesPerPixel; ++sample)
+            Vec3 Radiance = { 0.0f, 0.0f, 0.0f };
+            for (int Sample = 0; Sample < SamplesPerPixel; ++Sample)
             {
-                float jitterX = (sample + 0.5f) / (float)samplesPerPixel;
-                float jitterY = Sample01(x * 1973u ^ y * 9277u ^ (uint32_t)sample * 26699u);
-                float ndcX = (x + jitterX) / (float)traceW * 2.0f - 1.0f;
-                float sampleNdcY = 1.0f - (y + jitterY) / (float)traceH * 2.0f;
-                float clipW = 1.0f;
-                Vec3 farPos = TransformDirection(invViewProj, ndcX, sampleNdcY, 1.0f, 1.0f, clipW);
-                if (std::abs(clipW) > 1.0e-8f)
-                    farPos = farPos * (1.0f / clipW);
-                Vec3 dir = (farPos - m_CameraPosition).Normalize();
-                TraceRay ray = MakeRay(m_CameraPosition, dir);
+                float JitterX = (Sample + 0.5f) / (float)SamplesPerPixel;
+                float JitterY = Sample01(X * 1973u ^ Y * 9277u ^ (uint32_t)Sample * 26699u);
+                float NdcX = (X + JitterX) / (float)TraceW * 2.0f - 1.0f;
+                float SampleNdcY = 1.0f - (Y + JitterY) / (float)TraceH * 2.0f;
+                float ClipW = 1.0f;
+                Vec3 FarPos = TransformDirection(InvViewProj, NdcX, SampleNdcY, 1.0f, 1.0f, ClipW);
+                if (std::abs(ClipW) > 1.0e-8f)
+                    FarPos = FarPos * (1.0f / ClipW);
+                Vec3 Dir = (FarPos - ViewOrigin).Normalize();
+                TraceRay PrimaryRay = MakeRay(ViewOrigin, Dir);
 
-                Vec3 sampleRadiance = { 0.05f, 0.06f, 0.08f };
-                Hit hit;
-                if (ClosestHit(nodes, order, triangles, ray, 1.0e30f, hit))
+                Vec3 SampleRadiance = { 0.05f, 0.06f, 0.08f };
+                Hit PrimaryHit;
+                if (ClosestHit(Nodes, Order, Triangles, PrimaryRay, 1.0e30f, PrimaryHit))
                 {
-                    Vec3 pos = ray.Origin + ray.Direction * hit.T;
-                    Vec3 n = hit.Normal;
-                    if (unlit)
+                    Vec3 Pos = PrimaryRay.Origin + PrimaryRay.Direction * PrimaryHit.T;
+                    Vec3 N = PrimaryHit.Normal;
+                    if (Unlit)
                     {
-                        sampleRadiance = hit.Color;
+                        SampleRadiance = PrimaryHit.Color;
                     }
                     else
                     {
-                        sampleRadiance = hit.Color * 0.08f;
-                        for (int li = 0; li < m_NumActiveLights; ++li)
+                        SampleRadiance = PrimaryHit.Color * 0.08f;
+                        for (int Li = 0; Li < App.RenderScene.GetNumLights(); ++Li)
                         {
-                            const GPULightData& light = m_LightDataCache[li];
+                            const GPULightData& Light = App.RenderScene.GetLightData()[Li];
                             Vec3 L;
-                            float reach = 1.0e4f;
-                            float atten = 1.0f;
-                            if (light.Type == 0)
+                            float Reach = 1.0e4f;
+                            float Atten = 1.0f;
+                            if (Light.Type == 0)
                             {
-                                L = Vec3(light.DirectionOrPos[0], light.DirectionOrPos[1], light.DirectionOrPos[2]).Normalize();
+                                L = Vec3(Light.DirectionOrPos[0], Light.DirectionOrPos[1], Light.DirectionOrPos[2]).Normalize();
                             }
                             else
                             {
-                                Vec3 toLight = Vec3(light.DirectionOrPos[0], light.DirectionOrPos[1], light.DirectionOrPos[2]) - pos;
-                                float dist = toLight.Length();
-                                if (dist > light.Radius)
+                                Vec3 ToLight = Vec3(Light.DirectionOrPos[0], Light.DirectionOrPos[1], Light.DirectionOrPos[2]) - Pos;
+                                float Dist = ToLight.Length();
+                                if (Dist > Light.Radius)
                                     continue;
-                                L = toLight * (1.0f / std::max(dist, 0.0001f));
-                                reach = dist - 0.001f;
-                                float nd = dist / std::max(light.Radius, 0.001f);
-                                float nd2 = nd * nd;
-                                float window = std::max(0.0f, 1.0f - nd2 * nd2);
-                                atten = window * window / std::max(dist * dist, 0.0001f);
+                                L = ToLight * (1.0f / std::max(Dist, 0.0001f));
+                                Reach = Dist - 0.001f;
+                                float Nd = Dist / std::max(Light.Radius, 0.001f);
+                                float Nd2 = Nd * Nd;
+                                float Window = std::max(0.0f, 1.0f - Nd2 * Nd2);
+                                Atten = Window * Window / std::max(Dist * Dist, 0.0001f);
                             }
-                            float ndotl = n.Dot(L);
-                            if (ndotl <= 0.0f)
+                            float Ndotl = N.Dot(L);
+                            if (Ndotl <= 0.0f)
                                 continue;
-                            TraceRay shadow = MakeRay(pos + n * 0.002f, L);
-                            if (AnyHit(nodes, order, triangles, shadow, reach))
+                            TraceRay Shadow = MakeRay(Pos + N * 0.002f, L);
+                            if (AnyHit(Nodes, Order, Triangles, Shadow, Reach))
                                 continue;
-                            Vec3 lc = { light.ColorIntensity[0], light.ColorIntensity[1], light.ColorIntensity[2] };
-                            sampleRadiance = sampleRadiance + hit.Color * lc * (ndotl * atten);
+                            Vec3 Lc = { Light.ColorIntensity[0], Light.ColorIntensity[1], Light.ColorIntensity[2] };
+                            SampleRadiance = SampleRadiance + PrimaryHit.Color * Lc * (Ndotl * Atten);
                         }
                     }
                 }
-                radiance = radiance + sampleRadiance;
+                Radiance = Radiance + SampleRadiance;
             }
-            radiance = radiance * (1.0f / (float)samplesPerPixel);
+            Radiance = Radiance * (1.0f / (float)SamplesPerPixel);
 
-            size_t pixel = ((size_t)y * traceW + x) * 4;
-            pixels[pixel + 0] = (uint8_t)std::min(255.0f, std::max(0.0f, radiance.x * 255.0f));
-            pixels[pixel + 1] = (uint8_t)std::min(255.0f, std::max(0.0f, radiance.y * 255.0f));
-            pixels[pixel + 2] = (uint8_t)std::min(255.0f, std::max(0.0f, radiance.z * 255.0f));
-            pixels[pixel + 3] = 255;
+            size_t Pixel = ((size_t)Y * TraceW + X) * 4;
+            Pixels[Pixel + 0] = (uint8_t)std::min(255.0f, std::max(0.0f, Radiance.x * 255.0f));
+            Pixels[Pixel + 1] = (uint8_t)std::min(255.0f, std::max(0.0f, Radiance.y * 255.0f));
+            Pixels[Pixel + 2] = (uint8_t)std::min(255.0f, std::max(0.0f, Radiance.z * 255.0f));
+            Pixels[Pixel + 3] = 255;
         }
     }
 
-    RHIDevice* device = GetDevice();
-    if (!m_RayTraceBlitVS && device)
+    RHIDevice* Device = App.GetDevice();
+    if (!App.RayTraceBlitVS && Device)
     {
-        auto api = device->GetApiType();
-        const char* source = kBlitHLSL;
-        if (api == RHI_API_TYPE::METAL)
-            source = kBlitMSL;
-        else if (api == RHI_API_TYPE::OPENGL || api == RHI_API_TYPE::VULKAN)
-            source = kBlitGLSL;
-        m_RayTraceBlitVS = device->CompileShader(EShaderType::Vertex, source, "VSMain", "vs_5_0");
-        m_RayTraceBlitPS = device->CompileShader(EShaderType::Pixel, source, "PSMain", "ps_5_0");
-        if (m_RayTraceBlitVS && m_RayTraceBlitPS)
+        auto Api = Device->GetApiType();
+        const char* Source = kBlitHLSL;
+        if (Api == RHI_API_TYPE::METAL)
+            Source = kBlitMSL;
+        else if (Api == RHI_API_TYPE::OPENGL || Api == RHI_API_TYPE::VULKAN)
+            Source = kBlitGLSL;
+        App.RayTraceBlitVS = Device->CompileShader(EShaderType::Vertex, Source, "VSMain", "vs_5_0");
+        App.RayTraceBlitPS = Device->CompileShader(EShaderType::Pixel, Source, "PSMain", "ps_5_0");
+        if (App.RayTraceBlitVS && App.RayTraceBlitPS)
         {
-            GraphicsPipelineStateInitializer init;
-            init.VertexShader = m_RayTraceBlitVS.get();
-            init.PixelShader = m_RayTraceBlitPS.get();
-            init.DepthEnabled = false;
-            init.DepthWrite = false;
-            init.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
-            init.RenderTargetsEnabled = 1;
-            init.RenderTargetFormats[0] = EFormat::R16G16B16A16_FLOAT;
-            m_RayTraceBlitPSO = device->CreateGraphicsPipelineState(init);
+            GraphicsPipelineStateInitializer Init;
+            Init.VertexShader = App.RayTraceBlitVS.get();
+            Init.PixelShader = App.RayTraceBlitPS.get();
+            Init.DepthEnabled = false;
+            Init.DepthWrite = false;
+            Init.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::None);
+            Init.RenderTargetsEnabled = 1;
+            Init.RenderTargetFormats[0] = EFormat::R16G16B16A16_FLOAT;
+            App.RayTraceBlitPSO = Device->CreateGraphicsPipelineState(Init);
         }
     }
 
-    if (device)
+    if (Device)
     {
-        TextureDesc desc;
-        desc.Width = traceW;
-        desc.Height = traceH;
-        desc.Format = EFormat::R8G8B8A8_UNORM;
-        desc.BindFlags = TEXTURE_BIND_SHADER_RESOURCE;
-        desc.Usage = EResourceUsage::Default;
-        desc.MipLevels = 1;
-        desc.SampleCount = 1;
-        desc.DebugName = "RayTraceColor";
-        m_RayTraceColor = device->CreateTexture(desc, pixels.data());
-        if (m_RayTraceColor)
-            m_RayTraceColorSRV = device->CreateTextureView(m_RayTraceColor.get(), EDescriptorHeapType::CBV_SRV_UAV);
+        TextureDesc Desc;
+        Desc.Width = TraceW;
+        Desc.Height = TraceH;
+        Desc.Format = EFormat::R8G8B8A8_UNORM;
+        Desc.BindFlags = TEXTURE_BIND_SHADER_RESOURCE;
+        Desc.Usage = EResourceUsage::Default;
+        Desc.MipLevels = 1;
+        Desc.SampleCount = 1;
+        Desc.DebugName = "RayTraceColor";
+        // The previous frame's blit may not have been replayed yet.
+        RHICommandList* CmdList = App.GetContext();
+        CmdList->DeferredRelease(App.RayTraceColorSRV);
+        CmdList->DeferredRelease(App.RayTraceColor);
+        App.RayTraceColor = Device->CreateTexture(Desc, Pixels.data());
+        if (App.RayTraceColor)
+            App.RayTraceColorSRV = Device->CreateTextureView(App.RayTraceColor.get(), EDescriptorHeapType::CBV_SRV_UAV);
     }
 
-    if (m_RayTraceBlitPSO && m_RayTraceColorSRV)
+    if (App.RayTraceBlitPSO && App.RayTraceColorSRV)
     {
-        ctx->SetPipelineState(m_RayTraceBlitPSO.get());
-        ctx->SetVertexShader(m_RayTraceBlitVS.get());
-        ctx->SetPixelShader(m_RayTraceBlitPS.get());
-        ctx->SetInputLayout(nullptr);
-        ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
-        ctx->SetShaderResourceView(0, m_RayTraceColorSRV.get());
-        ctx->SetSampler(0, m_PostProcessSampler.get());
-        ctx->Draw(3, 0);
-        ctx->SetShaderResourceView(0, nullptr);
+        Ctx->SetPipelineState(App.RayTraceBlitPSO.get());
+        Ctx->SetVertexShader(App.RayTraceBlitVS.get());
+        Ctx->SetPixelShader(App.RayTraceBlitPS.get());
+        Ctx->SetInputLayout(nullptr);
+        Ctx->SetPrimitiveTopology(EPrimitiveTopology::TriangleList);
+        Ctx->SetShaderResourceView(0, App.RayTraceColorSRV.get());
+        Ctx->SetSampler(0, App.PostProcessSampler.get());
+        Ctx->Draw(3, 0);
+        Ctx->SetShaderResourceView(0, nullptr);
     }
 
-    ctx->SetRenderTargets(&sceneRTV, 1, GetDSV());
-    ClearDepthStencilValue depthClear = { 1.0f, 0 };
-    ctx->ClearDepthStencilView(GetDSV(), depthClear, 0x01);
-    ctx->SetConstantBuffer(0, m_ViewUB.get());
-    ctx->SetCullMode(ECullMode::Back);
-    ctx->SetInputLayout(m_InputLayout.get());
-    DrawGizmo(ctx);
-    ctx->ClearCullModeOverride();
+    Ctx->SetRenderTargets(&SceneRTV, 1, App.GetDSV());
+    ClearDepthStencilValue DepthClear = { 1.0f, 0 };
+    Ctx->ClearDepthStencilView(App.GetDSV(), DepthClear, 0x01);
+    Ctx->SetConstantBuffer(0, View.ViewUniformBufferRef.GetReference());
+    Ctx->SetCullMode(ECullMode::Back);
+    Ctx->SetInputLayout(App.InputLayout.get());
+    App.DrawGizmo(Ctx);
+    Ctx->ClearCullModeOverride();
 
-    m_PassTimer.End();
-    ctx->EndEvent();
+    App.PassTimer.End();
+    Ctx->EndEvent();
 }

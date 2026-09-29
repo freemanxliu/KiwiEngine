@@ -115,15 +115,10 @@ Mat4 ComputeLightViewProjForCascade(
 
 void KiwiEngineApp::InitShadowResources(RHIDevice* device)
 {
-    BufferDesc cbDesc;
-    cbDesc.SizeInBytes = sizeof(ShadowUniformBuffer);
-    cbDesc.BindFlags = BUFFER_USAGE_CONSTANT;
-    cbDesc.Usage = EResourceUsage::Dynamic;
-    cbDesc.DebugName = "ShadowCB";
-    m_ShadowCB = device->CreateBuffer(cbDesc);
+    ShadowCB = TUniformBufferRef<ShadowUniformBuffer>::CreateEmptyUniformBufferImmediate(device, EUniformBufferUsage::SingleFrame, "ShadowCB");
 
     // DX11 comparison sampler (DX12 uses static sampler s2 in root signature, returns nullptr)
-    m_ShadowSampler = device->CreateComparisonSampler();
+    ShadowSampler = device->CreateComparisonSampler();
 
     // Resized in UpdateShadowData to match the shadow-casting light's settings
     CreateShadowMaps(device, 2048, 4);
@@ -133,8 +128,8 @@ bool KiwiEngineApp::CreateShadowPipelines(RHIDevice* device, const std::string& 
 {
     ReleaseShadowShaders();
 
-    m_ShadowPassVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
-    if (!m_ShadowPassVS)
+    ShadowPassVS = device->CompileShader(EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0");
+    if (!ShadowPassVS)
         return false;
 
     // Depth-only, no color output
@@ -145,34 +140,34 @@ bool KiwiEngineApp::CreateShadowPipelines(RHIDevice* device, const std::string& 
     shadowPSODesc.DepthEnabled = true;
     shadowPSODesc.DepthWrite = true;
     shadowPSODesc.RasterizerState = RasterizerStateDesc(ERasterizerFillMode::Solid, ECullMode::Back, 100.0f, 1.5f);
-    shadowPSODesc.VertexShader = m_ShadowPassVS.get();
-    shadowPSODesc.VertexDeclaration = m_InputLayout.get();
+    shadowPSODesc.VertexShader = ShadowPassVS.get();
+    shadowPSODesc.VertexDeclaration = InputLayout.get();
     std::unique_ptr<RHIShader> shadowPS;
     if (device->GetApiType() == RHI_API_TYPE::METAL)
     {
         shadowPS = device->CompileShader(EShaderType::Pixel, src.c_str(), "PSMain", "ps_5_0");
         shadowPSODesc.PixelShader = shadowPS.get();
     }
-    m_ShadowPassPSO = device->CreateGraphicsPipelineState(shadowPSODesc);
+    ShadowPassPSO = device->CreateGraphicsPipelineState(shadowPSODesc);
 
     ShaderMacro instMacro = { "USE_GPU_SCENE_INSTANCING", "1" };
-    m_ShadowPassVS_Instanced = device->CompileShader(
+    ShadowPassVS_Instanced = device->CompileShader(
         EShaderType::Vertex, src.c_str(), "VSMain", "vs_5_0", &instMacro, 1);
-    if (m_ShadowPassVS_Instanced)
+    if (ShadowPassVS_Instanced)
     {
         GraphicsPipelineStateInitializer shadowInstanced = shadowPSODesc;
-        shadowInstanced.VertexShader = m_ShadowPassVS_Instanced.get();
-        m_ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
+        shadowInstanced.VertexShader = ShadowPassVS_Instanced.get();
+        ShadowPassPSO_Instanced = device->CreateGraphicsPipelineState(shadowInstanced);
     }
 
-    return m_ShadowPassPSO != nullptr;
+    return ShadowPassPSO != nullptr;
 }
 
 void KiwiEngineApp::CreateShadowMaps(RHIDevice* device, uint32_t cascadeSize, int numCascades)
 {
     ReleaseShadowMaps();
 
-    m_ShadowCascadeSize = cascadeSize;
+    ShadowCascadeSize = cascadeSize;
     uint32_t atlasSize = cascadeSize * 2; // 2x2 atlas layout
 
     TextureDesc desc;
@@ -185,15 +180,15 @@ void KiwiEngineApp::CreateShadowMaps(RHIDevice* device, uint32_t cascadeSize, in
     desc.SampleCount = 1;
     desc.DebugName = "ShadowAtlas_CSM";
 
-    m_ShadowAtlasRT = device->CreateTexture(desc);
+    ShadowAtlasRT = device->CreateTexture(desc);
 
     // DSV view: D32_FLOAT format (covers entire atlas)
-    m_ShadowAtlasDSV = device->CreateTextureView(
-        m_ShadowAtlasRT.get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
+    ShadowAtlasDSV = device->CreateTextureView(
+        ShadowAtlasRT.get(), EDescriptorHeapType::DSV, EFormat::D32_FLOAT);
 
     // SRV view: R32_FLOAT format
-    m_ShadowAtlasSRV = device->CreateTextureView(
-        m_ShadowAtlasRT.get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
+    ShadowAtlasSRV = device->CreateTextureView(
+        ShadowAtlasRT.get(), EDescriptorHeapType::CBV_SRV_UAV, EFormat::R32_FLOAT);
 
     std::cout << "[Kiwi] Shadow atlas created: " << numCascades << " cascades @ "
               << cascadeSize << "x" << cascadeSize << " (atlas " << atlasSize << "x" << atlasSize << ")" << std::endl;
@@ -201,77 +196,63 @@ void KiwiEngineApp::CreateShadowMaps(RHIDevice* device, uint32_t cascadeSize, in
 
 void KiwiEngineApp::ReleaseShadowMaps()
 {
-    m_ShadowAtlasSRV.reset();
-    m_ShadowAtlasDSV.reset();
-    m_ShadowAtlasRT.reset();
+    ShadowAtlasSRV.reset();
+    ShadowAtlasDSV.reset();
+    ShadowAtlasRT.reset();
 }
 
 void KiwiEngineApp::ReleaseShadowShaders()
 {
-    m_ShadowPassVS.reset();
-    m_ShadowPassPSO.reset();
-    m_ShadowPassVS_Instanced.reset();
-    m_ShadowPassPSO_Instanced.reset();
+    ShadowPassVS.reset();
+    ShadowPassPSO.reset();
+    ShadowPassVS_Instanced.reset();
+    ShadowPassPSO_Instanced.reset();
 }
 
 void KiwiEngineApp::ReleaseShadowResources()
 {
     ReleaseShadowMaps();
     ReleaseShadowShaders();
-    m_ShadowCB.reset();
-    m_ShadowSampler.reset();
+    ShadowCB.SafeRelease();
+    ShadowSampler.reset();
 }
 
 void KiwiEngineApp::UpdateShadowData()
 {
-    memset(&m_ShadowUBData, 0, sizeof(m_ShadowUBData));
+    memset(&ShadowUBData, 0, sizeof(ShadowUBData));
 
-    // Find the first shadow-casting directional light
-    DirectionalLightComponent* shadowLight = nullptr;
-    for (auto& obj : m_Scene.GetObjects())
-    {
-        auto* light = obj->GetComponent<LightComponent>();
-        if (light && light->Enabled && light->AffectWorld &&
-            light->GetLightType() == ELightType::Directional)
-        {
-            auto* dirLight = dynamic_cast<DirectionalLightComponent*>(light);
-            if (dirLight && dirLight->CastShadow)
-            {
-                shadowLight = dirLight;
-                break;
-            }
-        }
-    }
+    const DirectionalShadowSettings* shadowLight = RenderScene.GetShadowCastingLight();
 
     if (!shadowLight)
     {
-        m_ShadowUBData.NumCascades = 0;
+        ShadowUBData.NumCascades = 0;
         return;
     }
 
     int numCascades = std::min(shadowLight->NumCascades, MAX_SHADOW_CASCADES);
-    m_ShadowUBData.NumCascades = numCascades;
-    m_ShadowUBData.ShadowBias = shadowLight->ShadowBias;
-    m_ShadowUBData.NormalBias = shadowLight->NormalBias;
-    m_ShadowUBData.ShadowStrength = shadowLight->ShadowStrength;
-    m_ShadowUBData.ShadowMapSize = (float)(m_ShadowCascadeSize * 2); // Atlas total size
+    ShadowUBData.NumCascades = numCascades;
+    ShadowUBData.ShadowBias = shadowLight->ShadowBias;
+    ShadowUBData.NormalBias = shadowLight->NormalBias;
+    ShadowUBData.ShadowStrength = shadowLight->ShadowStrength;
+    ShadowUBData.ShadowMapSize = (float)(ShadowCascadeSize * 2); // Atlas total size
 
     // Recreate shadow maps if resolution changed
     auto device = GetDevice();
-    if (m_ShadowCascadeSize != (uint32_t)shadowLight->ShadowMapResolution ||
-        !m_ShadowAtlasRT)
+    if (ShadowCascadeSize != (uint32_t)shadowLight->ShadowMapResolution ||
+        !ShadowAtlasRT)
     {
+        // Submitted frames may still sample the old atlas. Nothing recorded this frame uses it yet.
+        GetRenderingThread().WaitForRHIThread();
         CreateShadowMaps(device, (uint32_t)shadowLight->ShadowMapResolution, numCascades);
     }
 
     // Get camera parameters for frustum calculation
-    auto* cam = m_Scene.GetActiveCamera();
-    if (!cam) return;
+    if (!RenderParams.bHasCamera) return;
 
-    float fovY = DegToRad(cam->FieldOfView);
-    float aspect = (float)GetWindow()->GetWidth() / (float)GetWindow()->GetHeight();
-    float nearZ = cam->NearPlane;
-    float farZ = cam->FarPlane;
+    float fovY = DegToRad(RenderParams.FieldOfView);
+    float aspect = (float)RenderParams.ViewWidth / (float)std::max(RenderParams.ViewHeight, 1u);
+    float nearZ = RenderParams.NearPlane;
+    float farZ = RenderParams.FarPlane;
 
     // Calculate cascade splits
     float splits[MAX_SHADOW_CASCADES];
@@ -280,24 +261,24 @@ void KiwiEngineApp::UpdateShadowData()
 
     for (int i = 0; i < numCascades; i++)
     {
-        m_ShadowUBData.CascadeSplits[i] = splits[i];
+        ShadowUBData.CascadeSplits[i] = splits[i];
     }
 
     // Compute light VP matrices for each cascade
-    Vec3 lightDir = shadowLight->GetForward(); // Direction the light shines toward
+    Vec3 lightDir = shadowLight->Direction; // Direction the light shines toward
 
     float cascadeNear = nearZ;
     for (int i = 0; i < numCascades; i++)
     {
         float cascadeFar = splits[i];
 
-        m_LightViewProjMatrices[i] = ComputeLightViewProjForCascade(
-            lightDir, m_ViewMatrix, m_ProjectionMatrix,
+        LightViewProjMatrices[i] = ComputeLightViewProjForCascade(
+            lightDir, RenderParams.ViewMatrix, RenderParams.ProjectionMatrix,
             cascadeNear, cascadeFar, nearZ, farZ, fovY, aspect,
-            &m_LightViewMatrices[i], &m_LightProjMatrices[i]);
+            &LightViewMatrices[i], &LightProjMatrices[i]);
 
-        memcpy(m_ShadowUBData.LightViewProj[i],
-            m_LightViewProjMatrices[i].m, sizeof(float) * 16);
+        memcpy(ShadowUBData.LightViewProj[i],
+            LightViewProjMatrices[i].m, sizeof(float) * 16);
 
         cascadeNear = cascadeFar;
     }
@@ -305,11 +286,5 @@ void KiwiEngineApp::UpdateShadowData()
 
 void KiwiEngineApp::UploadShadowUB()
 {
-    if (!m_ShadowCB) return;
-    void* mapped = m_ShadowCB->Map();
-    if (mapped)
-    {
-        memcpy(mapped, &m_ShadowUBData, sizeof(m_ShadowUBData));
-        m_ShadowCB->Unmap();
-    }
+    ShadowCB.UpdateUniformBufferImmediate(ShadowUBData);
 }

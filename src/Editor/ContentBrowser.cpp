@@ -50,13 +50,13 @@ const char* GetContentTypeName(const std::string& ext)
 
 void KiwiEngineApp::DrawContentBrowser()
 {
-    if (!m_ShowContentBrowser) return;
+    if (!ShowContentBrowser) return;
 
     namespace fs = std::filesystem;
 
     ImGui::SetNextWindowSize(ImVec2(720, 450), ImGuiCond_FirstUseEver);
 
-    if (!ImGui::Begin("Content Browser", &m_ShowContentBrowser))
+    if (!ImGui::Begin("Content Browser", &ShowContentBrowser))
     {
         ImGui::End();
         return;
@@ -71,18 +71,18 @@ void KiwiEngineApp::DrawContentBrowser()
     };
 
     ContentFolder folders[] = {
-        { "Scenes",             "[S] ",  m_ScenesDir },
-        { "Shaders",            "[SH] ", m_ShaderDir },
-        { "GLShaders",          "[GL] ", m_GLShaderDir },
-        { "PostProcessShaders", "[PP] ", m_PostProcessShaderDir },
-        { "Textures",           "[TX] ", m_TexturesDir },
-        { "Materials",          "[MT] ", m_MaterialsDir },
+        { "Scenes",             "[S] ",  ScenesDir },
+        { "Shaders",            "[SH] ", ShaderDir },
+        { "GLShaders",          "[GL] ", GLShaderDir },
+        { "PostProcessShaders", "[PP] ", PostProcessShaderDir },
+        { "Textures",           "[TX] ", TexturesDir },
+        { "Materials",          "[MT] ", MaterialsDir },
     };
     int folderCount = sizeof(folders) / sizeof(folders[0]);
 
     // If no folder selected, default to first
-    if (m_ContentBrowserSelectedDir.empty())
-        m_ContentBrowserSelectedDir = folders[0].Path;
+    if (ContentBrowserSelectedDir.empty())
+        ContentBrowserSelectedDir = folders[0].Path;
 
     // ---- Left panel: folder tree ----
     ImGui::BeginChild("CB_FolderTree", ImVec2(180, 0), true);
@@ -95,11 +95,11 @@ void KiwiEngineApp::DrawContentBrowser()
         auto& f = folders[i];
         if (f.Path.empty()) continue;
 
-        bool selected = (m_ContentBrowserSelectedDir == f.Path);
+        bool selected = (ContentBrowserSelectedDir == f.Path);
         std::string label = std::string(f.Icon) + f.Name;
         if (ImGui::Selectable(label.c_str(), selected))
         {
-            m_ContentBrowserSelectedDir = f.Path;
+            ContentBrowserSelectedDir = f.Path;
         }
     }
 
@@ -114,7 +114,7 @@ void KiwiEngineApp::DrawContentBrowser()
     std::string currentFolderName = "Content";
     for (int i = 0; i < folderCount; i++)
     {
-        if (folders[i].Path == m_ContentBrowserSelectedDir)
+        if (folders[i].Path == ContentBrowserSelectedDir)
         {
             currentFolderName = folders[i].Name;
             break;
@@ -127,12 +127,12 @@ void KiwiEngineApp::DrawContentBrowser()
     ImGui::Separator();
 
     // Small path display
-    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "%s", m_ContentBrowserSelectedDir.c_str());
+    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "%s", ContentBrowserSelectedDir.c_str());
     ImGui::Separator();
 
     // Enumerate files
     std::error_code ec;
-    if (fs::exists(m_ContentBrowserSelectedDir, ec) && fs::is_directory(m_ContentBrowserSelectedDir, ec))
+    if (fs::exists(ContentBrowserSelectedDir, ec) && fs::is_directory(ContentBrowserSelectedDir, ec))
     {
         // Collect files first for sorting
         struct FileEntry
@@ -144,7 +144,7 @@ void KiwiEngineApp::DrawContentBrowser()
         };
         std::vector<FileEntry> files;
 
-        for (const auto& entry : fs::directory_iterator(m_ContentBrowserSelectedDir, ec))
+        for (const auto& entry : fs::directory_iterator(ContentBrowserSelectedDir, ec))
         {
             if (!entry.is_regular_file()) continue;
             std::string name = entry.path().filename().string();
@@ -257,7 +257,7 @@ void KiwiEngineApp::DrawContentBrowser()
     }
     else
     {
-        ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Folder not found: %s", m_ContentBrowserSelectedDir.c_str());
+        ImGui::TextColored(ImVec4(0.8f, 0.4f, 0.4f, 1.0f), "Folder not found: %s", ContentBrowserSelectedDir.c_str());
     }
 
     ImGui::EndChild();
@@ -269,16 +269,15 @@ void KiwiEngineApp::OnContentDoubleClick(const std::string& fullPath, const std:
     if (ext == ".json")
     {
         // Load scene
-        if (m_Scene.LoadFromFile(fullPath))
+        if (Scene.LoadFromFile(fullPath))
         {
-            RebuildAllGPUBuffers();
             std::cout << "[Kiwi] Content Browser: Loaded scene: " << fullPath << std::endl;
         }
     }
     else if (IsTextureExtension(ext))
     {
         // Pre-load texture into TextureManager
-        GPUTexture* tex = m_TextureManager.LoadTexture(fullPath);
+        GPUTexture* tex = TextureManager.LoadTexture(fullPath);
         if (tex)
         {
             std::cout << "[Kiwi] Content Browser: Loaded texture: " << fullPath
@@ -291,17 +290,18 @@ void KiwiEngineApp::OnContentDoubleClick(const std::string& fullPath, const std:
         namespace fs = std::filesystem;
         std::string matName = fs::path(fullPath).stem().string();
         // Ensure it's loaded in MaterialLibrary
-        Material* mat = m_MaterialLibrary.GetMaterial(matName);
+        Material* mat = MaterialLibrary.GetMaterial(matName);
         if (!mat)
         {
             auto newMat = std::make_unique<Material>();
             if (newMat->LoadFromFile(fullPath))
             {
                 matName = newMat->Name.empty() ? matName : newMat->Name;
-                m_MaterialLibrary.AddMaterial(std::move(newMat));
+                MaterialLibrary.AddMaterial(std::move(newMat));
+                RenderScene.UpdatePrimitivesUsingMaterial(matName);
             }
         }
-        m_MaterialEditorTarget = matName;
-        m_ShowMaterialEditor = true;
+        MaterialEditorTarget = matName;
+        ShowMaterialEditor = true;
     }
 }

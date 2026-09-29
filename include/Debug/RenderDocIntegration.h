@@ -22,7 +22,7 @@ namespace Kiwi
         void Shutdown();
 
         // Check if RenderDoc is available and loaded
-        bool IsAvailable() const { return m_RenderDocAPI != nullptr; }
+        bool IsAvailable() const { return RenderDocAPI != nullptr; }
 
         // Capture the next frame
         // Call this before the frame starts rendering
@@ -53,8 +53,8 @@ namespace Kiwi
         RenderDocIntegration(const RenderDocIntegration&) = delete;
         RenderDocIntegration& operator=(const RenderDocIntegration&) = delete;
 
-        void* m_RenderDocModule = nullptr;  // HMODULE
-        void* m_RenderDocAPI = nullptr;     // RENDERDOC_API_1_6_0*
+        void* RenderDocModule = nullptr;  // HMODULE
+        void* RenderDocAPI = nullptr;     // RENDERDOC_API_1_6_0*
     };
 
 } // namespace Kiwi

@@ -30,11 +30,11 @@ namespace Kiwi
     class KeyState
     {
     public:
-        void SetKeyDown(uint8_t vk) { m_Keys[vk] = true; }
-        void SetKeyUp(uint8_t vk)   { m_Keys[vk] = false; }
-        bool IsKeyDown(uint8_t vk) const { return m_Keys[vk]; }
+        void SetKeyDown(uint8_t vk) { Keys[vk] = true; }
+        void SetKeyUp(uint8_t vk)   { Keys[vk] = false; }
+        bool IsKeyDown(uint8_t vk) const { return Keys[vk]; }
     private:
-        std::array<bool, 256> m_Keys = {};
+        std::array<bool, 256> Keys = {};
     };
 
     class Window
@@ -52,45 +52,45 @@ namespace Kiwi
         void PumpMessages();
         void SetTitle(const std::string& title);
 
-        bool ShouldClose() const { return m_ShouldClose; }
-        void SetShouldClose(bool close) { m_ShouldClose = close; }
+        bool ShouldClose() const { return bShouldClose; }
+        void SetShouldClose(bool close) { bShouldClose = close; }
 
 #if defined(_WIN32)
-        HWND GetHWND() const { return m_Hwnd; }
-        void* GetNativeHandle() const { return m_Hwnd; }
+        HWND GetHWND() const { return Hwnd; }
+        void* GetNativeHandle() const { return Hwnd; }
 #else
-        void* GetHWND() const { return m_View; }
-        void* GetNativeHandle() const { return m_View; }
+        void* GetHWND() const { return View; }
+        void* GetNativeHandle() const { return View; }
 #endif
-        uint32_t GetWidth() const { return m_Width; }
-        uint32_t GetHeight() const { return m_Height; }
+        uint32_t GetWidth() const { return Width; }
+        uint32_t GetHeight() const { return Height; }
 
-        void NotifyClose() { m_ShouldClose = true; }
+        void NotifyClose() { bShouldClose = true; }
         void NotifyResize(uint32_t width, uint32_t height)
         {
             if (width == 0 || height == 0)
                 return;
-            m_Width = width;
-            m_Height = height;
-            if (m_OnResize)
-                m_OnResize(width, height);
+            Width = width;
+            Height = height;
+            if (OnResize)
+                OnResize(width, height);
         }
         void NotifyMouseMove(int32_t x, int32_t y)
         {
-            m_Mouse.X = x;
-            m_Mouse.Y = y;
+            Mouse.X = x;
+            Mouse.Y = y;
         }
         void NotifyMouseButton(int button, bool down)
         {
             if (button == 0)
             {
-                if (down && !m_Mouse.LeftDown)
-                    m_Mouse.LeftClicked = true;
-                m_Mouse.LeftDown = down;
+                if (down && !Mouse.LeftDown)
+                    Mouse.LeftClicked = true;
+                Mouse.LeftDown = down;
             }
             else if (button == 1)
             {
-                m_Mouse.RightDown = down;
+                Mouse.RightDown = down;
             }
         }
         void NotifyKey(uint8_t key, bool down)
@@ -98,40 +98,40 @@ namespace Kiwi
             if (key == 0)
                 return;
             if (down)
-                m_Keys.SetKeyDown(key);
+                Keys.SetKeyDown(key);
             else
-                m_Keys.SetKeyUp(key);
+                Keys.SetKeyUp(key);
         }
 
         // Mouse
-        const MouseState& GetMouseState() const { return m_Mouse; }
-        void ResetFrameState() { m_Mouse.LeftClicked = false; }
+        const MouseState& GetMouseState() const { return Mouse; }
+        void ResetFrameState() { Mouse.LeftClicked = false; }
 
         // Keyboard
-        const KeyState& GetKeyState() const { return m_Keys; }
-        bool IsKeyDown(uint8_t vk) const { return m_Keys.IsKeyDown(vk); }
+        const KeyState& GetKeyState() const { return Keys; }
+        bool IsKeyDown(uint8_t vk) const { return Keys.IsKeyDown(vk); }
 
         // Resize callback
         using ResizeCallback = std::function<void(uint32_t, uint32_t)>;
-        void SetResizeCallback(ResizeCallback callback) { m_OnResize = callback; }
+        void SetResizeCallback(ResizeCallback callback) { OnResize = callback; }
 
     private:
 #if defined(_WIN32)
         static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-        HWND         m_Hwnd = nullptr;
-        WNDCLASSW    m_WndClass = {};
+        HWND         Hwnd = nullptr;
+        WNDCLASSW    WndClass = {};
 #else
-        void* m_Window = nullptr;
-        void* m_View = nullptr;
-        void* m_Delegate = nullptr;
+        void* NativeWindow = nullptr;
+        void* View = nullptr;
+        void* Delegate = nullptr;
 #endif
-        uint32_t     m_Width;
-        uint32_t     m_Height;
-        bool         m_ShouldClose = false;
-        ResizeCallback m_OnResize;
-        MouseState   m_Mouse;
-        KeyState     m_Keys;
+        uint32_t     Width;
+        uint32_t     Height;
+        bool         bShouldClose = false;
+        ResizeCallback OnResize;
+        MouseState   Mouse;
+        KeyState     Keys;
     };
 
 } // namespace Kiwi

@@ -32,16 +32,23 @@ namespace Kiwi
         // Primitive type used to generate this mesh (for serialization)
         EPrimitiveType PrimitiveType = EPrimitiveType::Cube;
 
-        static constexpr uint32_t kInvalidGPUSceneId = 0xffffffffu;
-
         // Instance of a material asset. Parent is the .mat in the library.
         MaterialInstance Material;
 
-        // Stable GPU Scene slots. Assigned when the mesh enters the scene.
-        uint32_t PrimitiveId = kInvalidGPUSceneId;
-        uint32_t InstanceId = kInvalidGPUSceneId;
         int32_t     SortOrder  = 0;                             // Render sort priority (higher = rendered first)
         ECullMode   CullMode   = ECullMode::Back;
+
+        void MarkRenderTransformDirty() override
+        {
+            if (RegisteredScene)
+                RegisteredScene->UpdatePrimitiveTransform(this);
+        }
+
+        void MarkRenderStateDirty() override
+        {
+            if (RegisteredScene)
+                RegisteredScene->UpdatePrimitiveMaterial(this);
+        }
     };
 
 } // namespace Kiwi

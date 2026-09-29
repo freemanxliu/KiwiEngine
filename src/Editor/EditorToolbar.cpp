@@ -130,8 +130,8 @@ void KiwiEngineApp::DrawRenderDocOverlay()
         if (ToolbarButton(capturing ? "..." : "RD", colors) && !capturing)
         {
             rdoc.TriggerCapture();
-            m_CaptureTriggered = true;
-            m_AutoOpenRenderDoc = true;
+            CaptureTriggered = true;
+            AutoOpenRenderDoc = true;
         }
 
         uint32_t numCaptures = rdoc.GetNumCaptures();
@@ -146,14 +146,14 @@ void KiwiEngineApp::DrawRenderDocOverlay()
         }
 
         // Auto-open RenderDoc after capture completes
-        if (m_CaptureTriggered && numCaptures > m_LastCaptureCount)
+        if (CaptureTriggered && numCaptures > LastCaptureCount)
         {
-            m_LastCaptureCount = numCaptures;
-            m_CaptureTriggered = false;
+            LastCaptureCount = numCaptures;
+            CaptureTriggered = false;
 
-            if (m_AutoOpenRenderDoc)
+            if (AutoOpenRenderDoc)
             {
-                m_AutoOpenRenderDoc = false;
+                AutoOpenRenderDoc = false;
                 rdoc.LaunchReplayUI();
             }
         }
@@ -173,13 +173,13 @@ void KiwiEngineApp::DrawStatsOverlay()
     if (BeginToolbarWindow("##StatsBtn", ToolbarSlotX(OverlayWidth(), ToolbarSlot_Stats)))
     {
         // Teal while the stats panel is open
-        ButtonColors colors = m_ShowStats
+        ButtonColors colors = ShowStats
             ? ButtonColors{ ImVec4(0.15f, 0.50f, 0.45f, 0.95f), ImVec4(0.20f, 0.60f, 0.55f, 1.0f), ImVec4(0.10f, 0.40f, 0.35f, 1.0f) }
             : ButtonColors{ ImVec4(0.25f, 0.32f, 0.38f, 0.95f), ImVec4(0.32f, 0.42f, 0.50f, 1.0f), ImVec4(0.18f, 0.25f, 0.30f, 1.0f) };
 
         if (ToolbarButton("##StatsIcon", colors))
-            m_ShowStats = !m_ShowStats;
-        ToolbarTooltip("Render Stats", m_ShowStats ? "Click to hide stats" : "Click to show stats");
+            ShowStats = !ShowStats;
+        ToolbarTooltip("Render Stats", ShowStats ? "Click to hide stats" : "Click to show stats");
 
         // Bar chart icon: three bars of different heights
         ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -198,7 +198,7 @@ void KiwiEngineApp::DrawStatsOverlay()
     }
     EndToolbarWindow();
 
-    if (m_ShowStats)
+    if (ShowStats)
         DrawStatsPanel();
 }
 
@@ -255,8 +255,10 @@ void KiwiEngineApp::DrawStatsPanel()
         // Pass timings
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Pass Timings (CPU)");
 
-        const auto& entries = m_PassTimer.GetEntries();
-        double totalMs = m_PassTimer.GetFrameTotalMs();
+        // Published by the render thread at the end of the frame it last finished.
+        const RenderStats stats = GetRenderStats();
+        const auto& entries = stats.PassTimings;
+        double totalMs = stats.FrameTotalMs;
 
         // Bar width for visual proportions
         float maxBarWidth = panelWidth - 100.0f;
@@ -311,8 +313,9 @@ void KiwiEngineApp::DrawStatsPanel()
         // Render list info
         ImGui::Separator();
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Scene");
-        ImGui::Text("Objects: %d", (int)m_Scene.GetObjects().size());
-        ImGui::Text("Visible: %d", (int)m_RenderList.size());
+        ImGui::Text("Objects: %d", (int)Scene.GetObjects().size());
+        ImGui::Text("Visible: %u", stats.VisibleItems);
+        ImGui::Text("Threading: %s", GetThreadingModeName(GetRenderingThread().GetMode()));
     }
     ImGui::End();
     ImGui::PopStyleColor(1);
@@ -325,7 +328,7 @@ void KiwiEngineApp::DrawViewModeButton()
     {
         bool canDeferred = IsDeferredRHI(GetCurrentRHIType());
         ERenderPath defaultPath = canDeferred ? ERenderPath::Deferred : ERenderPath::Forward;
-        bool isLit = (m_ViewMode == EViewMode::Lit && m_RenderPath == defaultPath);
+        bool isLit = (ViewMode == EViewMode::Lit && RenderPath == defaultPath);
 
         // Non-Lit modes get a yellow/orange tint to indicate active override
         ButtonColors colors = isLit
@@ -338,8 +341,8 @@ void KiwiEngineApp::DrawViewModeButton()
         if (ImGui::IsItemHovered())
         {
             ImGui::BeginTooltip();
-            ImGui::Text("Pipeline: %s", GetRenderPathName(m_RenderPath));
-            ImGui::Text("View Mode: %s", GetViewModeName(m_ViewMode));
+            ImGui::Text("Pipeline: %s", GetRenderPathName(RenderPath));
+            ImGui::Text("View Mode: %s", GetViewModeName(ViewMode));
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Click to change view mode");
             ImGui::EndTooltip();
         }
@@ -357,44 +360,44 @@ void KiwiEngineApp::DrawViewModeButton()
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Pipeline");
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Deferred", nullptr, m_RenderPath == ERenderPath::Deferred, canDeferred))
-                m_RenderPath = ERenderPath::Deferred;
-            if (ImGui::MenuItem("Forward", nullptr, m_RenderPath == ERenderPath::Forward))
+            if (ImGui::MenuItem("Deferred", nullptr, RenderPath == ERenderPath::Deferred, canDeferred))
+                RenderPath = ERenderPath::Deferred;
+            if (ImGui::MenuItem("Forward", nullptr, RenderPath == ERenderPath::Forward))
             {
-                m_RenderPath = ERenderPath::Forward;
-                if (IsBufferVisualization(m_ViewMode))
-                    m_ViewMode = EViewMode::Lit;
+                RenderPath = ERenderPath::Forward;
+                if (IsBufferVisualization(ViewMode))
+                    ViewMode = EViewMode::Lit;
             }
-            if (ImGui::MenuItem("Ray Tracing", nullptr, m_RenderPath == ERenderPath::RayTracing))
+            if (ImGui::MenuItem("Ray Tracing", nullptr, RenderPath == ERenderPath::RayTracing))
             {
-                m_RenderPath = ERenderPath::RayTracing;
-                if (IsBufferVisualization(m_ViewMode))
-                    m_ViewMode = EViewMode::Lit;
+                RenderPath = ERenderPath::RayTracing;
+                if (IsBufferVisualization(ViewMode))
+                    ViewMode = EViewMode::Lit;
             }
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "View Mode");
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Lit", nullptr, m_ViewMode == EViewMode::Lit))
-                m_ViewMode = EViewMode::Lit;
+            if (ImGui::MenuItem("Lit", nullptr, ViewMode == EViewMode::Lit))
+                ViewMode = EViewMode::Lit;
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Buffer Visualization");
 
-            bool bufferVis = canDeferred && m_RenderPath == ERenderPath::Deferred;
-            if (ImGui::MenuItem("BaseColor", nullptr, m_ViewMode == EViewMode::BaseColor, bufferVis))
-                m_ViewMode = EViewMode::BaseColor;
-            if (ImGui::MenuItem("Roughness", nullptr, m_ViewMode == EViewMode::Roughness, bufferVis))
-                m_ViewMode = EViewMode::Roughness;
-            if (ImGui::MenuItem("Metallic", nullptr, m_ViewMode == EViewMode::Metallic, bufferVis))
-                m_ViewMode = EViewMode::Metallic;
+            bool bufferVis = canDeferred && RenderPath == ERenderPath::Deferred;
+            if (ImGui::MenuItem("BaseColor", nullptr, ViewMode == EViewMode::BaseColor, bufferVis))
+                ViewMode = EViewMode::BaseColor;
+            if (ImGui::MenuItem("Roughness", nullptr, ViewMode == EViewMode::Roughness, bufferVis))
+                ViewMode = EViewMode::Roughness;
+            if (ImGui::MenuItem("Metallic", nullptr, ViewMode == EViewMode::Metallic, bufferVis))
+                ViewMode = EViewMode::Metallic;
 
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Debug");
 
-            if (ImGui::MenuItem("Unlit", nullptr, m_ViewMode == EViewMode::Unlit))
-                m_ViewMode = EViewMode::Unlit;
+            if (ImGui::MenuItem("Unlit", nullptr, ViewMode == EViewMode::Unlit))
+                ViewMode = EViewMode::Unlit;
 
             ImGui::EndPopup();
         }
@@ -407,7 +410,7 @@ void KiwiEngineApp::DrawShaderReloadButton()
     if (BeginToolbarWindow("##ShaderReloadBtn", ToolbarSlotX(OverlayWidth(), ToolbarSlot_ShaderReload)))
     {
         if (ToolbarButton("##ShaderReloadIcon", kNeutralButton))
-            m_PendingShaderReload = true;
+            PendingShaderReload = true;
         ToolbarTooltip("Hot-Reload Shaders", "Recompile modified shaders (F5)");
 
         // Circular arrow: 3/4 arc with an arrowhead, gap at the top-right
@@ -477,15 +480,15 @@ void KiwiEngineApp::DrawCameraButton()
             ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Camera Settings");
             ImGui::Separator();
 
-            float moveSpeed = m_EditorInput.GetCameraMoveSpeed();
+            float moveSpeed = EditorInput.GetCameraMoveSpeed();
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderFloat("Move Speed", &moveSpeed, 0.5f, 50.0f, "%.1f"))
-                m_EditorInput.SetCameraMoveSpeed(moveSpeed);
+                EditorInput.SetCameraMoveSpeed(moveSpeed);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Camera movement speed when holding Right Mouse + WASD");
 
             // FOV slider (only for perspective cameras)
-            auto* cam = m_Scene.GetActiveCamera();
+            auto* cam = Scene.GetActiveCamera();
             if (cam && cam->Projection == ECameraProjection::Perspective)
             {
                 ImGui::SetNextItemWidth(180.0f);
@@ -510,12 +513,12 @@ void KiwiEngineApp::DrawGizmoModeBar()
     ImGuiIO& io = ImGui::GetIO();
     if (!io.WantCaptureKeyboard)
     {
-        if (ImGui::IsKeyPressed(ImGuiKey_W, false) && !m_Gizmo.IsDragging())
-            m_Gizmo.SetMode(EGizmoMode::Translate);
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false) && !m_Gizmo.IsDragging())
-            m_Gizmo.SetMode(EGizmoMode::Rotate);
-        if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !m_Gizmo.IsDragging())
-            m_Gizmo.SetMode(EGizmoMode::Scale);
+        if (ImGui::IsKeyPressed(ImGuiKey_W, false) && !Gizmo.IsDragging())
+            Gizmo.SetMode(EGizmoMode::Translate);
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false) && !Gizmo.IsDragging())
+            Gizmo.SetMode(EGizmoMode::Rotate);
+        if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !Gizmo.IsDragging())
+            Gizmo.SetMode(EGizmoMode::Scale);
     }
 
     // ---- Left toolbar (W/E/R text buttons) ----
@@ -549,7 +552,7 @@ void KiwiEngineApp::DrawGizmoModeBar()
 
             for (int i = 0; i < 3; i++)
             {
-                bool active = (m_Gizmo.GetMode() == btns[i].mode);
+                bool active = (Gizmo.GetMode() == btns[i].mode);
                 if (active)
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.55f, 0.85f, 1.0f));
                 else
@@ -558,7 +561,7 @@ void KiwiEngineApp::DrawGizmoModeBar()
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.15f, 0.45f, 0.75f, 1.0f));
 
                 if (ImGui::Button(btns[i].label, ImVec2(btnW, btnH)))
-                    m_Gizmo.SetMode(btns[i].mode);
+                    Gizmo.SetMode(btns[i].mode);
 
                 ImGui::PopStyleColor(3);
 
@@ -611,7 +614,7 @@ void KiwiEngineApp::DrawGizmoModeBar()
 
             for (int i = 0; i < 3; i++)
             {
-                bool active = (m_Gizmo.GetMode() == btns[i].mode);
+                bool active = (Gizmo.GetMode() == btns[i].mode);
 
                 ImVec4 btnCol    = active
                     ? ImVec4(0.18f, 0.50f, 0.82f, 1.0f)
@@ -625,7 +628,7 @@ void KiwiEngineApp::DrawGizmoModeBar()
 
                 if (ImGui::Button(("##gtr" + std::to_string(i)).c_str(),
                                   ImVec2(gizmoBtnSize, gizmoBtnSize)))
-                    m_Gizmo.SetMode(btns[i].mode);
+                    Gizmo.SetMode(btns[i].mode);
 
                 ImGui::PopStyleColor(3);
 

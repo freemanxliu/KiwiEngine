@@ -39,9 +39,7 @@ namespace Kiwi
             mesh->Position.y = -0.5f;
         }
 
-        SceneObject* ptr = obj.get();
-        m_Objects.push_back(std::move(obj));
-        return ptr;
+        return AddObject(std::move(obj));
     }
 
     SceneObject* Scene::AddCameraObject(const std::string& name)
@@ -61,7 +59,7 @@ namespace Kiwi
         if (!GetActiveCamera() || !GetActiveCamera()->IsMainCamera)
         {
             // Clear any existing flags and set this one
-            for (auto& existing : m_Objects)
+            for (auto& existing : Objects)
             {
                 auto* existingCam = existing->GetComponent<CameraComponent>();
                 if (existingCam) existingCam->IsMainCamera = false;
@@ -69,9 +67,7 @@ namespace Kiwi
             cam->IsMainCamera = true;
         }
 
-        SceneObject* ptr = obj.get();
-        m_Objects.push_back(std::move(obj));
-        return ptr;
+        return AddObject(std::move(obj));
     }
 
     SceneObject* Scene::AddDirectionalLightObject(const std::string& name)
@@ -86,9 +82,7 @@ namespace Kiwi
         light->LightColor = { 1.0f, 1.0f, 0.9f }; // Warm white
         light->Intensity = 1.0f;
 
-        SceneObject* ptr = obj.get();
-        m_Objects.push_back(std::move(obj));
-        return ptr;
+        return AddObject(std::move(obj));
     }
 
     SceneObject* Scene::AddPointLightObject(const std::string& name)
@@ -103,9 +97,7 @@ namespace Kiwi
         light->Intensity = 1.0f;
         light->Radius = 10.0f;
 
-        SceneObject* ptr = obj.get();
-        m_Objects.push_back(std::move(obj));
-        return ptr;
+        return AddObject(std::move(obj));
     }
 
     SceneObject* Scene::AddEmptyObject(const std::string& name)
@@ -114,9 +106,7 @@ namespace Kiwi
         obj->ID = GenerateID();
         obj->Name = name.empty() ? ("Empty_" + std::to_string(obj->ID)) : name;
 
-        SceneObject* ptr = obj.get();
-        m_Objects.push_back(std::move(obj));
-        return ptr;
+        return AddObject(std::move(obj));
     }
 
     SceneObject* Scene::AddPostProcessObject(const std::string& name)
@@ -128,24 +118,87 @@ namespace Kiwi
         // Add PostProcessComponent with empty material list
         obj->AddComponent<PostProcessComponent>();
 
-        SceneObject* ptr = obj.get();
-        m_Objects.push_back(std::move(obj));
-        return ptr;
+        return AddObject(std::move(obj));
     }
 
     void Scene::RemoveObject(uint32_t id)
     {
-        auto it = std::remove_if(m_Objects.begin(), m_Objects.end(),
+        for (auto& obj : Objects)
+        {
+            if (obj->ID == id)
+                UnregisterObject(*obj);
+        }
+        auto it = std::remove_if(Objects.begin(), Objects.end(),
             [id](const std::unique_ptr<SceneObject>& obj) { return obj->ID == id; });
-        m_Objects.erase(it, m_Objects.end());
+        Objects.erase(it, Objects.end());
 
-        if (m_SelectedID == (int32_t)id)
-            m_SelectedID = -1;
+        if (SelectedID == (int32_t)id)
+            SelectedID = -1;
+    }
+
+    SceneObject* Scene::AddObject(std::unique_ptr<SceneObject> Object)
+    {
+        SceneObject* Ptr = Object.get();
+        Objects.push_back(std::move(Object));
+        RegisterObject(*Ptr);
+        return Ptr;
+    }
+
+    void Scene::RegisterObject(SceneObject& Object)
+    {
+        if (!RenderSceneInterface)
+            return;
+        for (MeshComponent* Mesh : Object.GetComponents<MeshComponent>())
+        {
+            Mesh->RegisteredScene = RenderSceneInterface;
+            RenderSceneInterface->AddPrimitive(Mesh);
+        }
+        for (LightComponent* Light : Object.GetComponents<LightComponent>())
+        {
+            Light->RegisteredScene = RenderSceneInterface;
+            RenderSceneInterface->AddLight(Light);
+        }
+    }
+
+    void Scene::UnregisterObject(SceneObject& Object)
+    {
+        for (MeshComponent* Mesh : Object.GetComponents<MeshComponent>())
+        {
+            if (Mesh->RegisteredScene)
+                Mesh->RegisteredScene->RemovePrimitive(Mesh);
+            Mesh->RegisteredScene = nullptr;
+        }
+        for (LightComponent* Light : Object.GetComponents<LightComponent>())
+        {
+            if (Light->RegisteredScene)
+                Light->RegisteredScene->RemoveLight(Light);
+            Light->RegisteredScene = nullptr;
+        }
+    }
+
+    void Scene::UpdateSelectedState(SceneObject& Object)
+    {
+        for (MeshComponent* Mesh : Object.GetComponents<MeshComponent>())
+        {
+            if (Mesh->RegisteredScene)
+                Mesh->RegisteredScene->UpdatePrimitiveSelectedState(Mesh);
+        }
+    }
+
+    void Scene::SetSceneInterface(SceneInterface* InSceneInterface)
+    {
+        if (RenderSceneInterface == InSceneInterface)
+            return;
+        for (auto& Object : Objects)
+            UnregisterObject(*Object);
+        RenderSceneInterface = InSceneInterface;
+        for (auto& Object : Objects)
+            RegisterObject(*Object);
     }
 
     SceneObject* Scene::GetObject(uint32_t id)
     {
-        for (auto& obj : m_Objects)
+        for (auto& obj : Objects)
         {
             if (obj->ID == id) return obj.get();
         }
@@ -155,12 +208,13 @@ namespace Kiwi
     void Scene::SelectObject(uint32_t id)
     {
         DeselectAll();
-        for (auto& obj : m_Objects)
+        for (auto& obj : Objects)
         {
             if (obj->ID == id)
             {
                 obj->Selected = true;
-                m_SelectedID = (int32_t)id;
+                SelectedID = (int32_t)id;
+                UpdateSelectedState(*obj);
                 return;
             }
         }
@@ -168,22 +222,29 @@ namespace Kiwi
 
     void Scene::DeselectAll()
     {
-        for (auto& obj : m_Objects)
+        for (auto& obj : Objects)
+        {
+            if (!obj->Selected)
+                continue;
             obj->Selected = false;
-        m_SelectedID = -1;
+            UpdateSelectedState(*obj);
+        }
+        SelectedID = -1;
     }
 
     SceneObject* Scene::GetSelectedObject()
     {
-        if (m_SelectedID < 0) return nullptr;
-        return GetObject((uint32_t)m_SelectedID);
+        if (SelectedID < 0) return nullptr;
+        return GetObject((uint32_t)SelectedID);
     }
 
     void Scene::Clear()
     {
-        m_Objects.clear();
-        m_SelectedID = -1;
-        m_NextID = 1;
+        for (auto& obj : Objects)
+            UnregisterObject(*obj);
+        Objects.clear();
+        SelectedID = -1;
+        NextID = 1;
     }
 
     Mesh Scene::CreateMeshForType(EPrimitiveType type)
@@ -202,7 +263,7 @@ namespace Kiwi
     {
         // Priority 1: Find the camera marked as Main Camera
         CameraComponent* firstEnabled = nullptr;
-        for (auto& obj : m_Objects)
+        for (auto& obj : Objects)
         {
             auto* cam = obj->GetComponent<CameraComponent>();
             if (cam && cam->Enabled)
@@ -220,7 +281,7 @@ namespace Kiwi
     void Scene::SetMainCamera(CameraComponent* targetCam)
     {
         // Clear IsMainCamera on all cameras, then set the target
-        for (auto& obj : m_Objects)
+        for (auto& obj : Objects)
         {
             auto* cam = obj->GetComponent<CameraComponent>();
             if (cam)
@@ -232,7 +293,7 @@ namespace Kiwi
 
     uint32_t Scene::GenerateID()
     {
-        return m_NextID++;
+        return NextID++;
     }
 
     // ============================================================
@@ -261,12 +322,12 @@ namespace Kiwi
         }
 
         file << "{\n";
-        file << "  \"name\": \"" << EscapeString(m_Name) << "\",\n";
+        file << "  \"name\": \"" << EscapeString(Name) << "\",\n";
         file << "  \"objects\": [\n";
 
-        for (size_t i = 0; i < m_Objects.size(); i++)
+        for (size_t i = 0; i < Objects.size(); i++)
         {
-            const auto& obj = *m_Objects[i];
+            const auto& obj = *Objects[i];
             file << "    {\n";
             file << "      \"name\": \"" << EscapeString(obj.Name) << "\",\n";
 
@@ -370,7 +431,7 @@ namespace Kiwi
 
             file << "      ]\n";
             file << "    }";
-            if (i + 1 < m_Objects.size()) file << ",";
+            if (i + 1 < Objects.size()) file << ",";
             file << "\n";
         }
 
@@ -529,7 +590,7 @@ namespace Kiwi
         // Read scene name
         {
             std::string name = ReadQuotedString(content, "name");
-            if (!name.empty()) m_Name = name;
+            if (!name.empty()) Name = name;
         }
 
         // Check if this is the new component-based format or legacy format
@@ -742,7 +803,7 @@ namespace Kiwi
                     }
                 }
 
-                m_Objects.push_back(std::move(sceneObj));
+                AddObject(std::move(sceneObj));
             }
         }
         else
@@ -787,7 +848,7 @@ namespace Kiwi
         }
 
         std::cout << "[Kiwi] Scene loaded from: " << filepath
-                  << " (" << m_Objects.size() << " objects)" << std::endl;
+                  << " (" << Objects.size() << " objects)" << std::endl;
         return true;
     }
 

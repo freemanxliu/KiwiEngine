@@ -75,14 +75,14 @@ namespace Kiwi
             }
         }
 
-        m_Loaded = true;
-        std::cout << "[Config] Loaded " << m_Sections.size() << " section(s) from " << filePath << std::endl;
+        Loaded = true;
+        std::cout << "[Config] Loaded " << Sections.size() << " section(s) from " << filePath << std::endl;
         return true;
     }
 
     bool EngineConfig::LoadDefaultConfig()
     {
-        if (m_Loaded)
+        if (Loaded)
             return true;
 
         std::string exeDir = GetExecutableDirectory();
@@ -243,7 +243,7 @@ namespace Kiwi
     std::vector<std::string> EngineConfig::GetSections() const
     {
         std::vector<std::string> result;
-        for (const auto& sec : m_Sections)
+        for (const auto& sec : Sections)
             result.push_back(sec.Name);
         return result;
     }
@@ -259,9 +259,9 @@ namespace Kiwi
             return false;
         }
 
-        for (size_t i = 0; i < m_Sections.size(); i++)
+        for (size_t i = 0; i < Sections.size(); i++)
         {
-            const auto& sec = m_Sections[i];
+            const auto& sec = Sections[i];
             if (i > 0) file << "\n";
             file << "[" << sec.Name << "]\n";
             for (const auto& kv : sec.KeyValues)
@@ -279,7 +279,7 @@ namespace Kiwi
     void EngineConfig::DumpToConsole() const
     {
         std::cout << "[Config] === Configuration Dump ===" << std::endl;
-        for (const auto& sec : m_Sections)
+        for (const auto& sec : Sections)
         {
             std::cout << "[" << sec.Name << "]" << std::endl;
             for (const auto& kv : sec.KeyValues)
@@ -307,21 +307,21 @@ namespace Kiwi
 
     EngineConfig::Section& EngineConfig::FindOrCreateSection(const std::string& name)
     {
-        auto it = m_SectionIndex.find(name);
-        if (it != m_SectionIndex.end())
-            return m_Sections[it->second];
+        auto it = SectionIndex.find(name);
+        if (it != SectionIndex.end())
+            return Sections[it->second];
 
         // Create new section
-        m_SectionIndex[name] = m_Sections.size();
-        m_Sections.push_back({ name, {}, {} });
-        return m_Sections.back();
+        SectionIndex[name] = Sections.size();
+        Sections.push_back({ name, {}, {} });
+        return Sections.back();
     }
 
     const EngineConfig::Section* EngineConfig::FindSection(const std::string& name) const
     {
-        auto it = m_SectionIndex.find(name);
-        if (it == m_SectionIndex.end()) return nullptr;
-        return &m_Sections[it->second];
+        auto it = SectionIndex.find(name);
+        if (it == SectionIndex.end()) return nullptr;
+        return &Sections[it->second];
     }
 
 } // namespace Kiwi

@@ -41,12 +41,9 @@
     CGFloat scale = window.backingScaleFactor > 0 ? window.backingScaleFactor : 1.0;
     auto width = (uint32_t)std::llround(view.bounds.size.width * scale);
     auto height = (uint32_t)std::llround(view.bounds.size.height * scale);
+    // drawableSize is applied by the swap chain's ResizeBuffers after the render/RHI threads are flushed; setting it here would race with in-flight frames.
     if ([view.layer isKindOfClass:[CAMetalLayer class]])
-    {
-        CAMetalLayer* layer = (CAMetalLayer*)view.layer;
-        layer.contentsScale = scale;
-        layer.drawableSize = CGSizeMake(width, height);
-    }
+        ((CAMetalLayer*)view.layer).contentsScale = scale;
     _owner->NotifyResize(width, height);
 }
 @end
@@ -86,8 +83,8 @@ namespace Kiwi
     }
 
     Window::Window(const WindowDesc& desc)
-        : m_Width(desc.Width)
-        , m_Height(desc.Height)
+        : Width(desc.Width)
+        , Height(desc.Height)
     {
         @autoreleasepool
         {
@@ -116,18 +113,18 @@ namespace Kiwi
                 scale = NSScreen.mainScreen.backingScaleFactor;
             if (scale <= 0)
                 scale = 1.0;
-            m_Width = (uint32_t)std::llround(desc.Width * scale);
-            m_Height = (uint32_t)std::llround(desc.Height * scale);
+            Width = (uint32_t)std::llround(desc.Width * scale);
+            Height = (uint32_t)std::llround(desc.Height * scale);
             layer.contentsScale = scale;
-            layer.drawableSize = CGSizeMake(m_Width, m_Height);
+            layer.drawableSize = CGSizeMake(Width, Height);
 
             auto* delegate = [KiwiWindowDelegate new];
             delegate.owner = this;
             window.delegate = delegate;
 
-            m_Window = (__bridge_retained void*)window;
-            m_View = (__bridge void*)view;
-            m_Delegate = (__bridge_retained void*)delegate;
+            NativeWindow = (__bridge_retained void*)window;
+            View = (__bridge void*)view;
+            Delegate = (__bridge_retained void*)delegate;
         }
     }
 
@@ -135,16 +132,16 @@ namespace Kiwi
     {
         @autoreleasepool
         {
-            NSWindow* window = (__bridge_transfer NSWindow*)m_Window;
+            NSWindow* window = (__bridge_transfer NSWindow*)NativeWindow;
             window.delegate = nil;
             [window orderOut:nil];
             window = nil;
-            m_Window = nullptr;
-            m_View = nullptr;
+            NativeWindow = nullptr;
+            View = nullptr;
 
-            KiwiWindowDelegate* delegate = (__bridge_transfer KiwiWindowDelegate*)m_Delegate;
+            KiwiWindowDelegate* delegate = (__bridge_transfer KiwiWindowDelegate*)Delegate;
             delegate = nil;
-            m_Delegate = nullptr;
+            Delegate = nullptr;
         }
     }
 
@@ -152,7 +149,7 @@ namespace Kiwi
     {
         @autoreleasepool
         {
-            NSWindow* window = (__bridge NSWindow*)m_Window;
+            NSWindow* window = (__bridge NSWindow*)NativeWindow;
             [window makeKeyAndOrderFront:nil];
             [window makeFirstResponder:window.contentView];
             [NSApp activate];
@@ -161,13 +158,13 @@ namespace Kiwi
 
     void Window::Hide()
     {
-        NSWindow* window = (__bridge NSWindow*)m_Window;
+        NSWindow* window = (__bridge NSWindow*)NativeWindow;
         [window orderOut:nil];
     }
 
     void Window::SetTitle(const std::string& title)
     {
-        NSWindow* window = (__bridge NSWindow*)m_Window;
+        NSWindow* window = (__bridge NSWindow*)NativeWindow;
         window.title = [NSString stringWithUTF8String:title.c_str()];
     }
 
@@ -176,8 +173,8 @@ namespace Kiwi
         @autoreleasepool
         {
             ResetFrameState();
-            NSWindow* window = (__bridge NSWindow*)m_Window;
-            NSView* view = (__bridge NSView*)m_View;
+            NSWindow* window = (__bridge NSWindow*)NativeWindow;
+            NSView* view = (__bridge NSView*)View;
 
             while (NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
                 untilDate:[NSDate distantPast]

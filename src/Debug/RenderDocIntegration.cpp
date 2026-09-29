@@ -21,7 +21,7 @@ namespace Kiwi
 
     bool RenderDocIntegration::Initialize()
     {
-        if (m_RenderDocAPI)
+        if (RenderDocAPI)
         {
             std::cout << "[RenderDoc] Already initialized." << std::endl;
             return true;
@@ -67,7 +67,7 @@ namespace Kiwi
             }
         }
 
-        m_RenderDocModule = rdocModule;
+        RenderDocModule = rdocModule;
 
         // Get the API entry point
         pRENDERDOC_GetAPI RENDERDOC_GetAPI =
@@ -88,7 +88,7 @@ namespace Kiwi
             return false;
         }
 
-        m_RenderDocAPI = rdocAPI;
+        RenderDocAPI = rdocAPI;
 
         // Configure RenderDoc options
         rdocAPI->SetCaptureOptionU32(eRENDERDOC_Option_AllowVSync, 1);
@@ -116,58 +116,58 @@ namespace Kiwi
 
     void RenderDocIntegration::Shutdown()
     {
-        m_RenderDocAPI = nullptr;
+        RenderDocAPI = nullptr;
         // Don't FreeLibrary - RenderDoc manages its own lifecycle
-        m_RenderDocModule = nullptr;
+        RenderDocModule = nullptr;
         std::cout << "[RenderDoc] Shutdown." << std::endl;
     }
 
     void RenderDocIntegration::TriggerCapture()
     {
-        if (!m_RenderDocAPI) return;
+        if (!RenderDocAPI) return;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
         api->TriggerCapture();
         std::cout << "[RenderDoc] Frame capture triggered! (will capture next frame)" << std::endl;
     }
 
     void RenderDocIntegration::StartFrameCapture(void* device, void* window)
     {
-        if (!m_RenderDocAPI) return;
+        if (!RenderDocAPI) return;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
         api->StartFrameCapture(device, window);
     }
 
     void RenderDocIntegration::EndFrameCapture(void* device, void* window)
     {
-        if (!m_RenderDocAPI) return;
+        if (!RenderDocAPI) return;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
         api->EndFrameCapture(device, window);
     }
 
     bool RenderDocIntegration::IsFrameCapturing() const
     {
-        if (!m_RenderDocAPI) return false;
+        if (!RenderDocAPI) return false;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
         return api->IsFrameCapturing() != 0;
     }
 
     uint32_t RenderDocIntegration::GetNumCaptures() const
     {
-        if (!m_RenderDocAPI) return 0;
+        if (!RenderDocAPI) return 0;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
         return api->GetNumCaptures();
     }
 
     void RenderDocIntegration::LaunchReplayUI()
     {
-        if (!m_RenderDocAPI) return;
+        if (!RenderDocAPI) return;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
 
         uint32_t numCaptures = api->GetNumCaptures();
         if (numCaptures == 0)
@@ -194,17 +194,17 @@ namespace Kiwi
 
     void RenderDocIntegration::SetCaptureFilePathTemplate(const char* pathTemplate)
     {
-        if (!m_RenderDocAPI) return;
+        if (!RenderDocAPI) return;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
         api->SetCaptureFilePathTemplate(pathTemplate);
     }
 
     bool RenderDocIntegration::GetCapturePath(uint32_t index, char* pathBuffer, uint32_t pathBufferSize) const
     {
-        if (!m_RenderDocAPI) return false;
+        if (!RenderDocAPI) return false;
 
-        auto api = static_cast<RENDERDOC_API_1_6_0*>(m_RenderDocAPI);
+        auto api = static_cast<RENDERDOC_API_1_6_0*>(RenderDocAPI);
         uint64_t timestamp = 0;
         uint32_t ret = api->GetCapture(index, pathBuffer, &pathBufferSize, &timestamp);
         return ret == 1;

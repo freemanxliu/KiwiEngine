@@ -44,6 +44,18 @@ namespace Kiwi
 
         // Whether this light affects the world (when false, light is ignored during rendering)
         bool AffectWorld = true;
+
+        void MarkRenderTransformDirty() override
+        {
+            if (RegisteredScene)
+                RegisteredScene->UpdateLightTransform(this);
+        }
+
+        void MarkRenderStateDirty() override
+        {
+            if (RegisteredScene)
+                RegisteredScene->UpdateLightColorAndBrightness(this);
+        }
     };
 
     // ============================================================

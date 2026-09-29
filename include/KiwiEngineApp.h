@@ -2,13 +2,16 @@
 
 #include "Core/Application.h"
 #include "Core/EditorInput.h"
+#include "Core/FrameRenderParams.h"
 #include "Core/PassTimer.h"
 #include "Core/RendererUtils.h"
+#include "Core/SceneRendering.h"
 #include "Editor/TransformGizmo.h"
 #include "Math/Math.h"
 #include "RHI/RHI.h"
+#include "RHI/UniformBuffer.h"
+#include "Renderer/RenderScene.h"
 #include "Scene/CameraComponent.h"
-#include "Scene/GPUScene.h"
 #include "Scene/LightComponent.h"
 #include "Scene/Material.h"
 #include "Scene/MaterialShaderCache.h"
@@ -27,39 +30,27 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 using namespace Kiwi;
 
-// GPU Mesh Data — holds buffers for a single mesh
-struct GPUMeshData
-{
-    std::unique_ptr<RHIBuffer> VertexBuffer;
-    std::unique_ptr<RHIBuffer> IndexBuffer;
-    uint32_t VertexCount = 0;
-    uint32_t IndexCount = 0;
-};
-
-// Shared Mesh Pool — same EPrimitiveType shares one VB/IB pair
-struct SharedMeshEntry
-{
-    RHIBuffer* VertexBuffer = nullptr;   // Non-owning pointer into shared pool
-    RHIBuffer* IndexBuffer  = nullptr;
-    uint32_t   VertexCount  = 0;
-    uint32_t   IndexCount   = 0;
-    uint32_t   MeshID       = 0;        // Unique ID for sorting/batching
-};
-
 // Scene editor application. Method definitions are split by subsystem:
-//   Core/KiwiEngineApp.cpp   lifecycle, per-frame update, scene/camera/lights, picking, mesh buffers
-//   Core/Renderer.cpp        frame passes (shadow, G-Buffer, lighting, forward, gizmo)
-//   Core/RayTracing.cpp      CPU ray tracing path
+//   Core/KiwiEngineApp.cpp   lifecycle, game frame (input, editor UI, frame snapshot), render frame, picking
+//   Core/SceneRendering.cpp  scene renderer selection and view setup (SceneRenderer, ViewInfo)
+//   Renderer/DeferredShadingRenderer.cpp / ForwardShadingRenderer.cpp  per-path Render() of the scene renderers
+//   Core/Renderer.cpp        shared pass helpers (draw submission, shadow depth, gizmo)
+//   Core/RayTracing.cpp      CPU ray tracing path (DeferredShadingSceneRenderer::RenderRayTracing)
 //   Core/RenderResources.cpp RHI resources, deferred pipelines, shader hot reload
 //   Core/PostProcess.cpp     offscreen targets and post-process chain
 //   Core/Shadows.cpp         cascaded shadow map resources and cascade setup
 //   Editor/*.cpp             ImGui editor (menu, toolbar, panels, content browser, material editor)
+//
+// Threads: the game thread owns Scene, the editor and everything under "Scene and assets" / "Editor state".
+// The render thread owns RenderScene, the scene renderer and every GPU resource below "Shared render resources",
+// and only sees the game through proxies and the FrameRenderParams of the frame it is rendering.
 class KiwiEngineApp : public Application
 {
 public:
@@ -76,6 +67,11 @@ protected:
     void OnRHIReady() override;
 
 private:
+    // Scene renderers still call back into the pass functions and resources below.
+    friend class Kiwi::SceneRenderer;
+    friend class Kiwi::DeferredShadingSceneRenderer;
+    friend class Kiwi::ForwardShadingSceneRenderer;
+
     // ============================================================
     // Lifecycle, scene and picking (Core/KiwiEngineApp.cpp)
     // ============================================================
@@ -86,26 +82,32 @@ private:
     void UpdateWindowTitle();
     void UpdateCameraFromScene();
     void UpdateCameraProjection();
-    void CollectLightsFromScene();
-    void InitView();
     void PickObject(int mouseX, int mouseY);
-    void RebuildAllGPUBuffers();
-    SharedMeshEntry GetSharedMesh(size_t objectIndex) const;
+    void SanitizeRenderPath();
+    void BuildFrameRenderParams(FrameRenderParams& Out);
+    RenderStats GetRenderStats() const;
+
+    // Render thread: renders, presents and submits one frame described by Params.
+    void RenderFrame_RenderThread(FrameRenderParams& Params);
+    void PublishRenderStats();
+    RHITextureView* GetBackBufferRTV();
 
     // ============================================================
-    // Frame passes (Core/Renderer.cpp, Core/RayTracing.cpp)
+    // Scene renderer and its view (Core/SceneRendering.cpp)
     // ============================================================
-    void PrepareMeshBatches();
-    void SubmitMeshDrawCommands(RHICommandContext* ctx, const std::vector<MeshDrawCommand>& commands);
-    void RenderShadowPass(RHICommandContext* ctx, const std::vector<MeshDrawCommand>& commands);
-    void RenderDeferred(RHICommandContext* ctx, RHITextureView* sceneRTV, const Viewport& vp, const ScissorRect& sr);
-    void RenderForward(RHICommandContext* ctx, RHITextureView* sceneRTV, const Viewport& vp, const ScissorRect& sr);
-    void RenderRayTracing(RHICommandContext* ctx, RHITextureView* sceneRTV, const Viewport& vp, const ScissorRect& sr);
-    void UploadViewUB();
-    void BindMaterialTextures(RHICommandContext* ctx, MeshComponent* meshComp);
+    ERenderPath ResolveRenderPath() const;
+    void PrepareSceneRenderer(ERenderPath Path);
+    ViewInfo& GetViewInfo() { return SceneRenderer->GetView(); }
+
+    // ============================================================
+    // Pass helpers used by the scene renderers (Core/Renderer.cpp)
+    // ============================================================
+    void SubmitMeshDrawCommands(RHICommandContext* Ctx, const std::vector<MeshDrawCommand>& Commands, InstanceCullingContext& InstanceCulling);
+    void RenderShadowPass(RHICommandContext* Ctx, const std::vector<MeshDrawCommand>& Commands, InstanceCullingContext& InstanceCulling);
+    void BindMaterialTextures(RHICommandContext* Ctx, const PrimitiveSceneProxy& Proxy);
     void UpdateDeferredLightingCB();
     void UpdateBufferVisualizationCB();
-    void DrawGizmo(RHICommandContext* ctx);
+    void DrawGizmo(RHICommandContext* Ctx);
 
     // ============================================================
     // RHI resources, deferred pipelines, shader hot reload (Core/RenderResources.cpp)
@@ -113,6 +115,7 @@ private:
     void InitRHIResources();
     void ShutdownImGui();
     void InitMaterialShaders(RHIDevice* device);
+    void RegisterSharedMaterialShaders();
     void CreateGBufferResources(RHIDevice* device, uint32_t width, uint32_t height);
     void ReleaseGBufferResources();
     void ReleaseDeferredShaders();
@@ -136,10 +139,8 @@ private:
     void InitPostProcessResources(RHIDevice* device);
     void CreateOffscreenRenderTargets(RHIDevice* device, uint32_t width, uint32_t height);
     void ReleasePostProcessResources();
-    void CollectActivePostProcessEffects(std::vector<PostProcessMaterial*>& outEffects);
-    void ExecutePostProcessPasses(RHICommandContext* ctx, RHIDevice* device,
-                                  const std::vector<PostProcessMaterial*>& effects,
-                                  RHISwapChain* swapChain);
+    void CollectActivePostProcessEffects(std::vector<PostProcessMaterial>& outEffects);
+    void ExecutePostProcessPasses(RHICommandContext* ctx, const std::vector<PostProcessMaterial>& effects);
 
     // ============================================================
     // Cascaded shadow maps (Core/Shadows.cpp)
@@ -187,187 +188,183 @@ private:
     // ============================================================
     // Scene and assets
     // ============================================================
-    Scene m_Scene;
-    EditorInput m_EditorInput;
-    std::vector<GPUMeshData> m_GPUMeshes;
-    std::vector<SharedMeshEntry> m_SharedMeshPool;  // Shared VB/IB per primitive type
-    std::vector<RenderItem> m_RenderList; // Sorted visible objects from InitView()
+    Scene Scene;
+    EditorInput EditorInput;
+    std::unique_ptr<SceneRenderer> SceneRenderer; // Render thread. Rebuilt when the render path or RHI changes
 
-    ShaderLibrary m_ShaderLibrary;
-    MaterialShaderCache m_MaterialShaders;
-    TextureManager m_TextureManager;
-    MaterialLibrary m_MaterialLibrary;
-    std::string m_ShaderDir; // Path to Shaders/ folder
-    std::string m_ScenesDir; // Path to Scenes/ folder
-    std::string m_TexturesDir; // Path to Textures/ folder
-    std::string m_MaterialsDir; // Path to Materials/ folder
-    std::string m_PostProcessShaderDir;
-    std::string m_GLShaderDir;
+    ShaderLibrary ShaderLibrary;
+    MaterialShaderCache MaterialShaders;
+    TextureManager TextureManager;
+    MaterialLibrary MaterialLibrary;
+    std::string ShaderDir; // Path to Shaders/ folder
+    std::string ScenesDir; // Path to Scenes/ folder
+    std::string TexturesDir; // Path to Textures/ folder
+    std::string MaterialsDir; // Path to Materials/ folder
+    std::string PostProcessShaderDir;
+    std::string GLShaderDir;
 
-    float m_TotalTime = 0.0f;
+    float TotalTime = 0.0f;
 
     // ============================================================
     // Editor state
     // ============================================================
-    TransformGizmo m_Gizmo;
-    PassTimer m_PassTimer;
-    bool m_ShowStats = false;
+    TransformGizmo Gizmo; // drag state is game thread; the GPU meshes are read by the render thread
+    bool ShowStats = false;
 
     // Content Browser state
-    bool m_ShowContentBrowser = false;
-    std::string m_ContentBrowserSelectedDir; // Currently selected folder in tree
+    bool ShowContentBrowser = false;
+    std::string ContentBrowserSelectedDir; // Currently selected folder in tree
 
     // Material Editor state
-    bool m_ShowMaterialEditor = false;
-    std::string m_MaterialEditorTarget;  // Name of material being edited
+    bool ShowMaterialEditor = false;
+    std::string MaterialEditorTarget;  // Name of material being edited
 
     // Texture picker popup state (used by material editor and inspector)
-    bool m_ShowTexturePicker = false;
-    std::string m_TexturePickerPropKey;   // Which material property to set (e.g. "_BaseColorTex")
-    std::string m_TexturePickerMatTarget; // Parent material asset, used by the material editor
-    MeshComponent* m_TexturePickerMesh = nullptr; // Primitive instance to write, when set
+    bool ShowTexturePicker = false;
+    std::string TexturePickerPropKey;   // Which material property to set (e.g. "_BaseColorTex")
+    std::string TexturePickerMatTarget; // Parent material asset, used by the material editor
+    MeshComponent* TexturePickerMesh = nullptr; // Primitive instance to write, when set
 
     // Save Scene dialog state
-    bool m_ShowSaveDialog = false;
-    char m_SaveSceneName[128] = {};
-    std::string m_LastWindowTitle; // Track to avoid redundant SetWindowText
+    bool ShowSaveDialog = false;
+    char SaveSceneName[128] = {};
+    std::string LastWindowTitle; // Track to avoid redundant SetWindowText
 
     // RenderDoc state
-    bool m_CaptureTriggered = false;
-    bool m_AutoOpenRenderDoc = false;
-    uint32_t m_LastCaptureCount = 0;
+    bool CaptureTriggered = false;
+    bool AutoOpenRenderDoc = false;
+    uint32_t LastCaptureCount = 0;
 
     // Shader reload state
-    bool m_PendingShaderReload = false;
-    bool m_FirstShaderLoad = true;  // First load does full recompile to record timestamps
-    std::unordered_map<std::string, std::filesystem::file_time_type> m_DeferredShaderTimestamps;
+    bool PendingShaderReload = false;
+    bool FirstShaderLoad = true;  // First load does full recompile to record timestamps
+    std::unordered_map<std::string, std::filesystem::file_time_type> DeferredShaderTimestamps;
 
     // ============================================================
     // Shared render resources
     // ============================================================
-    std::unique_ptr<RHIInputLayout>   m_InputLayout;
-    std::unique_ptr<RHIBuffer>        m_ViewUB;      // b0: camera ViewUniformBuffer, uploaded once per frame
-    std::unique_ptr<RHIBuffer>        m_ShadowViewUB; // b0 during the shadow pass only
-    GPUScene                          m_GPUScene;       // b1: GPU Scene Buffer (all primitives, per-frame upload)
-    std::unique_ptr<RHIBuffer>        m_ObjectUB;    // b1: PrimitiveUniformBuffer (aux: fullscreen/gizmo)
+    std::unique_ptr<RHIInputLayout>   InputLayout;
+    TUniformBufferRef<ViewUniformBuffer>      ShadowViewUB; // b0 during the shadow pass only
+    Kiwi::RenderScene                         RenderScene;  // Renderer-side scene: primitive records + GPUScene (t8/t9)
+    TUniformBufferRef<PrimitiveUniformBuffer> ObjectUB;     // b1: aux fullscreen/gizmo draws
     static constexpr uint32_t LIGHT_VOLUME_INDEX_COUNT = 60;
-    std::unique_ptr<RHIBuffer>        m_LightVolumeIB; // deferred light icosahedron + fullscreen triangle indices
-    std::unique_ptr<RHIPipelineState> m_PipelineState;  // DX11
+    std::unique_ptr<RHIBuffer>        LightVolumeIB; // deferred light icosahedron + fullscreen triangle indices
+    std::unique_ptr<RHIPipelineState> PipelineState;  // DX11
 
-    // Camera (cached from scene CameraComponent each frame)
-    Mat4 m_ViewMatrix;
-    Mat4 m_ProjectionMatrix;
-    Vec3 m_CameraPosition;
+    // Camera (cached from scene CameraComponent each frame). Game thread.
+    Mat4 ViewMatrix;
+    Mat4 ProjectionMatrix;
+    Vec3 CameraPosition;
 
-    // Lights (cached from scene LightComponents each frame)
-    GPULightData m_LightDataCache[MAX_LIGHTS] = {};
-    int m_NumActiveLights = 0;
-    int m_NumDirectionalLights = 0; // m_LightDataCache holds directional lights first
+    // ---- View Mode (game thread; the render thread reads RenderParams) ----
+    ERenderPath RenderPath = ERenderPath::Deferred;
+    EViewMode ViewMode = EViewMode::Lit;
 
-    // ---- View Mode ----
-    ERenderPath m_RenderPath = ERenderPath::Deferred;
-    EViewMode m_ViewMode = EViewMode::Lit;
-    std::vector<MeshBatch> m_VisibleMeshBatches;
+    // ---- Render thread frame state ----
+    FrameRenderParams RenderParams; // the frame being rendered
+    PassTimer PassTimer;
+    mutable std::mutex RenderStatsMutex;
+    RenderStats PublishedRenderStats; // written by the render thread, read by the editor
 
     // ============================================================
     // Post-process resources
     // ============================================================
-    PostProcessShaderLibrary m_PostProcessLibrary;
+    PostProcessShaderLibrary PostProcessLibrary;
 
     // Offscreen render targets (ping-pong buffers)
-    std::unique_ptr<RHITexture>     m_OffscreenRT[2];
-    std::unique_ptr<RHITextureView> m_OffscreenRTV[2];
-    std::unique_ptr<RHITextureView> m_OffscreenSRV[2];
-    uint32_t m_OffscreenWidth = 0;
-    uint32_t m_OffscreenHeight = 0;
+    std::unique_ptr<RHITexture>     OffscreenRT[2];
+    std::unique_ptr<RHITextureView> OffscreenRTV[2];
+    std::unique_ptr<RHITextureView> OffscreenSRV[2];
+    uint32_t OffscreenWidth = 0;
+    uint32_t OffscreenHeight = 0;
 
-    std::unique_ptr<RHIBuffer> m_PostProcessCB;
+    TUniformBufferRef<PostProcessCBData> PostProcessCB;
 
     // DX11 sampler for post-process (DX12 uses static sampler in root signature)
-    std::unique_ptr<RHISampler> m_PostProcessSampler;
+    std::unique_ptr<RHISampler> PostProcessSampler;
 
     // Passthrough shader (compiled from built-in code)
-    std::unique_ptr<RHIShader> m_PassthroughVS;
-    std::unique_ptr<RHIShader> m_PassthroughPS;
-    std::unique_ptr<RHIPipelineState> m_PassthroughPSO;
+    std::unique_ptr<RHIShader> PassthroughVS;
+    std::unique_ptr<RHIShader> PassthroughPS;
+    std::unique_ptr<RHIPipelineState> PassthroughPSO;
 
     // ============================================================
     // Deferred rendering resources
     // ============================================================
     static constexpr int GBUFFER_COUNT = 4; // A normal, B material, C base color, D emissive
-    std::unique_ptr<RHITexture>     m_GBufferRT[GBUFFER_COUNT];
-    std::unique_ptr<RHITextureView> m_GBufferRTV[GBUFFER_COUNT];
-    std::unique_ptr<RHITextureView> m_GBufferSRV[GBUFFER_COUNT];
-    uint32_t m_GBufferWidth = 0;
-    uint32_t m_GBufferHeight = 0;
+    std::unique_ptr<RHITexture>     GBufferRT[GBUFFER_COUNT];
+    std::unique_ptr<RHITextureView> GBufferRTV[GBUFFER_COUNT];
+    std::unique_ptr<RHITextureView> GBufferSRV[GBUFFER_COUNT];
+    uint32_t GBufferWidth = 0;
+    uint32_t GBufferHeight = 0;
 
     // G-Buffer shaders (compiled separately from ShaderLibrary)
-    std::unique_ptr<RHIShader> m_GBufferVS;
-    std::unique_ptr<RHIShader> m_GBufferPS;
-    std::unique_ptr<RHIPipelineState> m_GBufferPSO; // MRT PSO
+    std::unique_ptr<RHIShader> GBufferVS;
+    std::unique_ptr<RHIShader> GBufferPS;
+    std::unique_ptr<RHIPipelineState> GBufferPSO; // MRT PSO
 
     // G-Buffer instanced variants (USE_GPU_SCENE_INSTANCING)
-    std::unique_ptr<RHIShader> m_GBufferVS_Instanced;
-    std::unique_ptr<RHIPipelineState> m_GBufferPSO_Instanced;
+    std::unique_ptr<RHIShader> GBufferVS_Instanced;
+    std::unique_ptr<RHIPipelineState> GBufferPSO_Instanced;
 
     // Deferred Lighting shaders: fullscreen VS for directional lights, light volume VS for point lights
-    std::unique_ptr<RHIShader> m_DeferredLightingVS;
-    std::unique_ptr<RHIShader> m_DeferredPointLightVS;
-    std::unique_ptr<RHIShader> m_DeferredLightingPS;
+    std::unique_ptr<RHIShader> DeferredLightingVS;
+    std::unique_ptr<RHIShader> DeferredPointLightVS;
+    std::unique_ptr<RHIShader> DeferredLightingPS;
 
     // Deferred Ambient shader (opaque first-write pass)
-    std::unique_ptr<RHIShader> m_DeferredAmbientVS;
-    std::unique_ptr<RHIShader> m_DeferredAmbientPS;
-    std::unique_ptr<RHIPipelineState> m_DeferredAmbientPSO;
+    std::unique_ptr<RHIShader> DeferredAmbientVS;
+    std::unique_ptr<RHIShader> DeferredAmbientPS;
+    std::unique_ptr<RHIPipelineState> DeferredAmbientPSO;
 
     // Additive blend PSOs for the instanced light draws
-    std::unique_ptr<RHIPipelineState> m_DeferredLightingAdditivePSO;
-    std::unique_ptr<RHIPipelineState> m_DeferredPointLightPSO;
+    std::unique_ptr<RHIPipelineState> DeferredLightingAdditivePSO;
+    std::unique_ptr<RHIPipelineState> DeferredPointLightPSO;
 
     // Buffer Visualization shader (fullscreen pass for debug ViewModes)
-    std::unique_ptr<RHIShader> m_BufferVisVS;
-    std::unique_ptr<RHIShader> m_BufferVisPS;
-    std::unique_ptr<RHIPipelineState> m_BufferVisPSO;
+    std::unique_ptr<RHIShader> BufferVisVS;
+    std::unique_ptr<RHIShader> BufferVisPS;
+    std::unique_ptr<RHIPipelineState> BufferVisPSO;
 
     // ============================================================
     // Ray tracing resources
     // ============================================================
-    int m_RayTracingSamplesPerPixel = 1;
-    float m_RayTracingResolutionPercent = 50.0f;
-    uint32_t m_RayTraceWidth = 0;
-    uint32_t m_RayTraceHeight = 0;
-    std::unique_ptr<RHIShader> m_RayTraceBlitVS;
-    std::unique_ptr<RHIShader> m_RayTraceBlitPS;
-    std::unique_ptr<RHIPipelineState> m_RayTraceBlitPSO;
-    std::unique_ptr<RHITexture> m_RayTraceColor;
-    std::unique_ptr<RHITextureView> m_RayTraceColorSRV;
+    int RayTracingSamplesPerPixel = 1;        // game thread setting
+    float RayTracingResolutionPercent = 50.0f; // game thread setting
+    uint32_t RayTraceWidth = 0;
+    uint32_t RayTraceHeight = 0;
+    std::unique_ptr<RHIShader> RayTraceBlitVS;
+    std::unique_ptr<RHIShader> RayTraceBlitPS;
+    std::unique_ptr<RHIPipelineState> RayTraceBlitPSO;
+    std::unique_ptr<RHITexture> RayTraceColor;
+    std::unique_ptr<RHITextureView> RayTraceColorSRV;
 
     // ============================================================
     // Cascaded Shadow Map (CSM) resources — single atlas
     // ============================================================
     static constexpr int MAX_SHADOW_CASCADES = 4;
-    std::unique_ptr<RHITexture>     m_ShadowAtlasRT;       // Single atlas texture (2*size x 2*size)
-    std::unique_ptr<RHITextureView> m_ShadowAtlasDSV;      // DSV for the whole atlas
-    std::unique_ptr<RHITextureView> m_ShadowAtlasSRV;      // SRV for sampling in lighting pass
-    uint32_t m_ShadowCascadeSize = 0;                      // Per-cascade resolution (e.g. 2048)
+    std::unique_ptr<RHITexture>     ShadowAtlasRT;       // Single atlas texture (2*size x 2*size)
+    std::unique_ptr<RHITextureView> ShadowAtlasDSV;      // DSV for the whole atlas
+    std::unique_ptr<RHITextureView> ShadowAtlasSRV;      // SRV for sampling in lighting pass
+    uint32_t ShadowCascadeSize = 0;                      // Per-cascade resolution (e.g. 2048)
 
     // Shadow pass shader and PSO
-    std::unique_ptr<RHIShader> m_ShadowPassVS;
-    std::unique_ptr<RHIPipelineState> m_ShadowPassPSO;
+    std::unique_ptr<RHIShader> ShadowPassVS;
+    std::unique_ptr<RHIPipelineState> ShadowPassPSO;
 
     // Shadow pass instanced variants (USE_GPU_SCENE_INSTANCING)
-    std::unique_ptr<RHIShader> m_ShadowPassVS_Instanced;
-    std::unique_ptr<RHIPipelineState> m_ShadowPassPSO_Instanced;
+    std::unique_ptr<RHIShader> ShadowPassVS_Instanced;
+    std::unique_ptr<RHIPipelineState> ShadowPassPSO_Instanced;
 
     // Shadow uniform buffer (b2)
-    std::unique_ptr<RHIBuffer> m_ShadowCB;
+    TUniformBufferRef<ShadowUniformBuffer> ShadowCB;
 
     // Comparison sampler for DX11 shadow sampling
-    std::unique_ptr<RHISampler> m_ShadowSampler;
+    std::unique_ptr<RHISampler> ShadowSampler;
 
     // Cached CSM data (computed each frame)
-    ShadowUniformBuffer m_ShadowUBData = {};
-    Mat4 m_LightViewProjMatrices[MAX_SHADOW_CASCADES];
-    Mat4 m_LightViewMatrices[MAX_SHADOW_CASCADES];
-    Mat4 m_LightProjMatrices[MAX_SHADOW_CASCADES];
+    ShadowUniformBuffer ShadowUBData = {};
+    Mat4 LightViewProjMatrices[MAX_SHADOW_CASCADES];
+    Mat4 LightViewMatrices[MAX_SHADOW_CASCADES];
+    Mat4 LightProjMatrices[MAX_SHADOW_CASCADES];
 };

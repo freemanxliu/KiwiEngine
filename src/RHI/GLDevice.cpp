@@ -1,4 +1,5 @@
 #include "RHI/GL/GLDevice.h"
+#include "RHI/ImGuiRHI.h"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
 
@@ -106,9 +107,9 @@ namespace Kiwi
     // ============================================================
 
     GLSwapChain::GLSwapChain(HWND hwnd, HDC hdc, const SwapChainDesc& desc)
-        : m_HWND(hwnd), m_HDC(hdc), m_Desc(desc)
-        , m_BackBuffer(0, TextureDesc{desc.Width, desc.Height, 1, 1, desc.Format})
-        , m_BackBufferRTV(0, GLTextureView::Type::RTV, GL_RGBA8)
+        : Hwnd(hwnd), Hdc(hdc), Desc(desc)
+        , BackBuffer(0, TextureDesc{desc.Width, desc.Height, 1, 1, desc.Format})
+        , BackBufferRTV(0, GLTextureView::Type::RTV, GL_RGBA8)
     {
     }
 
@@ -116,13 +117,13 @@ namespace Kiwi
 
     void GLSwapChain::Present(uint32_t syncInterval)
     {
-        SwapBuffers(m_HDC);
+        SwapBuffers(Hdc);
     }
 
     void GLSwapChain::ResizeBuffers(uint32_t width, uint32_t height)
     {
-        m_Desc.Width = width;
-        m_Desc.Height = height;
+        Desc.Width = width;
+        Desc.Height = height;
         glViewport(0, 0, width, height);
     }
 
@@ -131,28 +132,28 @@ namespace Kiwi
     // ============================================================
 
     GLDevice::GLDevice(bool enableDebug)
-        : m_EnableDebug(enableDebug)
+        : EnableDebug(enableDebug)
     {
     }
 
     GLDevice::~GLDevice()
     {
-        if (m_HGLRC)
+        if (Hglrc)
         {
             wglMakeCurrent(nullptr, nullptr);
-            wglDeleteContext(m_HGLRC);
+            wglDeleteContext(Hglrc);
         }
-        if (m_HDC && m_HWND)
+        if (Hdc && Hwnd)
         {
-            ReleaseDC(m_HWND, m_HDC);
+            ReleaseDC(Hwnd, Hdc);
         }
     }
 
     void GLDevice::CreateWGLContext(HWND hwnd)
     {
-        m_HWND = hwnd;
-        m_HDC = GetDC(hwnd);
-        if (!m_HDC)
+        Hwnd = hwnd;
+        Hdc = GetDC(hwnd);
+        if (!Hdc)
             throw std::runtime_error("GLDevice: Failed to get DC");
 
         PIXELFORMATDESCRIPTOR pfd = {};
@@ -165,14 +166,14 @@ namespace Kiwi
         pfd.cStencilBits = 8;
         pfd.iLayerType = PFD_MAIN_PLANE;
 
-        int pixelFormat = ChoosePixelFormat(m_HDC, &pfd);
+        int pixelFormat = ChoosePixelFormat(Hdc, &pfd);
         if (!pixelFormat)
             throw std::runtime_error("GLDevice: ChoosePixelFormat failed");
-        SetPixelFormat(m_HDC, pixelFormat, &pfd);
+        SetPixelFormat(Hdc, pixelFormat, &pfd);
 
         // Create legacy context first to get wglCreateContextAttribsARB
-        HGLRC tempRC = wglCreateContext(m_HDC);
-        wglMakeCurrent(m_HDC, tempRC);
+        HGLRC tempRC = wglCreateContext(Hdc);
+        wglMakeCurrent(Hdc, tempRC);
 
         // Try to create a core profile context via WGL_ARB_create_context
         typedef HGLRC(WINAPI* PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC, HGLRC, const int*);
@@ -185,16 +186,16 @@ namespace Kiwi
                 0x2091, 4,  // WGL_CONTEXT_MAJOR_VERSION_ARB
                 0x2092, 5,  // WGL_CONTEXT_MINOR_VERSION_ARB
                 0x9126, 0x00000001,  // WGL_CONTEXT_PROFILE_MASK_ARB = CORE
-                0x2094, m_EnableDebug ? 0x00000001 : 0,  // WGL_CONTEXT_FLAGS_ARB = DEBUG
+                0x2094, EnableDebug ? 0x00000001 : 0,  // WGL_CONTEXT_FLAGS_ARB = DEBUG
                 0
             };
-            m_HGLRC = wglCreateContextAttribsARB(m_HDC, nullptr, attribs);
+            Hglrc = wglCreateContextAttribsARB(Hdc, nullptr, attribs);
         }
 
-        if (!m_HGLRC)
+        if (!Hglrc)
         {
             // Fallback: use the legacy context
-            m_HGLRC = tempRC;
+            Hglrc = tempRC;
             tempRC = nullptr;
         }
         else
@@ -203,7 +204,7 @@ namespace Kiwi
             wglDeleteContext(tempRC);
         }
 
-        wglMakeCurrent(m_HDC, m_HGLRC);
+        wglMakeCurrent(Hdc, Hglrc);
 
         // Load GL functions via glad
         // wglGetProcAddress only works for GL 1.2+ extensions;
@@ -238,7 +239,7 @@ namespace Kiwi
         glCullFace(GL_BACK);
         glFrontFace(GL_CW); // Match DX left-handed (CW front face)
 
-        if (m_EnableDebug && GLAD_GL_KHR_debug)
+        if (EnableDebug && GLAD_GL_KHR_debug)
         {
             glEnable(GL_DEBUG_OUTPUT);
             glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -252,10 +253,10 @@ namespace Kiwi
     std::unique_ptr<RHISwapChain> GLDevice::CreateSwapChain(const SwapChainDesc& desc)
     {
         HWND hwnd = (HWND)desc.WindowHandle;
-        if (!m_HGLRC)
+        if (!Hglrc)
             CreateWGLContext(hwnd);
 
-        return std::make_unique<GLSwapChain>(hwnd, m_HDC, desc);
+        return std::make_unique<GLSwapChain>(hwnd, Hdc, desc);
     }
 
     std::unique_ptr<RHIBuffer> GLDevice::CreateBuffer(const BufferDesc& desc, const void* initialData)
@@ -494,21 +495,21 @@ namespace Kiwi
 
     void GLDevice::InitImGui(void* windowHandle)
     {
-        if (!m_ImGuiInitialized)
+        if (!ImGuiInitialized)
         {
             ImGui_ImplWin32_Init((HWND)windowHandle);
         }
         ImGui_ImplOpenGL3_Init("#version 450");
-        m_ImGuiInitialized = true;
+        ImGuiInitialized = true;
     }
 
     void GLDevice::ShutdownImGui()
     {
-        if (m_ImGuiInitialized)
+        if (ImGuiInitialized)
         {
             ImGui_ImplOpenGL3_Shutdown();
             ImGui_ImplWin32_Shutdown();
-            m_ImGuiInitialized = false;
+            ImGuiInitialized = false;
         }
     }
 
@@ -518,9 +519,15 @@ namespace Kiwi
         ImGui_ImplOpenGL3_NewFrame();
     }
 
-    void GLDevice::ImGuiRenderDrawData(RHICommandContext* ctx)
+    void GLDevice::ImGuiUpdateTextures(ImDrawData* DrawData)
     {
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        UpdateImGuiTextures(DrawData, ImGui_ImplOpenGL3_UpdateTexture);
+    }
+
+    void GLDevice::ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData)
+    {
+        if (DrawData)
+            ImGui_ImplOpenGL3_RenderDrawData(DrawData);
     }
 
     // ============================================================
@@ -534,16 +541,16 @@ namespace Kiwi
 
     GLCommandContext::~GLCommandContext()
     {
-        if (m_FBO) glDeleteFramebuffers(1, &m_FBO);
-        if (m_VAO) glDeleteVertexArrays(1, &m_VAO);
+        if (FBO) glDeleteFramebuffers(1, &FBO);
+        if (VAO) glDeleteVertexArrays(1, &VAO);
     }
 
     void GLCommandContext::EnsureGLResources()
     {
-        if (m_GLResourcesReady) return;
-        glGenFramebuffers(1, &m_FBO);
-        glGenVertexArrays(1, &m_VAO);
-        m_GLResourcesReady = true;
+        if (GLResourcesReady) return;
+        glGenFramebuffers(1, &FBO);
+        glGenVertexArrays(1, &VAO);
+        GLResourcesReady = true;
     }
 
     void GLCommandContext::SetRenderTargets(RHITextureView** rtvs, uint32_t rtvCount, RHITextureView* dsv)
@@ -562,7 +569,7 @@ namespace Kiwi
             }
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_FBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, FBO);
 
         for (uint32_t i = 0; i < rtvCount; i++)
         {
@@ -625,8 +632,8 @@ namespace Kiwi
 
     void GLCommandContext::SetCullMode(ECullMode mode)
     {
-        m_CullOverride = true;
-        m_CullMode = mode;
+        CullOverride = true;
+        CullMode = mode;
 
         ERasterizerCullMode winding = GLDiscardWinding(mode);
         glFrontFace(GL_CW);
@@ -643,13 +650,13 @@ namespace Kiwi
 
     void GLCommandContext::ClearCullModeOverride()
     {
-        m_CullOverride = false;
+        CullOverride = false;
     }
 
     void GLCommandContext::SetPipelineState(RHIPipelineState* pso)
     {
         auto* glPSO = static_cast<GLPipelineState*>(pso);
-        m_CurrentPSO = glPSO;
+        CurrentPSO = glPSO;
 
         if (glPSO)
         {
@@ -667,7 +674,7 @@ namespace Kiwi
             }
 
             const RasterizerStateDesc& raster = glPSO->Rasterizer;
-            ERasterizerCullMode winding = GLDiscardWinding(m_CullOverride ? m_CullMode : raster.CullMode);
+            ERasterizerCullMode winding = GLDiscardWinding(CullOverride ? CullMode : raster.CullMode);
             glFrontFace(GL_CW);
             if (winding == ERasterizerCullMode::None)
             {
@@ -702,13 +709,13 @@ namespace Kiwi
 
     void GLCommandContext::SetPrimitiveTopology(EPrimitiveTopology topology)
     {
-        m_Topology = GLTopology(topology);
+        Topology = GLTopology(topology);
     }
 
     void GLCommandContext::SetVertexBuffers(uint32_t startSlot, RHIBuffer* const* buffers,
         const VertexBufferView* views, uint32_t count)
     {
-        glBindVertexArray(m_VAO);
+        glBindVertexArray(VAO);
 
         for (uint32_t i = 0; i < count; i++)
         {
@@ -716,9 +723,9 @@ namespace Kiwi
             glBindBuffer(GL_ARRAY_BUFFER, glBuf->GetID());
 
             // Setup vertex attributes based on current input layout
-            if (m_CurrentLayout)
+            if (CurrentLayout)
             {
-                const auto& elements = m_CurrentLayout->GetElements();
+                const auto& elements = CurrentLayout->GetElements();
                 for (size_t a = 0; a < elements.size(); a++)
                 {
                     const auto& elem = elements[a];
@@ -752,18 +759,18 @@ namespace Kiwi
         {
             auto* glBuf = static_cast<GLBuffer*>(buffer);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, glBuf->GetID());
-            m_IndexFormat = (view && view->Format == EFormat::R16_UINT) ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
+            IndexFormat = (view && view->Format == EFormat::R16_UINT) ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
         }
     }
 
     void GLCommandContext::SetVertexShader(RHIShader* shader)
     {
-        m_CurrentVS = static_cast<GLShader*>(shader);
+        CurrentVS = static_cast<GLShader*>(shader);
     }
 
     void GLCommandContext::SetPixelShader(RHIShader* shader)
     {
-        m_CurrentPS = static_cast<GLShader*>(shader);
+        CurrentPS = static_cast<GLShader*>(shader);
     }
 
     void GLCommandContext::SetGeometryShader(RHIShader* shader)
@@ -773,7 +780,7 @@ namespace Kiwi
 
     void GLCommandContext::SetInputLayout(RHIInputLayout* layout)
     {
-        m_CurrentLayout = static_cast<GLInputLayout*>(layout);
+        CurrentLayout = static_cast<GLInputLayout*>(layout);
     }
 
     void GLCommandContext::SetConstantBuffer(uint32_t slot, RHIBuffer* buffer)
@@ -834,16 +841,16 @@ namespace Kiwi
     void GLCommandContext::Draw(uint32_t vertexCount, uint32_t vertexStart)
     {
         EnsureGLResources();
-        glBindVertexArray(m_VAO);
-        glDrawArrays(m_Topology, vertexStart, vertexCount);
+        glBindVertexArray(VAO);
+        glDrawArrays(Topology, vertexStart, vertexCount);
     }
 
     void GLCommandContext::DrawIndexed(uint32_t indexCount, uint32_t indexStart, int32_t vertexOffset)
     {
         EnsureGLResources();
-        glBindVertexArray(m_VAO);
-        size_t indexSize = (m_IndexFormat == GL_UNSIGNED_SHORT) ? 2 : 4;
-        glDrawElementsBaseVertex(m_Topology, indexCount, m_IndexFormat,
+        glBindVertexArray(VAO);
+        size_t indexSize = (IndexFormat == GL_UNSIGNED_SHORT) ? 2 : 4;
+        glDrawElementsBaseVertex(Topology, indexCount, IndexFormat,
                                  (const void*)(uintptr_t)(indexStart * indexSize),
                                  vertexOffset);
     }

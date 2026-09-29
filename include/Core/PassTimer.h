@@ -22,47 +22,47 @@ class PassTimer
 public:
     void Begin(const std::string& name)
     {
-        m_CurrentName = name;
-        m_StartTime = Clock::now();
+        CurrentName = name;
+        StartTime = Clock::now();
     }
 
     void End()
     {
-        double elapsed = std::chrono::duration<double, std::milli>(Clock::now() - m_StartTime).count();
+        double elapsed = std::chrono::duration<double, std::milli>(Clock::now() - StartTime).count();
 
-        for (auto& entry : m_Entries)
+        for (auto& entry : Entries)
         {
-            if (entry.Name == m_CurrentName)
+            if (entry.Name == CurrentName)
             {
                 // Smooth with exponential moving average (alpha=0.1)
                 entry.TimeMs = entry.TimeMs * 0.9 + elapsed * 0.1;
                 return;
             }
         }
-        m_Entries.push_back({ m_CurrentName, elapsed });
+        Entries.push_back({ CurrentName, elapsed });
     }
 
     void BeginFrame()
     {
-        m_FrameTotalMs = 0.0;
+        FrameTotalMs = 0.0;
     }
 
     void EndFrame()
     {
-        m_FrameTotalMs = 0.0;
-        for (auto& e : m_Entries)
-            m_FrameTotalMs += e.TimeMs;
+        FrameTotalMs = 0.0;
+        for (auto& e : Entries)
+            FrameTotalMs += e.TimeMs;
     }
 
-    const std::vector<PassTimingEntry>& GetEntries() const { return m_Entries; }
-    double GetFrameTotalMs() const { return m_FrameTotalMs; }
+    const std::vector<PassTimingEntry>& GetEntries() const { return Entries; }
+    double GetFrameTotalMs() const { return FrameTotalMs; }
 
 private:
     using Clock = std::chrono::steady_clock;
-    Clock::time_point m_StartTime = {};
-    std::string   m_CurrentName;
-    std::vector<PassTimingEntry> m_Entries;
-    double m_FrameTotalMs = 0.0;
+    Clock::time_point StartTime = {};
+    std::string   CurrentName;
+    std::vector<PassTimingEntry> Entries;
+    double FrameTotalMs = 0.0;
 };
 
 } // namespace Kiwi

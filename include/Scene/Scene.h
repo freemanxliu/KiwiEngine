@@ -25,14 +25,14 @@ namespace Kiwi
         SceneObject* GetObject(uint32_t id);
 
         // Access all objects
-        const std::vector<std::unique_ptr<SceneObject>>& GetObjects() const { return m_Objects; }
-        std::vector<std::unique_ptr<SceneObject>>& GetObjects() { return m_Objects; }
+        const std::vector<std::unique_ptr<SceneObject>>& GetObjects() const { return Objects; }
+        std::vector<std::unique_ptr<SceneObject>>& GetObjects() { return Objects; }
 
         // Selection management
         void SelectObject(uint32_t id);
         void DeselectAll();
         SceneObject* GetSelectedObject();
-        int32_t GetSelectedID() const { return m_SelectedID; }
+        int32_t GetSelectedID() const { return SelectedID; }
 
         // Serialization
         bool SaveToFile(const std::string& filepath) const;
@@ -42,8 +42,8 @@ namespace Kiwi
         void Clear();
 
         // Scene name
-        const std::string& GetName() const { return m_Name; }
-        void SetName(const std::string& name) { m_Name = name; }
+        const std::string& GetName() const { return Name; }
+        void SetName(const std::string& name) { Name = name; }
 
         // Find the active camera: returns the camera marked as Main Camera.
         // If no camera is marked, returns the first enabled CameraComponent.
@@ -53,14 +53,24 @@ namespace Kiwi
         // Pass nullptr to clear all main camera flags.
         void SetMainCamera(CameraComponent* cam);
 
+        // Render scene that mirrors this scene's primitives. Existing mesh components are
+        // removed from the old one and added to the new one. Pass nullptr to detach.
+        void SetSceneInterface(SceneInterface* InSceneInterface);
+
     private:
         static Mesh CreateMeshForType(EPrimitiveType type);
         uint32_t GenerateID();
 
-        std::vector<std::unique_ptr<SceneObject>> m_Objects;
-        int32_t m_SelectedID = -1;
-        uint32_t m_NextID = 1;
-        std::string m_Name = "Untitled Scene";
+        SceneObject* AddObject(std::unique_ptr<SceneObject> Object);
+        void RegisterObject(SceneObject& Object);
+        void UnregisterObject(SceneObject& Object);
+        void UpdateSelectedState(SceneObject& Object);
+
+        SceneInterface* RenderSceneInterface = nullptr;
+        std::vector<std::unique_ptr<SceneObject>> Objects;
+        int32_t SelectedID = -1;
+        uint32_t NextID = 1;
+        std::string Name = "Untitled Scene";
     };
 
 } // namespace Kiwi

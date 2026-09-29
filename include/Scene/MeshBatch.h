@@ -9,53 +9,7 @@
 namespace Kiwi
 {
 
-class MeshComponent;
-class Material;
-
-// Everything that must match for primitives to share one MeshBatch.
-// Add a field here and one comparison in Compare(); grouping follows.
-struct MeshBatchKey
-{
-    int32_t SortOrder = 0;
-    uint32_t MeshId = 0;
-    const Material* Material = nullptr;
-    std::string BaseColorTex;
-    std::string NormalTex;
-    std::string MetallicRoughnessTex;
-    ECullMode CullMode = ECullMode::Back;
-    EPrimitiveTopology Topology = EPrimitiveTopology::TriangleList;
-    bool bCastShadow = true;
-    bool bUseForMaterial = true;
-    bool bUseForDepthPass = true;
-
-    // <0 if this key is ordered first, 0 if the two primitives can share a batch.
-    int Compare(const MeshBatchKey& other) const
-    {
-        if (SortOrder != other.SortOrder)
-            return SortOrder > other.SortOrder ? -1 : 1;
-        if (MeshId != other.MeshId)
-            return MeshId < other.MeshId ? -1 : 1;
-        if (Material != other.Material)
-            return Material < other.Material ? -1 : 1;
-        if (int cmp = BaseColorTex.compare(other.BaseColorTex))
-            return cmp < 0 ? -1 : 1;
-        if (int cmp = NormalTex.compare(other.NormalTex))
-            return cmp < 0 ? -1 : 1;
-        if (int cmp = MetallicRoughnessTex.compare(other.MetallicRoughnessTex))
-            return cmp < 0 ? -1 : 1;
-        if (CullMode != other.CullMode)
-            return (int)CullMode < (int)other.CullMode ? -1 : 1;
-        if (Topology != other.Topology)
-            return (int)Topology < (int)other.Topology ? -1 : 1;
-        if (bCastShadow != other.bCastShadow)
-            return bCastShadow ? 1 : -1;
-        if (bUseForMaterial != other.bUseForMaterial)
-            return bUseForMaterial ? 1 : -1;
-        if (bUseForDepthPass != other.bUseForDepthPass)
-            return bUseForDepthPass ? 1 : -1;
-        return 0;
-    }
-};
+struct PrimitiveSceneInfo;
 
 // One draw inside a mesh batch. Same role as UE5 FMeshBatchElement.
 struct MeshBatchElement
@@ -68,8 +22,10 @@ struct MeshBatchElement
     // Stable GPU Scene ids for this element.
     uint32_t PrimitiveId = 0;
     uint32_t InstanceId = 0;
-    size_t ObjectIndex = 0;
-    MeshComponent* Mesh = nullptr;
+    const PrimitiveSceneInfo* Primitive = nullptr;
+
+    // Squared distance from the view origin. Pass processors use it to order draws front to back.
+    float ViewDistanceSq = 0.0f;
 
     RHIBuffer* VertexBuffer = nullptr;
     RHIBuffer* IndexBuffer = nullptr;
@@ -102,16 +58,16 @@ struct MaterialShaderMap
         const int passIndex = (int)pass;
         if (passIndex < 0 || passIndex >= (int)EMaterialPass::Count)
             return {};
-        return m_Shaders[passIndex][bInstanced ? 1 : 0];
+        return Shaders[passIndex][bInstanced ? 1 : 0];
     }
 
     void Set(EMaterialPass pass, bool bInstanced, MeshPassShader shader)
     {
-        m_Shaders[(int)pass][bInstanced ? 1 : 0] = shader;
+        Shaders[(int)pass][bInstanced ? 1 : 0] = shader;
     }
 
 private:
-    MeshPassShader m_Shaders[(int)EMaterialPass::Count][2]{};
+    MeshPassShader Shaders[(int)EMaterialPass::Count][2]{};
 };
 
 // Pass-agnostic visible mesh. Shadow and the base pass both consume this.
@@ -126,6 +82,7 @@ struct MeshBatch
     uint32_t MeshId = 0;
     std::string MaterialName;
     std::string SurfaceShader = "DefaultSurface";
+    int32_t SortPriority = 0; // MeshComponent::SortOrder. Higher draws first in every pass.
     ECullMode CullMode = ECullMode::Back;
     EPrimitiveTopology Type = EPrimitiveTopology::TriangleList;
 
@@ -144,6 +101,10 @@ struct MeshDrawCommand
     MeshPassShader Shader;
     ECullMode CullMode = ECullMode::Back;
 
+    // Sort inputs, filled by the pass processor. Draws never merge across priorities.
+    int32_t SortPriority = 0;
+    float ViewDistanceSq = 0.0f;
+
     RHIBuffer* VertexBuffer = nullptr;
     RHIBuffer* IndexBuffer = nullptr;
     uint32_t VertexCount = 0;
@@ -157,7 +118,7 @@ struct MeshDrawCommand
     uint32_t DrawInstanceOffset = 0;
 
     bool bBindMaterial = false;
-    MeshComponent* Mesh = nullptr;
+    const PrimitiveSceneInfo* Primitive = nullptr;
     const char* MaterialName = nullptr;
 };
 

@@ -23,7 +23,7 @@ namespace Kiwi
 
         ~DX11SwapChain() override;
 
-        void* GetNativeHandle() const override { return m_SwapChain.Get(); }
+        void* GetNativeHandle() const override { return SwapChain.Get(); }
 
         void Present(uint32_t syncInterval = 0) override;
         void ResizeBuffers(uint32_t width, uint32_t height) override;
@@ -35,13 +35,13 @@ namespace Kiwi
     private:
         void CreateRenderTargetViews();
 
-        ComPtr<IDXGISwapChain>         m_SwapChain;
-        ComPtr<ID3D11Device>           m_Device;
-        ComPtr<ID3D11DeviceContext>    m_Context;
+        ComPtr<IDXGISwapChain>         SwapChain;
+        ComPtr<ID3D11Device>           Device;
+        ComPtr<ID3D11DeviceContext>    Context;
 
-        SwapChainDesc                  m_Desc;
-        std::vector<std::unique_ptr<DX11Texture>>    m_BackBuffers;
-        std::vector<std::unique_ptr<DX11TextureView>> m_RTVs;
+        SwapChainDesc                  Desc;
+        std::vector<std::unique_ptr<DX11Texture>>    BackBuffers;
+        std::vector<std::unique_ptr<DX11TextureView>> RTVs;
     };
 
     // ============================================================
@@ -55,8 +55,8 @@ namespace Kiwi
         ~DX11Device() override;
 
         RHI_API_TYPE GetApiType() const override { return RHI_API_TYPE::DX11; }
-        void* GetNativeDevice() const override { return m_Device.Get(); }
-        void* GetImmediateContext() const override { return m_Context.Get(); }
+        void* GetNativeDevice() const override { return Device.Get(); }
+        void* GetImmediateContext() const override { return Context.Get(); }
 
         // SwapChain
         std::unique_ptr<RHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;
@@ -124,20 +124,21 @@ namespace Kiwi
         void InitImGui(void* windowHandle) override;
         void ShutdownImGui() override;
         void ImGuiNewFrame() override;
-        void ImGuiRenderDrawData(RHICommandContext* ctx) override;
+        void ImGuiUpdateTextures(ImDrawData* DrawData) override;
+        void ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData) override;
 
         // 获取原生指针
-        ID3D11Device* GetD3DDevice() const { return m_Device.Get(); }
-        ID3D11DeviceContext* GetD3DContext() const { return m_Context.Get(); }
+        ID3D11Device* GetD3DDevice() const { return Device.Get(); }
+        ID3D11DeviceContext* GetD3DContext() const { return Context.Get(); }
 
     private:
-        ComPtr<ID3D11Device>           m_Device;
-        ComPtr<ID3D11DeviceContext>    m_Context;
-        ComPtr<IDXGIDevice>            m_DXGIDevice;
-        ComPtr<IDXGIAdapter>           m_Adapter;
-        ComPtr<ID3D11Debug>            m_Debug;
-        bool                           m_EnableDebug;
-        bool                           m_ImGuiInitialized = false;
+        ComPtr<ID3D11Device>           Device;
+        ComPtr<ID3D11DeviceContext>    Context;
+        ComPtr<IDXGIDevice>            DXGIDevice;
+        ComPtr<IDXGIAdapter>           Adapter;
+        ComPtr<ID3D11Debug>            Debug;
+        bool                           EnableDebug;
+        bool                           ImGuiInitialized = false;
     };
 
     // ============================================================
@@ -150,7 +151,7 @@ namespace Kiwi
         DX11CommandContext(ID3D11DeviceContext* context);
         ~DX11CommandContext() override;
 
-        void* GetNativeHandle() const override { return m_Context.Get(); }
+        void* GetNativeHandle() const override { return Context.Get(); }
 
         // GPU debug annotations (RenderDoc / PIX)
         void BeginEvent(const char* name) override;
@@ -217,12 +218,12 @@ namespace Kiwi
     private:
         void ApplyCullOverride();
 
-        ComPtr<ID3D11DeviceContext> m_Context;
-        DX11PipelineState* m_CurrentPSO = nullptr;
-        bool m_CullOverride = false;
-        ECullMode m_CullMode = ECullMode::Back;
-        ComPtr<ID3D11DeviceContext1> m_Context1;  // Cached DX11.1 context for offset CB binding
-        ComPtr<ID3DUserDefinedAnnotation> m_Annotation;
+        ComPtr<ID3D11DeviceContext> Context;
+        DX11PipelineState* CurrentPSO = nullptr;
+        bool CullOverride = false;
+        ECullMode CullMode = ECullMode::Back;
+        ComPtr<ID3D11DeviceContext1> Context1;  // Cached DX11.1 context for offset CB binding
+        ComPtr<ID3DUserDefinedAnnotation> Annotation;
     };
 
 } // namespace Kiwi

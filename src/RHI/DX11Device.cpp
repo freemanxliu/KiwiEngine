@@ -1,4 +1,5 @@
 #include "RHI/DX11/DX11Device.h"
+#include "RHI/ImGuiRHI.h"
 #include "RHI/DXCCompiler.h"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -39,34 +40,34 @@ namespace Kiwi
                                  ID3D11Device* device,
                                  ID3D11DeviceContext* context,
                                  const SwapChainDesc& desc)
-        : m_SwapChain(swapChain)
-        , m_Device(device)
-        , m_Context(context)
-        , m_Desc(desc)
+        : SwapChain(swapChain)
+        , Device(device)
+        , Context(context)
+        , Desc(desc)
     {
         CreateRenderTargetViews();
     }
 
     DX11SwapChain::~DX11SwapChain()
     {
-        m_BackBuffers.clear();
-        m_RTVs.clear();
+        BackBuffers.clear();
+        RTVs.clear();
         // Release swap chain in full-screen mode
-        if (m_SwapChain)
+        if (SwapChain)
         {
-            m_SwapChain->SetFullscreenState(FALSE, nullptr);
+            SwapChain->SetFullscreenState(FALSE, nullptr);
         }
     }
 
     void DX11SwapChain::CreateRenderTargetViews()
     {
-        m_BackBuffers.clear();
-        m_RTVs.clear();
+        BackBuffers.clear();
+        RTVs.clear();
 
         // DX11 DXGI_SWAP_EFFECT_DISCARD 模式下，只能通过 GetBuffer(0) 访问 back buffer
         // 不像 DX12 flip model 那样可以访问多个 buffer
         ComPtr<ID3D11Texture2D> backBuffer;
-        HRESULT hr = m_SwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
+        HRESULT hr = SwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&backBuffer);
         if (FAILED(hr))
         {
             char msg[256];
@@ -76,48 +77,48 @@ namespace Kiwi
 
         // 创建 Texture 对象
         TextureDesc texDesc;
-        texDesc.Width = m_Desc.Width;
-        texDesc.Height = m_Desc.Height;
-        texDesc.Format = m_Desc.Format;
+        texDesc.Width = Desc.Width;
+        texDesc.Height = Desc.Height;
+        texDesc.Format = Desc.Format;
         texDesc.BindFlags = BUFFER_USAGE_VERTEX; // render target
         texDesc.Usage = EResourceUsage::Default;
-        m_BackBuffers.push_back(
+        BackBuffers.push_back(
             std::make_unique<DX11Texture>(backBuffer.Get(), texDesc));
 
         // 创建 RTV
         ComPtr<ID3D11RenderTargetView> rtv;
-        hr = m_Device->CreateRenderTargetView(backBuffer.Get(), nullptr, &rtv);
+        hr = Device->CreateRenderTargetView(backBuffer.Get(), nullptr, &rtv);
         if (FAILED(hr))
         {
             throw std::runtime_error("Failed to create render target view");
         }
-        m_RTVs.push_back(
+        RTVs.push_back(
             std::make_unique<DX11TextureView>(rtv.Get()));
     }
 
     void DX11SwapChain::Present(uint32_t syncInterval)
     {
-        m_SwapChain->Present(syncInterval, 0);
+        SwapChain->Present(syncInterval, 0);
     }
 
     void DX11SwapChain::ResizeBuffers(uint32_t width, uint32_t height)
     {
         // 释放旧资源
-        m_BackBuffers.clear();
-        m_RTVs.clear();
+        BackBuffers.clear();
+        RTVs.clear();
 
-        m_Context->OMSetRenderTargets(0, nullptr, nullptr);
+        Context->OMSetRenderTargets(0, nullptr, nullptr);
 
-        HRESULT hr = m_SwapChain->ResizeBuffers(
-            m_Desc.BufferCount, width, height,
-            ToDXGIFormat(m_Desc.Format), 0);
+        HRESULT hr = SwapChain->ResizeBuffers(
+            Desc.BufferCount, width, height,
+            ToDXGIFormat(Desc.Format), 0);
         if (FAILED(hr))
         {
             throw std::runtime_error("Failed to resize swap chain buffers");
         }
 
-        m_Desc.Width = width;
-        m_Desc.Height = height;
+        Desc.Width = width;
+        Desc.Height = height;
 
         CreateRenderTargetViews();
     }
@@ -130,14 +131,14 @@ namespace Kiwi
 
     RHITexture* DX11SwapChain::GetBackBuffer(uint32_t index)
     {
-        if (index >= m_BackBuffers.size()) return nullptr;
-        return m_BackBuffers[index].get();
+        if (index >= BackBuffers.size()) return nullptr;
+        return BackBuffers[index].get();
     }
 
     RHITextureView* DX11SwapChain::GetBackBufferRTV(uint32_t index)
     {
-        if (index >= m_RTVs.size()) return nullptr;
-        return m_RTVs[index].get();
+        if (index >= RTVs.size()) return nullptr;
+        return RTVs[index].get();
     }
 
     // ============================================================
@@ -145,7 +146,7 @@ namespace Kiwi
     // ============================================================
 
     DX11Device::DX11Device(bool enableDebug)
-        : m_EnableDebug(enableDebug)
+        : EnableDebug(enableDebug)
     {
         D3D_FEATURE_LEVEL featureLevels[] = {
             D3D_FEATURE_LEVEL_11_0,
@@ -215,8 +216,8 @@ namespace Kiwi
 
         for (const auto& attempt : attempts)
         {
-            m_Device.Reset();
-            m_Context.Reset();
+            Device.Reset();
+            Context.Reset();
 
             hr = D3D11CreateDevice(
                 attempt.adapter,
@@ -226,9 +227,9 @@ namespace Kiwi
                 featureLevels,
                 _countof(featureLevels),
                 D3D11_SDK_VERSION,
-                &m_Device,
+                &Device,
                 &featureLevel,
-                &m_Context);
+                &Context);
 
             if (SUCCEEDED(hr))
             {
@@ -258,13 +259,13 @@ namespace Kiwi
         printf("\n");
 
         // 获取 DXGI 设备
-        m_Device->QueryInterface(__uuidof(IDXGIDevice), (void**)&m_DXGIDevice);
-        m_DXGIDevice->GetParent(__uuidof(IDXGIAdapter), (void**)&m_Adapter);
+        Device->QueryInterface(__uuidof(IDXGIDevice), (void**)&DXGIDevice);
+        DXGIDevice->GetParent(__uuidof(IDXGIAdapter), (void**)&Adapter);
 
         // 获取 debug 接口
         if (enableDebug)
         {
-            m_Device->QueryInterface(__uuidof(ID3D11Debug), (void**)&m_Debug);
+            Device->QueryInterface(__uuidof(ID3D11Debug), (void**)&Debug);
         }
 
         // 设置默认光栅化器状态
@@ -278,16 +279,16 @@ namespace Kiwi
         rasterDesc.AntialiasedLineEnable = FALSE;
 
         ComPtr<ID3D11RasterizerState> rasterizerState;
-        m_Device->CreateRasterizerState(&rasterDesc, &rasterizerState);
-        m_Context->RSSetState(rasterizerState.Get());
+        Device->CreateRasterizerState(&rasterDesc, &rasterizerState);
+        Context->RSSetState(rasterizerState.Get());
     }
 
     DX11Device::~DX11Device()
     {
         // Report live objects if debug is enabled
-        if (m_Debug)
+        if (Debug)
         {
-            m_Debug->ReportLiveDeviceObjects((D3D11_RLDO_FLAGS)1); // D3D11_RL_DETAIL = 1
+            Debug->ReportLiveDeviceObjects((D3D11_RLDO_FLAGS)1); // D3D11_RL_DETAIL = 1
         }
     }
 
@@ -295,7 +296,7 @@ namespace Kiwi
     {
         // 获取 DXGI Factory（需要通过 IDXGIAdapter 获取，不能直接从 IDXGIDevice 获取）
         ComPtr<IDXGIAdapter> adapter;
-        HRESULT hr = m_DXGIDevice->GetParent(__uuidof(IDXGIAdapter), (void**)&adapter);
+        HRESULT hr = DXGIDevice->GetParent(__uuidof(IDXGIAdapter), (void**)&adapter);
         if (FAILED(hr) || !adapter)
         {
             throw std::runtime_error("Failed to get DXGI Adapter from DXGIDevice");
@@ -324,7 +325,7 @@ namespace Kiwi
 
         ComPtr<IDXGISwapChain> swapChain;
         hr = factory->CreateSwapChain(
-            m_Device.Get(), &sd, &swapChain);
+            Device.Get(), &sd, &swapChain);
         if (FAILED(hr))
         {
             char msg[256];
@@ -336,7 +337,7 @@ namespace Kiwi
         factory->MakeWindowAssociation((HWND)desc.WindowHandle, DXGI_MWA_NO_ALT_ENTER);
 
         return std::make_unique<DX11SwapChain>(
-            swapChain.Get(), m_Device.Get(), m_Context.Get(), desc);
+            swapChain.Get(), Device.Get(), Context.Get(), desc);
     }
 
     std::unique_ptr<RHIBuffer> DX11Device::CreateBuffer(
@@ -381,7 +382,7 @@ namespace Kiwi
         }
 
         ComPtr<ID3D11Buffer> buffer;
-        HRESULT hr = m_Device->CreateBuffer(&bd, initDataPtr, &buffer);
+        HRESULT hr = Device->CreateBuffer(&bd, initDataPtr, &buffer);
         if (FAILED(hr))
         {
             throw std::runtime_error("Failed to create D3D11 buffer");
@@ -394,7 +395,7 @@ namespace Kiwi
                 (UINT)strlen(desc.DebugName), desc.DebugName);
         }
 
-        return std::make_unique<DX11Buffer>(buffer.Get(), m_Context.Get(), desc);
+        return std::make_unique<DX11Buffer>(buffer.Get(), Context.Get(), desc);
     }
 
     std::unique_ptr<RHITexture> DX11Device::CreateTexture(
@@ -469,7 +470,7 @@ namespace Kiwi
         }
 
         ComPtr<ID3D11Texture2D> texture;
-        HRESULT hr = m_Device->CreateTexture2D(&td, initDataPtr, &texture);
+        HRESULT hr = Device->CreateTexture2D(&td, initDataPtr, &texture);
         if (FAILED(hr))
         {
             throw std::runtime_error("Failed to create D3D11 texture");
@@ -503,7 +504,7 @@ namespace Kiwi
         case EDescriptorHeapType::RTV:
         {
             ComPtr<ID3D11RenderTargetView> rtv;
-            if (FAILED(m_Device->CreateRenderTargetView(resource, nullptr, &rtv)))
+            if (FAILED(Device->CreateRenderTargetView(resource, nullptr, &rtv)))
                 throw std::runtime_error("Failed to create RTV");
             return std::make_unique<DX11TextureView>(rtv.Get());
         }
@@ -517,12 +518,12 @@ namespace Kiwi
                 dsvDesc.Format = (format != EFormat::Unknown) ? ToDXGIFormat(format) : DXGI_FORMAT_D32_FLOAT;
                 dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
                 dsvDesc.Texture2D.MipSlice = 0;
-                if (FAILED(m_Device->CreateDepthStencilView(resource, &dsvDesc, &dsv)))
+                if (FAILED(Device->CreateDepthStencilView(resource, &dsvDesc, &dsv)))
                     throw std::runtime_error("Failed to create DSV");
             }
             else
             {
-                if (FAILED(m_Device->CreateDepthStencilView(resource, nullptr, &dsv)))
+                if (FAILED(Device->CreateDepthStencilView(resource, nullptr, &dsv)))
                     throw std::runtime_error("Failed to create DSV");
             }
             return std::make_unique<DX11TextureView>(dsv.Get());
@@ -538,7 +539,7 @@ namespace Kiwi
                 srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
                 srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
                 srvDesc.Texture2D.MostDetailedMip = 0;
-                HRESULT hr = m_Device->CreateShaderResourceView(resource, &srvDesc, &srv);
+                HRESULT hr = Device->CreateShaderResourceView(resource, &srvDesc, &srv);
                 if (FAILED(hr))
                 {
                     char msg[256];
@@ -550,7 +551,7 @@ namespace Kiwi
             }
             else
             {
-                HRESULT hr = m_Device->CreateShaderResourceView(resource, nullptr, &srv);
+                HRESULT hr = Device->CreateShaderResourceView(resource, nullptr, &srv);
                 if (FAILED(hr))
                 {
                     char msg[256];
@@ -590,21 +591,21 @@ namespace Kiwi
         case EShaderType::Vertex:
         {
             ComPtr<ID3D11VertexShader> vs;
-            hr = m_Device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &vs);
+            hr = Device->CreateVertexShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &vs);
             shader->SetD3D11Shader(vs.Get());
             break;
         }
         case EShaderType::Pixel:
         {
             ComPtr<ID3D11PixelShader> ps;
-            hr = m_Device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &ps);
+            hr = Device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &ps);
             shader->SetD3D11Shader(ps.Get());
             break;
         }
         case EShaderType::Geometry:
         {
             ComPtr<ID3D11GeometryShader> gs;
-            hr = m_Device->CreateGeometryShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &gs);
+            hr = Device->CreateGeometryShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &gs);
             shader->SetD3D11Shader(gs.Get());
             break;
         }
@@ -688,7 +689,7 @@ namespace Kiwi
         ID3DBlob* vsBlob = dxVS->GetBlob();
 
         ComPtr<ID3D11InputLayout> layout;
-        HRESULT hr = m_Device->CreateInputLayout(
+        HRESULT hr = Device->CreateInputLayout(
             dxElements.data(), elementCount,
             vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(),
             &layout);
@@ -713,7 +714,7 @@ namespace Kiwi
         blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
         ComPtr<ID3D11BlendState> blendState;
-        m_Device->CreateBlendState(&blendDesc, &blendState);
+        Device->CreateBlendState(&blendDesc, &blendState);
         pso->SetBlendState(blendState.Get());
 
         // 创建默认 rasterizer state
@@ -730,7 +731,7 @@ namespace Kiwi
         rasterDesc.AntialiasedLineEnable = FALSE;
 
         ComPtr<ID3D11RasterizerState> rasterState;
-        m_Device->CreateRasterizerState(&rasterDesc, &rasterState);
+        Device->CreateRasterizerState(&rasterDesc, &rasterState);
         pso->SetRasterizerState(rasterState.Get());
 
         // 创建默认 depth stencil state
@@ -741,7 +742,7 @@ namespace Kiwi
         dsDesc.StencilEnable = FALSE;
 
         ComPtr<ID3D11DepthStencilState> dsState;
-        m_Device->CreateDepthStencilState(&dsDesc, &dsState);
+        Device->CreateDepthStencilState(&dsDesc, &dsState);
         pso->SetDepthStencilState(dsState.Get());
 
         return pso;
@@ -759,7 +760,7 @@ namespace Kiwi
         blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
         ComPtr<ID3D11BlendState> blendState;
-        m_Device->CreateBlendState(&blendDesc, &blendState);
+        Device->CreateBlendState(&blendDesc, &blendState);
         pso->SetBlendState(blendState.Get());
 
         // Rasterizer state — fullscreen passes (no InputLayout) use CULL_NONE
@@ -776,7 +777,7 @@ namespace Kiwi
         rasterDesc.AntialiasedLineEnable = FALSE;
 
         ComPtr<ID3D11RasterizerState> rasterState;
-        m_Device->CreateRasterizerState(&rasterDesc, &rasterState);
+        Device->CreateRasterizerState(&rasterDesc, &rasterState);
         pso->SetRasterizerState(rasterState.Get());
 
         // Depth stencil state
@@ -787,7 +788,7 @@ namespace Kiwi
         dsDesc.StencilEnable = FALSE;
 
         ComPtr<ID3D11DepthStencilState> dsState;
-        m_Device->CreateDepthStencilState(&dsDesc, &dsState);
+        Device->CreateDepthStencilState(&dsDesc, &dsState);
         pso->SetDepthStencilState(dsState.Get());
 
         return pso;
@@ -807,7 +808,7 @@ namespace Kiwi
         sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
         ComPtr<ID3D11SamplerState> sampler;
-        HRESULT hr = m_Device->CreateSamplerState(&sampDesc, &sampler);
+        HRESULT hr = Device->CreateSamplerState(&sampDesc, &sampler);
         if (FAILED(hr))
         {
             throw std::runtime_error("Failed to create sampler state");
@@ -834,7 +835,7 @@ namespace Kiwi
         sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
 
         ComPtr<ID3D11SamplerState> sampler;
-        HRESULT hr = m_Device->CreateSamplerState(&sampDesc, &sampler);
+        HRESULT hr = Device->CreateSamplerState(&sampDesc, &sampler);
         if (FAILED(hr))
         {
             return nullptr;
@@ -855,7 +856,7 @@ namespace Kiwi
         srvDesc.Buffer.NumElements = numElements;
 
         ComPtr<ID3D11ShaderResourceView> srv;
-        HRESULT hr = m_Device->CreateShaderResourceView(
+        HRESULT hr = Device->CreateShaderResourceView(
             dxBuffer->GetD3DBuffer(), &srvDesc, &srv);
         if (FAILED(hr))
         {
@@ -870,11 +871,11 @@ namespace Kiwi
     // ============================================================
 
     DX11CommandContext::DX11CommandContext(ID3D11DeviceContext* context)
-        : m_Context(context)
+        : Context(context)
     {
         // Query ID3DUserDefinedAnnotation for GPU debug markers (RenderDoc / PIX)
         context->QueryInterface(__uuidof(ID3DUserDefinedAnnotation),
-            reinterpret_cast<void**>(m_Annotation.GetAddressOf()));
+            reinterpret_cast<void**>(Annotation.GetAddressOf()));
     }
 
     DX11CommandContext::~DX11CommandContext()
@@ -883,27 +884,27 @@ namespace Kiwi
 
     void DX11CommandContext::BeginEvent(const char* name)
     {
-        if (!m_Annotation || !name) return;
+        if (!Annotation || !name) return;
         // Convert to wide string
         int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
         std::vector<wchar_t> wname(len);
         MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
-        m_Annotation->BeginEvent(wname.data());
+        Annotation->BeginEvent(wname.data());
     }
 
     void DX11CommandContext::EndEvent()
     {
-        if (m_Annotation)
-            m_Annotation->EndEvent();
+        if (Annotation)
+            Annotation->EndEvent();
     }
 
     void DX11CommandContext::SetMarker(const char* name)
     {
-        if (!m_Annotation || !name) return;
+        if (!Annotation || !name) return;
         int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
         std::vector<wchar_t> wname(len);
         MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
-        m_Annotation->SetMarker(wname.data());
+        Annotation->SetMarker(wname.data());
     }
 
     void DX11CommandContext::SetRenderTargets(
@@ -924,14 +925,14 @@ namespace Kiwi
             d3dDSV = dxDSV->AsDSV();
         }
 
-        m_Context->OMSetRenderTargets(rtvCount, d3dRTVs.data(), d3dDSV);
+        Context->OMSetRenderTargets(rtvCount, d3dRTVs.data(), d3dDSV);
     }
 
     void DX11CommandContext::ClearRenderTargetView(RHITextureView* rtv, const ClearColorValue& color)
     {
         auto dxView = static_cast<DX11TextureView*>(rtv);
         float clearColor[4] = { color.R, color.G, color.B, color.A };
-        m_Context->ClearRenderTargetView(dxView->AsRTV(), clearColor);
+        Context->ClearRenderTargetView(dxView->AsRTV(), clearColor);
     }
 
     void DX11CommandContext::ClearDepthStencilView(
@@ -943,24 +944,24 @@ namespace Kiwi
         UINT flags = 0;
         if (clearFlags & 0x01) flags |= D3D11_CLEAR_DEPTH;
         if (clearFlags & 0x02) flags |= D3D11_CLEAR_STENCIL;
-        m_Context->ClearDepthStencilView(dxView->AsDSV(), flags, value.Depth, value.Stencil);
+        Context->ClearDepthStencilView(dxView->AsDSV(), flags, value.Depth, value.Stencil);
     }
 
     void DX11CommandContext::ApplyCullOverride()
     {
-        if (!m_CullOverride || !m_Context)
+        if (!CullOverride || !Context)
             return;
 
         ComPtr<ID3D11Device> device;
-        m_Context->GetDevice(&device);
+        Context->GetDevice(&device);
         if (!device)
             return;
 
-        const RasterizerStateDesc& src = m_CurrentPSO ? m_CurrentPSO->Rasterizer : RasterizerStateDesc{};
+        const RasterizerStateDesc& src = CurrentPSO ? CurrentPSO->Rasterizer : RasterizerStateDesc{};
         D3D11_RASTERIZER_DESC rasterDesc = {};
         rasterDesc.FillMode = src.FillMode == ERasterizerFillMode::Wireframe
             ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
-        rasterDesc.CullMode = DX11CullMode(DX11DiscardWinding(m_CullMode));
+        rasterDesc.CullMode = DX11CullMode(DX11DiscardWinding(CullMode));
         rasterDesc.FrontCounterClockwise = FALSE;
         rasterDesc.DepthBias = (INT)src.DepthBias;
         rasterDesc.SlopeScaledDepthBias = src.SlopeScaleDepthBias;
@@ -970,41 +971,41 @@ namespace Kiwi
 
         ComPtr<ID3D11RasterizerState> state;
         if (SUCCEEDED(device->CreateRasterizerState(&rasterDesc, &state)))
-            m_Context->RSSetState(state.Get());
+            Context->RSSetState(state.Get());
     }
 
     void DX11CommandContext::SetCullMode(ECullMode mode)
     {
-        m_CullOverride = true;
-        m_CullMode = mode;
+        CullOverride = true;
+        CullMode = mode;
         ApplyCullOverride();
     }
 
     void DX11CommandContext::ClearCullModeOverride()
     {
-        m_CullOverride = false;
+        CullOverride = false;
     }
 
     void DX11CommandContext::SetPipelineState(RHIPipelineState* pso)
     {
         auto dxPSO = static_cast<DX11PipelineState*>(pso);
-        m_CurrentPSO = dxPSO;
+        CurrentPSO = dxPSO;
 
         if (dxPSO->GetBlendState())
-            m_Context->OMSetBlendState(dxPSO->GetBlendState(), nullptr, 0xFFFFFFFF);
+            Context->OMSetBlendState(dxPSO->GetBlendState(), nullptr, 0xFFFFFFFF);
 
         if (dxPSO->GetRasterizerState())
-            m_Context->RSSetState(dxPSO->GetRasterizerState());
-        if (m_CullOverride)
+            Context->RSSetState(dxPSO->GetRasterizerState());
+        if (CullOverride)
             ApplyCullOverride();
 
         if (dxPSO->GetDepthStencilState())
-            m_Context->OMSetDepthStencilState(dxPSO->GetDepthStencilState(), 0);
+            Context->OMSetDepthStencilState(dxPSO->GetDepthStencilState(), 0);
     }
 
     void DX11CommandContext::SetPrimitiveTopology(EPrimitiveTopology topology)
     {
-        m_Context->IASetPrimitiveTopology(ToDX11Topology(topology));
+        Context->IASetPrimitiveTopology(ToDX11Topology(topology));
     }
 
     void DX11CommandContext::SetVertexBuffers(
@@ -1024,21 +1025,21 @@ namespace Kiwi
             offsets[i] = 0;
         }
 
-        m_Context->IASetVertexBuffers(startSlot, count, d3dBuffers.data(), strides.data(), offsets.data());
+        Context->IASetVertexBuffers(startSlot, count, d3dBuffers.data(), strides.data(), offsets.data());
     }
 
     void DX11CommandContext::SetIndexBuffer(RHIBuffer* buffer, const IndexBufferView* view)
     {
         if (!buffer || !view)
         {
-            m_Context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
+            Context->IASetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
             return;
         }
 
         auto dxBuffer = static_cast<DX11Buffer*>(buffer);
         DXGI_FORMAT format = ToDXGIFormat(view->Format);
 
-        m_Context->IASetIndexBuffer(dxBuffer->GetD3DBuffer(), format, 0);
+        Context->IASetIndexBuffer(dxBuffer->GetD3DBuffer(), format, 0);
     }
 
     void DX11CommandContext::SetVertexShader(RHIShader* shader)
@@ -1046,11 +1047,11 @@ namespace Kiwi
         if (shader)
         {
             auto dxShader = static_cast<DX11Shader*>(shader);
-            m_Context->VSSetShader(dxShader->AsVertexShader(), nullptr, 0);
+            Context->VSSetShader(dxShader->AsVertexShader(), nullptr, 0);
         }
         else
         {
-            m_Context->VSSetShader(nullptr, nullptr, 0);
+            Context->VSSetShader(nullptr, nullptr, 0);
         }
     }
 
@@ -1059,11 +1060,11 @@ namespace Kiwi
         if (shader)
         {
             auto dxShader = static_cast<DX11Shader*>(shader);
-            m_Context->PSSetShader(dxShader->AsPixelShader(), nullptr, 0);
+            Context->PSSetShader(dxShader->AsPixelShader(), nullptr, 0);
         }
         else
         {
-            m_Context->PSSetShader(nullptr, nullptr, 0);
+            Context->PSSetShader(nullptr, nullptr, 0);
         }
     }
 
@@ -1072,11 +1073,11 @@ namespace Kiwi
         if (shader)
         {
             auto dxShader = static_cast<DX11Shader*>(shader);
-            m_Context->GSSetShader(dxShader->AsGeometryShader(), nullptr, 0);
+            Context->GSSetShader(dxShader->AsGeometryShader(), nullptr, 0);
         }
         else
         {
-            m_Context->GSSetShader(nullptr, nullptr, 0);
+            Context->GSSetShader(nullptr, nullptr, 0);
         }
     }
 
@@ -1085,11 +1086,11 @@ namespace Kiwi
         if (layout)
         {
             auto dxLayout = static_cast<DX11InputLayout*>(layout);
-            m_Context->IASetInputLayout(dxLayout->GetD3DLayout());
+            Context->IASetInputLayout(dxLayout->GetD3DLayout());
         }
         else
         {
-            m_Context->IASetInputLayout(nullptr);
+            Context->IASetInputLayout(nullptr);
         }
     }
 
@@ -1099,9 +1100,9 @@ namespace Kiwi
         ID3D11Buffer* d3dBuffer = dxBuffer->GetD3DBuffer();
 
         // 绑定到所有 shader stages
-        m_Context->VSSetConstantBuffers(slot, 1, &d3dBuffer);
-        m_Context->PSSetConstantBuffers(slot, 1, &d3dBuffer);
-        m_Context->GSSetConstantBuffers(slot, 1, &d3dBuffer);
+        Context->VSSetConstantBuffers(slot, 1, &d3dBuffer);
+        Context->PSSetConstantBuffers(slot, 1, &d3dBuffer);
+        Context->GSSetConstantBuffers(slot, 1, &d3dBuffer);
     }
 
     void DX11CommandContext::SetConstantBufferOffset(uint32_t slot, RHIBuffer* buffer,
@@ -1116,23 +1117,23 @@ namespace Kiwi
         UINT numConstants   = sizeIn16Constants;
 
         // Cache ID3D11DeviceContext1 query to avoid per-call COM overhead
-        if (!m_Context1)
+        if (!Context1)
         {
-            m_Context->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&m_Context1);
+            Context->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&Context1);
         }
 
-        if (m_Context1)
+        if (Context1)
         {
-            m_Context1->VSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
-            m_Context1->PSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
-            m_Context1->GSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
+            Context1->VSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
+            Context1->PSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
+            Context1->GSSetConstantBuffers1(slot, 1, &d3dBuffer, &firstConstant, &numConstants);
         }
         else
         {
             // Fallback: no DX11.1 support — bind whole buffer (offset ignored)
-            m_Context->VSSetConstantBuffers(slot, 1, &d3dBuffer);
-            m_Context->PSSetConstantBuffers(slot, 1, &d3dBuffer);
-            m_Context->GSSetConstantBuffers(slot, 1, &d3dBuffer);
+            Context->VSSetConstantBuffers(slot, 1, &d3dBuffer);
+            Context->PSSetConstantBuffers(slot, 1, &d3dBuffer);
+            Context->GSSetConstantBuffers(slot, 1, &d3dBuffer);
         }
     }
 
@@ -1142,14 +1143,14 @@ namespace Kiwi
         {
             auto dxView = static_cast<DX11TextureView*>(srv);
             ID3D11ShaderResourceView* srvPtr = dxView->AsSRV();
-            m_Context->PSSetShaderResources(slot, 1, &srvPtr);
-            m_Context->VSSetShaderResources(slot, 1, &srvPtr);
+            Context->PSSetShaderResources(slot, 1, &srvPtr);
+            Context->VSSetShaderResources(slot, 1, &srvPtr);
         }
         else
         {
             ID3D11ShaderResourceView* nullSRV = nullptr;
-            m_Context->PSSetShaderResources(slot, 1, &nullSRV);
-            m_Context->VSSetShaderResources(slot, 1, &nullSRV);
+            Context->PSSetShaderResources(slot, 1, &nullSRV);
+            Context->VSSetShaderResources(slot, 1, &nullSRV);
         }
     }
 
@@ -1159,12 +1160,12 @@ namespace Kiwi
         {
             auto dxSampler = static_cast<DX11Sampler*>(sampler);
             ID3D11SamplerState* state = dxSampler->GetD3DSampler();
-            m_Context->PSSetSamplers(slot, 1, &state);
+            Context->PSSetSamplers(slot, 1, &state);
         }
         else
         {
             ID3D11SamplerState* nullState = nullptr;
-            m_Context->PSSetSamplers(slot, 1, &nullState);
+            Context->PSSetSamplers(slot, 1, &nullState);
         }
     }
 
@@ -1180,7 +1181,7 @@ namespace Kiwi
             d3dViewports[i].MinDepth = viewports[i].MinDepth;
             d3dViewports[i].MaxDepth = viewports[i].MaxDepth;
         }
-        m_Context->RSSetViewports(count, d3dViewports.data());
+        Context->RSSetViewports(count, d3dViewports.data());
     }
 
     void DX11CommandContext::SetScissorRects(const ScissorRect* rects, uint32_t count)
@@ -1193,28 +1194,28 @@ namespace Kiwi
             d3dRects[i].right = rects[i].Right;
             d3dRects[i].bottom = rects[i].Bottom;
         }
-        m_Context->RSSetScissorRects(count, d3dRects.data());
+        Context->RSSetScissorRects(count, d3dRects.data());
     }
 
     void DX11CommandContext::Draw(uint32_t vertexCount, uint32_t vertexStart)
     {
-        m_Context->Draw(vertexCount, vertexStart);
+        Context->Draw(vertexCount, vertexStart);
     }
 
     void DX11CommandContext::DrawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount,
         uint32_t startIndex, int32_t baseVertex, uint32_t startInstance)
     {
-        m_Context->DrawIndexedInstanced(indexCountPerInstance, instanceCount, startIndex, baseVertex, startInstance);
+        Context->DrawIndexedInstanced(indexCountPerInstance, instanceCount, startIndex, baseVertex, startInstance);
     }
 
     void DX11CommandContext::DrawIndexed(uint32_t indexCount, uint32_t indexStart, int32_t vertexOffset)
     {
-        m_Context->DrawIndexed(indexCount, indexStart, vertexOffset);
+        Context->DrawIndexed(indexCount, indexStart, vertexOffset);
     }
 
     void DX11CommandContext::Flush()
     {
-        m_Context->Flush();
+        Context->Flush();
     }
 
     // ============================================================
@@ -1248,7 +1249,7 @@ namespace Kiwi
         blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 
         ComPtr<ID3D11BlendState> blendState;
-        m_Device->CreateBlendState(&blendDesc, &blendState);
+        Device->CreateBlendState(&blendDesc, &blendState);
         pso->SetBlendState(blendState.Get());
 
         const RasterizerStateDesc& raster = initializer.RasterizerState;
@@ -1264,7 +1265,7 @@ namespace Kiwi
         rasterDesc.AntialiasedLineEnable = raster.EnableLineAA ? TRUE : FALSE;
 
         ComPtr<ID3D11RasterizerState> rasterState;
-        m_Device->CreateRasterizerState(&rasterDesc, &rasterState);
+        Device->CreateRasterizerState(&rasterDesc, &rasterState);
         pso->SetRasterizerState(rasterState.Get());
 
         // Depth stencil state
@@ -1275,7 +1276,7 @@ namespace Kiwi
         dsDesc.StencilEnable = FALSE;
 
         ComPtr<ID3D11DepthStencilState> dsState;
-        m_Device->CreateDepthStencilState(&dsDesc, &dsState);
+        Device->CreateDepthStencilState(&dsDesc, &dsState);
         pso->SetDepthStencilState(dsState.Get());
 
         return pso;
@@ -1287,21 +1288,21 @@ namespace Kiwi
 
     void DX11Device::InitImGui(void* windowHandle)
     {
-        if (!m_ImGuiInitialized)
+        if (!ImGuiInitialized)
         {
             ImGui_ImplWin32_Init((HWND)windowHandle);
         }
-        ImGui_ImplDX11_Init(m_Device.Get(), m_Context.Get());
-        m_ImGuiInitialized = true;
+        ImGui_ImplDX11_Init(Device.Get(), Context.Get());
+        ImGuiInitialized = true;
     }
 
     void DX11Device::ShutdownImGui()
     {
-        if (m_ImGuiInitialized)
+        if (ImGuiInitialized)
         {
             ImGui_ImplDX11_Shutdown();
             ImGui_ImplWin32_Shutdown();
-            m_ImGuiInitialized = false;
+            ImGuiInitialized = false;
         }
     }
 
@@ -1311,9 +1312,15 @@ namespace Kiwi
         ImGui_ImplDX11_NewFrame();
     }
 
-    void DX11Device::ImGuiRenderDrawData(RHICommandContext* ctx)
+    void DX11Device::ImGuiUpdateTextures(ImDrawData* DrawData)
     {
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        UpdateImGuiTextures(DrawData, ImGui_ImplDX11_UpdateTexture);
+    }
+
+    void DX11Device::ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData)
+    {
+        if (DrawData)
+            ImGui_ImplDX11_RenderDrawData(DrawData);
     }
 
 } // namespace Kiwi

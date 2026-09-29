@@ -3,6 +3,8 @@
 #include "RHITypes.h"
 #include <memory>
 
+struct ImDrawData;
+
 namespace Kiwi
 {
 
@@ -210,8 +212,12 @@ namespace Kiwi
         // ---- ImGui 集成（后端自行处理初始化/关闭/渲染）----
         virtual void InitImGui(void* windowHandle) = 0;
         virtual void ShutdownImGui() = 0;
+        // Game thread, before ImGui::NewFrame(). Must not touch the frame being drawn on the RHI thread.
         virtual void ImGuiNewFrame() = 0;
-        virtual void ImGuiRenderDrawData(RHICommandContext* ctx) = 0;
+        // Creates, updates and destroys the textures DrawData asks for. Game thread, with the RHI lock held.
+        virtual void ImGuiUpdateTextures(ImDrawData* DrawData) = 0;
+        // Renderer backend NewFrame plus the draw. DrawData->Textures must already be handled.
+        virtual void ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData) = 0;
     };
 
     // ============================================================

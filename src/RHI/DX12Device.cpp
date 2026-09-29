@@ -1,4 +1,5 @@
 #include "RHI/DX12/DX12Device.h"
+#include "RHI/ImGuiRHI.h"
 #include "RHI/DXCCompiler.h"
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -29,10 +30,10 @@ namespace Kiwi
                                  ID3D12Device* device,
                                  ID3D12CommandQueue* cmdQueue,
                                  const SwapChainDesc& desc)
-        : m_SwapChain(swapChain)
-        , m_Device(device)
-        , m_CommandQueue(cmdQueue)
-        , m_Desc(desc)
+        : SwapChain(swapChain)
+        , Device(device)
+        , CommandQueue(cmdQueue)
+        , Desc(desc)
     {
         // Create RTV descriptor heap
         D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
@@ -40,86 +41,86 @@ namespace Kiwi
         heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 
-        HRESULT hr = m_Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_RTVHeap));
+        HRESULT hr = Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&RTVHeap));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 RTV descriptor heap");
 
-        m_RTVDescriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        RTVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         CreateRenderTargetViews();
     }
 
     DX12SwapChain::~DX12SwapChain()
     {
-        m_BackBuffers.clear();
-        m_RTVs.clear();
+        BackBuffers.clear();
+        RTVs.clear();
     }
 
     void DX12SwapChain::CreateRenderTargetViews()
     {
-        m_BackBuffers.clear();
-        m_RTVs.clear();
+        BackBuffers.clear();
+        RTVs.clear();
 
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_RTVHeap->GetCPUDescriptorHandleForHeapStart();
+        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = RTVHeap->GetCPUDescriptorHandleForHeapStart();
 
-        for (uint32_t i = 0; i < m_Desc.BufferCount; i++)
+        for (uint32_t i = 0; i < Desc.BufferCount; i++)
         {
             ComPtr<ID3D12Resource> backBuffer;
-            HRESULT hr = m_SwapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
+            HRESULT hr = SwapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
             if (FAILED(hr))
                 throw std::runtime_error("Failed to get DX12 swap chain back buffer");
 
-            m_Device->CreateRenderTargetView(backBuffer.Get(), nullptr, rtvHandle);
+            Device->CreateRenderTargetView(backBuffer.Get(), nullptr, rtvHandle);
 
             TextureDesc texDesc;
-            texDesc.Width = m_Desc.Width;
-            texDesc.Height = m_Desc.Height;
-            texDesc.Format = m_Desc.Format;
-            m_BackBuffers.push_back(std::make_unique<DX12Texture>(backBuffer.Get(), texDesc));
-            m_RTVs.push_back(std::make_unique<DX12TextureView>(rtvHandle));
+            texDesc.Width = Desc.Width;
+            texDesc.Height = Desc.Height;
+            texDesc.Format = Desc.Format;
+            BackBuffers.push_back(std::make_unique<DX12Texture>(backBuffer.Get(), texDesc));
+            RTVs.push_back(std::make_unique<DX12TextureView>(rtvHandle));
 
-            rtvHandle.ptr += m_RTVDescriptorSize;
+            rtvHandle.ptr += RTVDescriptorSize;
         }
     }
 
     void DX12SwapChain::Present(uint32_t syncInterval)
     {
-        m_SwapChain->Present(syncInterval, 0);
+        SwapChain->Present(syncInterval, 0);
     }
 
     void DX12SwapChain::ResizeBuffers(uint32_t width, uint32_t height)
     {
-        m_BackBuffers.clear();
-        m_RTVs.clear();
+        BackBuffers.clear();
+        RTVs.clear();
 
-        HRESULT hr = m_SwapChain->ResizeBuffers(
-            m_Desc.BufferCount, width, height,
-            DX12ToDXGIFormat(m_Desc.Format),
+        HRESULT hr = SwapChain->ResizeBuffers(
+            Desc.BufferCount, width, height,
+            DX12ToDXGIFormat(Desc.Format),
             DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
         if (FAILED(hr))
             throw std::runtime_error("Failed to resize DX12 swap chain buffers");
 
-        m_Desc.Width = width;
-        m_Desc.Height = height;
+        Desc.Width = width;
+        Desc.Height = height;
 
         CreateRenderTargetViews();
     }
 
     uint32_t DX12SwapChain::GetCurrentBackBufferIndex() const
     {
-        return m_SwapChain->GetCurrentBackBufferIndex();
+        return SwapChain->GetCurrentBackBufferIndex();
     }
 
     RHITexture* DX12SwapChain::GetBackBuffer(uint32_t index)
     {
-        if (index >= m_BackBuffers.size()) return nullptr;
-        return m_BackBuffers[index].get();
+        if (index >= BackBuffers.size()) return nullptr;
+        return BackBuffers[index].get();
     }
 
     RHITextureView* DX12SwapChain::GetBackBufferRTV(uint32_t index)
     {
-        if (index >= m_RTVs.size()) return nullptr;
-        return m_RTVs[index].get();
+        if (index >= RTVs.size()) return nullptr;
+        return RTVs[index].get();
     }
 
     // ============================================================
@@ -127,7 +128,7 @@ namespace Kiwi
     // ============================================================
 
     DX12Device::DX12Device(bool enableDebug)
-        : m_EnableDebug(enableDebug)
+        : EnableDebug(enableDebug)
     {
         // Enable debug layer
         if (enableDebug)
@@ -141,26 +142,26 @@ namespace Kiwi
 
         // Create DXGI Factory
         UINT dxgiFlags = enableDebug ? DXGI_CREATE_FACTORY_DEBUG : 0;
-        HRESULT hr = CreateDXGIFactory2(dxgiFlags, IID_PPV_ARGS(&m_DXGIFactory));
+        HRESULT hr = CreateDXGIFactory2(dxgiFlags, IID_PPV_ARGS(&DXGIFactory));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DXGI Factory for DX12");
 
         // Find hardware adapter
         ComPtr<IDXGIAdapter1> adapter;
-        for (UINT i = 0; m_DXGIFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++)
+        for (UINT i = 0; DXGIFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++)
         {
             DXGI_ADAPTER_DESC1 desc;
             adapter->GetDesc1(&desc);
             if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
 
             if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0,
-                IID_PPV_ARGS(&m_Device))))
+                IID_PPV_ARGS(&Device))))
             {
                 break;
             }
         }
 
-        if (!m_Device)
+        if (!Device)
             throw std::runtime_error("Failed to create D3D12 device - no compatible GPU found");
 
         // Create command queue
@@ -168,58 +169,100 @@ namespace Kiwi
         queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
         queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 
-        hr = m_Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_CommandQueue));
+        hr = Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&CommandQueue));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 command queue");
 
         // Create fence
-        hr = m_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_Fence));
+        hr = Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&Fence));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 fence");
-        m_FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
         // Create SRV heap for ImGui + post-process + G-Buffer + shadow maps (64 descriptors)
         D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
         srvHeapDesc.NumDescriptors = 64;
         srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        hr = m_Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_SRVHeap));
+        hr = Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&SRVHeap));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 SRV descriptor heap");
-        m_SRVDescriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        SRVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
         // Create offscreen RTV heap (for post-process render targets)
         D3D12_DESCRIPTOR_HEAP_DESC offscreenRTVDesc = {};
         offscreenRTVDesc.NumDescriptors = 16;
         offscreenRTVDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
         offscreenRTVDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        hr = m_Device->CreateDescriptorHeap(&offscreenRTVDesc, IID_PPV_ARGS(&m_OffscreenRTVHeap));
+        hr = Device->CreateDescriptorHeap(&offscreenRTVDesc, IID_PPV_ARGS(&OffscreenRTVHeap));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 offscreen RTV descriptor heap");
-        m_OffscreenRTVDescriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        OffscreenRTVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
         // Create DSV heap
         D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
         dsvHeapDesc.NumDescriptors = 8;
         dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
         dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        hr = m_Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_DSVHeap));
+        hr = Device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&DSVHeap));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 DSV descriptor heap");
-        m_DSVDescriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
-        m_DSVAllocated = 0;
+        DSVDescriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+        DSVAllocated = 0;
 
         // Create root signature
         CreateRootSignature();
+
+        ID3D12Device* d3dDevice = Device.Get();
+        ConstantAllocator = std::make_unique<ConstantUploadAllocator>([d3dDevice](uint32_t size)
+        {
+            ConstantUploadAllocator::Page page;
+
+            D3D12_HEAP_PROPERTIES heapProps = {};
+            heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+            D3D12_RESOURCE_DESC resDesc = {};
+            resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            resDesc.Width = size;
+            resDesc.Height = 1;
+            resDesc.DepthOrArraySize = 1;
+            resDesc.MipLevels = 1;
+            resDesc.Format = DXGI_FORMAT_UNKNOWN;
+            resDesc.SampleDesc.Count = 1;
+            resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+            ComPtr<ID3D12Resource> resource;
+            if (FAILED(d3dDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &resDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&resource))))
+                return page;
+            resource->SetName(L"KiwiConstantPage");
+
+            void* mapped = nullptr;
+            D3D12_RANGE readRange = { 0, 0 };
+            if (FAILED(resource->Map(0, &readRange, &mapped)))
+                return page;
+
+            page.CpuBase = static_cast<uint8_t*>(mapped);
+            page.GpuBase = resource->GetGPUVirtualAddress();
+            page.NativeHandle = resource.Get();
+            page.Size = size;
+            page.Owner = std::shared_ptr<void>(resource.Detach(), [](void* p)
+            {
+                auto* res = static_cast<ID3D12Resource*>(p);
+                res->Unmap(0, nullptr);
+                res->Release();
+            });
+            return page;
+        });
     }
 
     DX12Device::~DX12Device()
     {
         WaitForGPU();
-        if (m_FenceEvent)
+        if (FenceEvent)
         {
-            CloseHandle(m_FenceEvent);
-            m_FenceEvent = nullptr;
+            CloseHandle(FenceEvent);
+            FenceEvent = nullptr;
         }
     }
 
@@ -340,32 +383,32 @@ namespace Kiwi
             throw std::runtime_error(errorMsg);
         }
 
-        hr = m_Device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
-            IID_PPV_ARGS(&m_RootSignature));
+        hr = Device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(),
+            IID_PPV_ARGS(&RootSignature));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 root signature");
     }
 
     void DX12Device::WaitForGPU()
     {
-        if (!m_CommandQueue || !m_Fence) return;
+        if (!CommandQueue || !Fence) return;
         uint64_t fenceVal = Signal();
         WaitForFenceValue(fenceVal);
     }
 
     uint64_t DX12Device::Signal()
     {
-        m_FenceValue++;
-        m_CommandQueue->Signal(m_Fence.Get(), m_FenceValue);
-        return m_FenceValue;
+        FenceValue++;
+        CommandQueue->Signal(Fence.Get(), FenceValue);
+        return FenceValue;
     }
 
     void DX12Device::WaitForFenceValue(uint64_t fenceValue)
     {
-        if (m_Fence->GetCompletedValue() < fenceValue)
+        if (Fence->GetCompletedValue() < fenceValue)
         {
-            m_Fence->SetEventOnCompletion(fenceValue, m_FenceEvent);
-            WaitForSingleObject(m_FenceEvent, INFINITE);
+            Fence->SetEventOnCompletion(fenceValue, FenceEvent);
+            WaitForSingleObject(FenceEvent, INFINITE);
         }
     }
 
@@ -382,8 +425,8 @@ namespace Kiwi
         sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 
         ComPtr<IDXGISwapChain1> swapChain1;
-        HRESULT hr = m_DXGIFactory->CreateSwapChainForHwnd(
-            m_CommandQueue.Get(),
+        HRESULT hr = DXGIFactory->CreateSwapChainForHwnd(
+            CommandQueue.Get(),
             (HWND)desc.WindowHandle,
             &sd,
             nullptr,
@@ -396,22 +439,20 @@ namespace Kiwi
             throw std::runtime_error(msg);
         }
 
-        m_DXGIFactory->MakeWindowAssociation((HWND)desc.WindowHandle, DXGI_MWA_NO_ALT_ENTER);
+        DXGIFactory->MakeWindowAssociation((HWND)desc.WindowHandle, DXGI_MWA_NO_ALT_ENTER);
 
         ComPtr<IDXGISwapChain3> swapChain3;
         swapChain1.As(&swapChain3);
 
-        return std::make_unique<DX12SwapChain>(swapChain3.Get(), m_Device.Get(), m_CommandQueue.Get(), desc);
+        return std::make_unique<DX12SwapChain>(swapChain3.Get(), Device.Get(), CommandQueue.Get(), desc);
     }
 
     std::unique_ptr<RHIBuffer> DX12Device::CreateBuffer(const BufferDesc& desc, const void* initialData)
     {
-        uint32_t alignedSize = desc.SizeInBytes;
-        // Constant buffers must be 256-byte aligned in DX12
         if (desc.BindFlags & BUFFER_USAGE_CONSTANT)
-        {
-            alignedSize = (alignedSize + 255) & ~255;
-        }
+            return std::make_unique<DX12Buffer>(ConstantAllocator.get(), desc, initialData);
+
+        uint32_t alignedSize = desc.SizeInBytes;
 
         D3D12_HEAP_PROPERTIES heapProps = {};
         heapProps.Type = D3D12_HEAP_TYPE_UPLOAD; // All buffers on upload heap for simplicity
@@ -428,7 +469,7 @@ namespace Kiwi
         resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
         ComPtr<ID3D12Resource> resource;
-        HRESULT hr = m_Device->CreateCommittedResource(
+        HRESULT hr = Device->CreateCommittedResource(
             &heapProps,
             D3D12_HEAP_FLAG_NONE,
             &resDesc,
@@ -524,7 +565,7 @@ namespace Kiwi
             initialState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
         ComPtr<ID3D12Resource> resource;
-        HRESULT hr = m_Device->CreateCommittedResource(
+        HRESULT hr = Device->CreateCommittedResource(
             &heapProps,
             D3D12_HEAP_FLAG_NONE,
             &resDesc,
@@ -575,7 +616,7 @@ namespace Kiwi
             uploadBufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
             ComPtr<ID3D12Resource> uploadBuffer;
-            hr = m_Device->CreateCommittedResource(
+            hr = Device->CreateCommittedResource(
                 &uploadHeapProps, D3D12_HEAP_FLAG_NONE, &uploadBufferDesc,
                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer));
             if (SUCCEEDED(hr))
@@ -593,9 +634,9 @@ namespace Kiwi
 
                 // Create a temporary command list for the copy
                 ComPtr<ID3D12CommandAllocator> tmpAllocator;
-                m_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAllocator));
+                Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tmpAllocator));
                 ComPtr<ID3D12GraphicsCommandList> tmpCmdList;
-                m_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAllocator.Get(), nullptr, IID_PPV_ARGS(&tmpCmdList));
+                Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, tmpAllocator.Get(), nullptr, IID_PPV_ARGS(&tmpCmdList));
 
                 // Transition to copy dest
                 D3D12_RESOURCE_BARRIER barrier = {};
@@ -631,7 +672,7 @@ namespace Kiwi
 
                 tmpCmdList->Close();
                 ID3D12CommandList* lists[] = { tmpCmdList.Get() };
-                m_CommandQueue->ExecuteCommandLists(1, lists);
+                CommandQueue->ExecuteCommandLists(1, lists);
                 WaitForGPU(); // Wait for upload to complete
             }
         }
@@ -650,9 +691,9 @@ namespace Kiwi
         {
         case EDescriptorHeapType::RTV:
         {
-            D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_OffscreenRTVHeap->GetCPUDescriptorHandleForHeapStart();
-            rtvHandle.ptr += (SIZE_T)m_OffscreenRTVAllocated * m_OffscreenRTVDescriptorSize;
-            m_OffscreenRTVAllocated++;
+            D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = OffscreenRTVHeap->GetCPUDescriptorHandleForHeapStart();
+            rtvHandle.ptr += (SIZE_T)OffscreenRTVAllocated * OffscreenRTVDescriptorSize;
+            OffscreenRTVAllocated++;
 
             D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
             rtvDesc.Format = DX12ToDXGIFormat(
@@ -660,7 +701,7 @@ namespace Kiwi
             rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
             rtvDesc.Texture2D.MipSlice = (mipSlice >= 0) ? (UINT)mipSlice : 0;
 
-            m_Device->CreateRenderTargetView(resource, &rtvDesc, rtvHandle);
+            Device->CreateRenderTargetView(resource, &rtvDesc, rtvHandle);
             return std::make_unique<DX12TextureView>(rtvHandle);
         }
         case EDescriptorHeapType::CBV_SRV_UAV:
@@ -673,7 +714,7 @@ namespace Kiwi
             cpuSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE; // CPU-only
 
             ComPtr<ID3D12DescriptorHeap> cpuSrvHeap;
-            HRESULT hr = m_Device->CreateDescriptorHeap(&cpuSrvHeapDesc, IID_PPV_ARGS(&cpuSrvHeap));
+            HRESULT hr = Device->CreateDescriptorHeap(&cpuSrvHeapDesc, IID_PPV_ARGS(&cpuSrvHeap));
             if (FAILED(hr))
                 throw std::runtime_error("Failed to create DX12 SRV CPU descriptor heap");
 
@@ -691,7 +732,7 @@ namespace Kiwi
             srvDesc.Texture2D.MipLevels = texture->GetDesc().MipLevels;
             srvDesc.Texture2D.MostDetailedMip = 0;
 
-            m_Device->CreateShaderResourceView(resource, &srvDesc, srvHandle);
+            Device->CreateShaderResourceView(resource, &srvDesc, srvHandle);
 
             // Store the CPU heap so it doesn't get destroyed
             // We return a DX12TextureView that holds the CPU descriptor handle
@@ -702,9 +743,9 @@ namespace Kiwi
         }
         case EDescriptorHeapType::DSV:
         {
-            D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_DSVHeap->GetCPUDescriptorHandleForHeapStart();
-            dsvHandle.ptr += (SIZE_T)m_DSVAllocated * m_DSVDescriptorSize;
-            m_DSVAllocated++;
+            D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = DSVHeap->GetCPUDescriptorHandleForHeapStart();
+            dsvHandle.ptr += (SIZE_T)DSVAllocated * DSVDescriptorSize;
+            DSVAllocated++;
 
             D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
             EFormat dsvFormat = texture->GetDesc().Format;
@@ -716,7 +757,7 @@ namespace Kiwi
             dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
             dsvDesc.Texture2D.MipSlice = 0;
 
-            m_Device->CreateDepthStencilView(resource, &dsvDesc, dsvHandle);
+            Device->CreateDepthStencilView(resource, &dsvDesc, dsvHandle);
             return std::make_unique<DX12TextureView>(dsvHandle);
         }
         default:
@@ -844,7 +885,7 @@ namespace Kiwi
             throw std::runtime_error("CreateGraphicsPipelineState: null vertex shader");
 
         D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-        psoDesc.pRootSignature = m_RootSignature.Get();
+        psoDesc.pRootSignature = RootSignature.Get();
 
         psoDesc.VS.pShaderBytecode = vsShader->GetBlob()->GetBufferPointer();
         psoDesc.VS.BytecodeLength = vsShader->GetBlob()->GetBufferSize();
@@ -923,7 +964,7 @@ namespace Kiwi
         psoDesc.SampleDesc.Count = 1;
 
         ComPtr<ID3D12PipelineState> pso;
-        HRESULT hr = m_Device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso));
+        HRESULT hr = Device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso));
         if (FAILED(hr))
         {
             char msg[256];
@@ -952,7 +993,7 @@ namespace Kiwi
         cpuSrvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 
         ComPtr<ID3D12DescriptorHeap> cpuSrvHeap;
-        HRESULT hr = m_Device->CreateDescriptorHeap(&cpuSrvHeapDesc, IID_PPV_ARGS(&cpuSrvHeap));
+        HRESULT hr = Device->CreateDescriptorHeap(&cpuSrvHeapDesc, IID_PPV_ARGS(&cpuSrvHeap));
         if (FAILED(hr)) return nullptr;
 
         D3D12_CPU_DESCRIPTOR_HANDLE srvHandle = cpuSrvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -966,7 +1007,7 @@ namespace Kiwi
         srvDesc.Buffer.StructureByteStride = structByteStride;
         srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
 
-        m_Device->CreateShaderResourceView(dxBuffer->GetD3DResource(), &srvDesc, srvHandle);
+        Device->CreateShaderResourceView(dxBuffer->GetD3DResource(), &srvDesc, srvHandle);
 
         auto view = std::make_unique<DX12TextureView>(srvHandle);
         view->SetSRVHeap(std::move(cpuSrvHeap));
@@ -977,40 +1018,40 @@ namespace Kiwi
     // DX12CommandContext
     // ============================================================
 
-    DX12CommandContext::DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue,
-                                           ID3D12RootSignature* rootSignature, ID3D12DescriptorHeap* srvHeap)
-        : m_Device(device), m_CommandQueue(cmdQueue), m_RootSignature(rootSignature), m_SRVHeap(srvHeap)
+    DX12CommandContext::DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue, ID3D12RootSignature* rootSignature, ID3D12DescriptorHeap* srvHeap, ConstantUploadAllocator* constantAllocator)
+        : Device(device), CommandQueue(cmdQueue), RootSignature(rootSignature), SRVHeap(srvHeap)
+        , ConstantAllocator(constantAllocator)
     {
-        HRESULT hr = m_Device->CreateCommandAllocator(
+        HRESULT hr = Device->CreateCommandAllocator(
             D3D12_COMMAND_LIST_TYPE_DIRECT,
-            IID_PPV_ARGS(&m_CommandAllocator));
+            IID_PPV_ARGS(&CommandAllocator));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 command allocator");
 
-        hr = m_Device->CreateCommandList(
+        hr = Device->CreateCommandList(
             0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-            m_CommandAllocator.Get(), nullptr,
-            IID_PPV_ARGS(&m_CommandList));
+            CommandAllocator.Get(), nullptr,
+            IID_PPV_ARGS(&CommandList));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 command list");
 
         // Close initially; will be reset at frame start
-        m_CommandList->Close();
-        m_IsOpen = false;
+        CommandList->Close();
+        IsOpen = false;
 
         // Create fence for this context
-        hr = m_Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_Fence));
+        hr = Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&Fence));
         if (FAILED(hr))
             throw std::runtime_error("Failed to create DX12 context fence");
-        m_FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        FenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     }
 
     DX12CommandContext::~DX12CommandContext()
     {
-        if (m_FenceEvent)
+        if (FenceEvent)
         {
-            CloseHandle(m_FenceEvent);
-            m_FenceEvent = nullptr;
+            CloseHandle(FenceEvent);
+            FenceEvent = nullptr;
         }
     }
 
@@ -1019,11 +1060,15 @@ namespace Kiwi
         // Reset command list
         Reset();
 
+        // The previous frame was fenced in Flush(), so its constant versions are free to reuse.
+        if (ConstantAllocator)
+            ConstantAllocator->BeginFrame();
+
         // Set root signature and descriptor heaps
-        if (m_RootSignature)
-            m_CommandList->SetGraphicsRootSignature(m_RootSignature);
-        if (m_SRVHeap)
-            m_CommandList->SetDescriptorHeaps(1, &m_SRVHeap);
+        if (RootSignature)
+            CommandList->SetGraphicsRootSignature(RootSignature);
+        if (SRVHeap)
+            CommandList->SetDescriptorHeaps(1, &SRVHeap);
 
         // Transition back buffer to render target
         if (swapChain)
@@ -1045,47 +1090,47 @@ namespace Kiwi
 
     void DX12CommandContext::BeginEvent(const char* name)
     {
-        if (!name || !m_CommandList) return;
+        if (!name || !CommandList) return;
         // Convert to wide string for PIX
         int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
         std::vector<wchar_t> wname(len);
         MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
         // PIX color: 0 = auto-assign color
-        m_CommandList->BeginEvent(0, wname.data(), (UINT)(len * sizeof(wchar_t)));
+        CommandList->BeginEvent(0, wname.data(), (UINT)(len * sizeof(wchar_t)));
     }
 
     void DX12CommandContext::EndEvent()
     {
-        if (m_CommandList)
-            m_CommandList->EndEvent();
+        if (CommandList)
+            CommandList->EndEvent();
     }
 
     void DX12CommandContext::SetMarker(const char* name)
     {
-        if (!name || !m_CommandList) return;
+        if (!name || !CommandList) return;
         int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
         std::vector<wchar_t> wname(len);
         MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
-        m_CommandList->SetMarker(0, wname.data(), (UINT)(len * sizeof(wchar_t)));
+        CommandList->SetMarker(0, wname.data(), (UINT)(len * sizeof(wchar_t)));
     }
 
     void DX12CommandContext::Reset()
     {
-        m_CommandAllocator->Reset();
-        m_CommandList->Reset(m_CommandAllocator.Get(), nullptr);
-        m_IsOpen = true;
+        CommandAllocator->Reset();
+        CommandList->Reset(CommandAllocator.Get(), nullptr);
+        IsOpen = true;
     }
 
     void DX12CommandContext::Execute()
     {
-        if (m_IsOpen)
+        if (IsOpen)
         {
-            m_CommandList->Close();
-            m_IsOpen = false;
+            CommandList->Close();
+            IsOpen = false;
         }
 
-        ID3D12CommandList* cmdLists[] = { m_CommandList.Get() };
-        m_CommandQueue->ExecuteCommandLists(1, cmdLists);
+        ID3D12CommandList* cmdLists[] = { CommandList.Get() };
+        CommandQueue->ExecuteCommandLists(1, cmdLists);
     }
 
     void DX12CommandContext::ResourceBarrier(RHITexture* texture, int stateBefore, int stateAfter)
@@ -1098,7 +1143,7 @@ namespace Kiwi
         barrier.Transition.StateAfter = (D3D12_RESOURCE_STATES)stateAfter;
         barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 
-        m_CommandList->ResourceBarrier(1, &barrier);
+        CommandList->ResourceBarrier(1, &barrier);
     }
 
     void DX12CommandContext::SetRenderTargets(RHITextureView** rtvs, uint32_t rtvCount, RHITextureView* dsv)
@@ -1119,14 +1164,14 @@ namespace Kiwi
             dsvHandle = &dsvH;
         }
 
-        m_CommandList->OMSetRenderTargets(rtvCount, rtvHandles.data(), FALSE, dsvHandle);
+        CommandList->OMSetRenderTargets(rtvCount, rtvHandles.data(), FALSE, dsvHandle);
     }
 
     void DX12CommandContext::ClearRenderTargetView(RHITextureView* rtv, const ClearColorValue& color)
     {
         auto dxView = static_cast<DX12TextureView*>(rtv);
         float clearColor[4] = { color.R, color.G, color.B, color.A };
-        m_CommandList->ClearRenderTargetView(dxView->GetCPUHandle(), clearColor, 0, nullptr);
+        CommandList->ClearRenderTargetView(dxView->GetCPUHandle(), clearColor, 0, nullptr);
     }
 
     void DX12CommandContext::ClearDepthStencilView(
@@ -1137,19 +1182,19 @@ namespace Kiwi
         if (clearFlags & 0x01) flags = (D3D12_CLEAR_FLAGS)(flags | D3D12_CLEAR_FLAG_DEPTH);
         if (clearFlags & 0x02) flags = (D3D12_CLEAR_FLAGS)(flags | D3D12_CLEAR_FLAG_STENCIL);
 
-        m_CommandList->ClearDepthStencilView(dxView->GetCPUHandle(), flags, value.Depth, value.Stencil, 0, nullptr);
+        CommandList->ClearDepthStencilView(dxView->GetCPUHandle(), flags, value.Depth, value.Stencil, 0, nullptr);
     }
 
     void DX12CommandContext::SetPipelineState(RHIPipelineState* pso)
     {
         auto dxPSO = static_cast<DX12PipelineState*>(pso);
         if (dxPSO && dxPSO->GetPSO())
-            m_CommandList->SetPipelineState(dxPSO->GetPSO());
+            CommandList->SetPipelineState(dxPSO->GetPSO());
     }
 
     void DX12CommandContext::SetPrimitiveTopology(EPrimitiveTopology topology)
     {
-        m_CommandList->IASetPrimitiveTopology(DX12ToDX12Topology(topology));
+        CommandList->IASetPrimitiveTopology(DX12ToDX12Topology(topology));
     }
 
     void DX12CommandContext::SetVertexBuffers(
@@ -1163,14 +1208,14 @@ namespace Kiwi
             d3dViews[i].SizeInBytes = views[i].SizeInBytes;
             d3dViews[i].StrideInBytes = views[i].StrideInBytes;
         }
-        m_CommandList->IASetVertexBuffers(startSlot, count, d3dViews.data());
+        CommandList->IASetVertexBuffers(startSlot, count, d3dViews.data());
     }
 
     void DX12CommandContext::SetIndexBuffer(RHIBuffer* buffer, const IndexBufferView* view)
     {
         if (!buffer || !view)
         {
-            m_CommandList->IASetIndexBuffer(nullptr);
+            CommandList->IASetIndexBuffer(nullptr);
             return;
         }
 
@@ -1180,7 +1225,7 @@ namespace Kiwi
         ibView.SizeInBytes = view->SizeInBytes;
         ibView.Format = DX12ToDXGIFormat(view->Format);
 
-        m_CommandList->IASetIndexBuffer(&ibView);
+        CommandList->IASetIndexBuffer(&ibView);
     }
 
     // DX12 shader binding is done via PSO, not individually
@@ -1203,7 +1248,7 @@ namespace Kiwi
         else if (slot == 2) rootParamIndex = 3;  // b2 maps to root param 3
         else if (slot == 3) rootParamIndex = 4;  // b3 maps to root param 4
         else if (slot == 4) rootParamIndex = 5;  // b4 maps to root param 5
-        m_CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, dxBuffer->GetGPUVirtualAddress());
+        CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, dxBuffer->GetGPUVirtualAddress());
     }
 
     void DX12CommandContext::SetConstantBufferOffset(uint32_t slot, RHIBuffer* buffer,
@@ -1222,28 +1267,28 @@ namespace Kiwi
         else if (slot == 3) rootParamIndex = 4;
         else if (slot == 4) rootParamIndex = 5;
 
-        m_CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuVA);
+        CommandList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuVA);
     }
 
     void DX12CommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)
     {
-        if (srv && m_SRVHeap)
+        if (srv && SRVHeap)
         {
             // Use descriptor at index (slot + 1) in SRV heap (index 0 is reserved for ImGui)
-            uint32_t descriptorSize = m_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            uint32_t descriptorSize = Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
             // Copy the SRV descriptor to the shader-visible heap at the correct slot
             D3D12_CPU_DESCRIPTOR_HANDLE srcHandle;
             srcHandle.ptr = (SIZE_T)srv->GetNativeHandle();
-            D3D12_CPU_DESCRIPTOR_HANDLE dstHandle = m_SRVHeap->GetCPUDescriptorHandleForHeapStart();
+            D3D12_CPU_DESCRIPTOR_HANDLE dstHandle = SRVHeap->GetCPUDescriptorHandleForHeapStart();
             dstHandle.ptr += (SIZE_T)(slot + 1) * descriptorSize;
-            m_Device->CopyDescriptorsSimple(1, dstHandle, srcHandle, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            Device->CopyDescriptorsSimple(1, dstHandle, srcHandle, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
             // Always set descriptor table starting from index 1 (t0)
             // This way all SRVs (t0-t3) are in a contiguous range starting at heap index 1
-            D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = m_SRVHeap->GetGPUDescriptorHandleForHeapStart();
+            D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = SRVHeap->GetGPUDescriptorHandleForHeapStart();
             gpuHandle.ptr += (SIZE_T)1 * descriptorSize;
-            m_CommandList->SetGraphicsRootDescriptorTable(1, gpuHandle);
+            CommandList->SetGraphicsRootDescriptorTable(1, gpuHandle);
         }
     }
 
@@ -1261,7 +1306,7 @@ namespace Kiwi
             d3dViewports[i].MinDepth = viewports[i].MinDepth;
             d3dViewports[i].MaxDepth = viewports[i].MaxDepth;
         }
-        m_CommandList->RSSetViewports(count, d3dViewports.data());
+        CommandList->RSSetViewports(count, d3dViewports.data());
     }
 
     void DX12CommandContext::SetScissorRects(const ScissorRect* rects, uint32_t count)
@@ -1274,23 +1319,23 @@ namespace Kiwi
             d3dRects[i].right = rects[i].Right;
             d3dRects[i].bottom = rects[i].Bottom;
         }
-        m_CommandList->RSSetScissorRects(count, d3dRects.data());
+        CommandList->RSSetScissorRects(count, d3dRects.data());
     }
 
     void DX12CommandContext::Draw(uint32_t vertexCount, uint32_t vertexStart)
     {
-        m_CommandList->DrawInstanced(vertexCount, 1, vertexStart, 0);
+        CommandList->DrawInstanced(vertexCount, 1, vertexStart, 0);
     }
 
     void DX12CommandContext::DrawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount,
         uint32_t startIndex, int32_t baseVertex, uint32_t startInstance)
     {
-        m_CommandList->DrawIndexedInstanced(indexCountPerInstance, instanceCount, startIndex, baseVertex, startInstance);
+        CommandList->DrawIndexedInstanced(indexCountPerInstance, instanceCount, startIndex, baseVertex, startInstance);
     }
 
     void DX12CommandContext::DrawIndexed(uint32_t indexCount, uint32_t indexStart, int32_t vertexOffset)
     {
-        m_CommandList->DrawIndexedInstanced(indexCount, 1, indexStart, vertexOffset, 0);
+        CommandList->DrawIndexedInstanced(indexCount, 1, indexStart, vertexOffset, 0);
     }
 
     void DX12CommandContext::Flush()
@@ -1298,23 +1343,23 @@ namespace Kiwi
         Execute();
 
         // Wait for GPU
-        m_FenceValue++;
-        m_CommandQueue->Signal(m_Fence.Get(), m_FenceValue);
-        if (m_Fence->GetCompletedValue() < m_FenceValue)
+        FenceValue++;
+        CommandQueue->Signal(Fence.Get(), FenceValue);
+        if (Fence->GetCompletedValue() < FenceValue)
         {
-            m_Fence->SetEventOnCompletion(m_FenceValue, m_FenceEvent);
-            WaitForSingleObject(m_FenceEvent, INFINITE);
+            Fence->SetEventOnCompletion(FenceValue, FenceEvent);
+            WaitForSingleObject(FenceEvent, INFINITE);
         }
     }
 
     void DX12CommandContext::SetRootSignature(ID3D12RootSignature* rootSig)
     {
-        m_CommandList->SetGraphicsRootSignature(rootSig);
+        CommandList->SetGraphicsRootSignature(rootSig);
     }
 
     void DX12CommandContext::SetDescriptorHeaps(ID3D12DescriptorHeap* const* heaps, uint32_t count)
     {
-        m_CommandList->SetDescriptorHeaps(count, heaps);
+        CommandList->SetDescriptorHeaps(count, heaps);
     }
 
     // ============================================================
@@ -1323,7 +1368,7 @@ namespace Kiwi
 
     void DX12Device::InitImGui(void* windowHandle)
     {
-        if (!m_ImGuiInitialized)
+        if (!ImGuiInitialized)
         {
             ImGui_ImplWin32_Init((HWND)windowHandle);
         }
@@ -1331,24 +1376,24 @@ namespace Kiwi
         // Use new ImGui_ImplDX12_InitInfo API (legacy 6-param API is missing CommandQueue,
         // which causes nullptr crash in ImGui_ImplDX12_CreateFontsTexture)
         ImGui_ImplDX12_InitInfo init_info;
-        init_info.Device = m_Device.Get();
-        init_info.CommandQueue = m_CommandQueue.Get();
+        init_info.Device = Device.Get();
+        init_info.CommandQueue = CommandQueue.Get();
         init_info.NumFramesInFlight = 2;
         init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-        init_info.SrvDescriptorHeap = m_SRVHeap.Get();
-        init_info.LegacySingleSrvCpuDescriptor = m_SRVHeap->GetCPUDescriptorHandleForHeapStart();
-        init_info.LegacySingleSrvGpuDescriptor = m_SRVHeap->GetGPUDescriptorHandleForHeapStart();
+        init_info.SrvDescriptorHeap = SRVHeap.Get();
+        init_info.LegacySingleSrvCpuDescriptor = SRVHeap->GetCPUDescriptorHandleForHeapStart();
+        init_info.LegacySingleSrvGpuDescriptor = SRVHeap->GetGPUDescriptorHandleForHeapStart();
         ImGui_ImplDX12_Init(&init_info);
-        m_ImGuiInitialized = true;
+        ImGuiInitialized = true;
     }
 
     void DX12Device::ShutdownImGui()
     {
-        if (m_ImGuiInitialized)
+        if (ImGuiInitialized)
         {
             ImGui_ImplDX12_Shutdown();
             ImGui_ImplWin32_Shutdown();
-            m_ImGuiInitialized = false;
+            ImGuiInitialized = false;
         }
     }
 
@@ -1358,16 +1403,23 @@ namespace Kiwi
         ImGui_ImplDX12_NewFrame();
     }
 
-    void DX12Device::ImGuiRenderDrawData(RHICommandContext* ctx)
+    void DX12Device::ImGuiUpdateTextures(ImDrawData* DrawData)
     {
-        auto dx12Ctx = static_cast<DX12CommandContext*>(ctx);
+        UpdateImGuiTextures(DrawData, ImGui_ImplDX12_UpdateTexture);
+    }
+
+    void DX12Device::ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData)
+    {
+        if (!DrawData)
+            return;
+        auto dx12Ctx = static_cast<DX12CommandContext*>(Ctx);
         // Re-set descriptor heaps for ImGui (it needs SRV heap)
-        if (m_SRVHeap)
+        if (SRVHeap)
         {
-            ID3D12DescriptorHeap* heaps[] = { m_SRVHeap.Get() };
+            ID3D12DescriptorHeap* heaps[] = { SRVHeap.Get() };
             dx12Ctx->GetCommandList()->SetDescriptorHeaps(1, heaps);
         }
-        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), dx12Ctx->GetCommandList());
+        ImGui_ImplDX12_RenderDrawData(DrawData, dx12Ctx->GetCommandList());
     }
 
     // ============================================================
@@ -1382,7 +1434,7 @@ namespace Kiwi
         auto device = std::make_unique<DX12Device>(params.EnableDebug);
         auto context = std::make_unique<DX12CommandContext>(
             device->GetD3DDevice(), device->GetCommandQueue(),
-            device->GetRootSignature(), device->GetSRVHeap());
+            device->GetRootSignature(), device->GetSRVHeap(), device->GetConstantAllocator());
 
         outDevice = std::move(device);
         outContext = std::move(context);

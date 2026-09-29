@@ -35,11 +35,11 @@ namespace Kiwi
     public:
         Mesh() = default;
 
-        const std::vector<Vertex>& GetVertices() const { return m_Vertices; }
-        const std::vector<uint32_t>& GetIndices() const { return m_Indices; }
+        const std::vector<Vertex>& GetVertices() const { return Vertices; }
+        const std::vector<uint32_t>& GetIndices() const { return Indices; }
 
-        uint32_t GetVertexCount() const { return (uint32_t)m_Vertices.size(); }
-        uint32_t GetIndexCount() const { return (uint32_t)m_Indices.size(); }
+        uint32_t GetVertexCount() const { return (uint32_t)Vertices.size(); }
+        uint32_t GetIndexCount() const { return (uint32_t)Indices.size(); }
         uint32_t GetIndexFormatSize() const { return 4; } // 32-bit indices
 
         // 创建标准图元
@@ -49,8 +49,8 @@ namespace Kiwi
         static Mesh CreatePlane(float width = 1.0f, float height = 1.0f);
 
     private:
-        std::vector<Vertex> m_Vertices;
-        std::vector<uint32_t> m_Indices;
+        std::vector<Vertex> Vertices;
+        std::vector<uint32_t> Indices;
     };
 
 } // namespace Kiwi

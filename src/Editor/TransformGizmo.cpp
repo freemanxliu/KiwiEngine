@@ -1,6 +1,7 @@
 #include "Editor/TransformGizmo.h"
 
 #include "Math/RayMath.h"
+#include "Scene/CameraComponent.h"
 #include "Scene/LightComponent.h"
 #include "Scene/SceneObject.h"
 #include "Scene/Shaders.h"
@@ -35,12 +36,12 @@ TransformGizmo::TransformGizmo()
 {
     for (int i = 0; i < 3; i++)
     {
-        m_TranslateMeshes[i] = CreateGizmoArrow(kAxisDirs[i]);
-        m_RotateMeshes[i] = CreateGizmoRing(kAxisDirs[i]);
-        m_ScaleMeshes[i] = CreateGizmoScaleAxis(kAxisDirs[i]);
+        TranslateMeshes[i] = CreateGizmoArrow(kAxisDirs[i]);
+        RotateMeshes[i] = CreateGizmoRing(kAxisDirs[i]);
+        ScaleMeshes[i] = CreateGizmoScaleAxis(kAxisDirs[i]);
     }
     // Direction indicator for directional lights (longer arrow)
-    m_DirLightIndicatorMesh = CreateGizmoArrow({ 0, 0, 1 }, 2.0f, 0.03f, 0.08f, 0.3f);
+    DirLightIndicatorMesh = CreateGizmoArrow({ 0, 0, 1 }, 2.0f, 0.03f, 0.08f, 0.3f);
 }
 
 TransformGizmo::GPUMesh TransformGizmo::UploadMesh(RHIDevice* device, const GizmoMeshData& data,
@@ -75,22 +76,22 @@ void TransformGizmo::CreateGPUResources(RHIDevice* device)
 {
     for (int i = 0; i < 3; i++)
     {
-        m_TranslateGPU[i] = UploadMesh(device, m_TranslateMeshes[i], "Gizmo", kAxisSuffixes[i]);
-        m_RotateGPU[i] = UploadMesh(device, m_RotateMeshes[i], "GizmoRing", kAxisSuffixes[i]);
-        m_ScaleGPU[i] = UploadMesh(device, m_ScaleMeshes[i], "GizmoScale", kAxisSuffixes[i]);
+        TranslateGPU[i] = UploadMesh(device, TranslateMeshes[i], "Gizmo", kAxisSuffixes[i]);
+        RotateGPU[i] = UploadMesh(device, RotateMeshes[i], "GizmoRing", kAxisSuffixes[i]);
+        ScaleGPU[i] = UploadMesh(device, ScaleMeshes[i], "GizmoScale", kAxisSuffixes[i]);
     }
-    m_DirLightIndicatorGPU = UploadMesh(device, m_DirLightIndicatorMesh, "Gizmo", "_DirLight");
+    DirLightIndicatorGPU = UploadMesh(device, DirLightIndicatorMesh, "Gizmo", "_DirLight");
 }
 
 void TransformGizmo::ReleaseGPUResources()
 {
     for (int i = 0; i < 3; i++)
     {
-        m_TranslateGPU[i] = {};
-        m_RotateGPU[i] = {};
-        m_ScaleGPU[i] = {};
+        TranslateGPU[i] = {};
+        RotateGPU[i] = {};
+        ScaleGPU[i] = {};
     }
-    m_DirLightIndicatorGPU = {};
+    DirLightIndicatorGPU = {};
 }
 
 // Keeps the gizmo roughly the same pixel size on screen: 1x at the reference distance.
@@ -119,7 +120,7 @@ EGizmoAxis TransformGizmo::PickAxis(const Vec3& gizmoPos, int mouseX, int mouseY
     float closestDist = 1e30f;
     EGizmoAxis result = EGizmoAxis::None;
 
-    if (m_Mode == EGizmoMode::Translate || m_Mode == EGizmoMode::Scale)
+    if (Mode == EGizmoMode::Translate || Mode == EGizmoMode::Scale)
     {
         for (int i = 0; i < 3; i++)
         {
@@ -135,7 +136,7 @@ EGizmoAxis TransformGizmo::PickAxis(const Vec3& gizmoPos, int mouseX, int mouseY
             }
         }
     }
-    else if (m_Mode == EGizmoMode::Rotate)
+    else if (Mode == EGizmoMode::Rotate)
     {
         // Sample the ring circumference and take the projected point closest to the mouse
         for (int i = 0; i < 3; i++)
@@ -169,39 +170,39 @@ EGizmoAxis TransformGizmo::PickAxis(const Vec3& gizmoPos, int mouseX, int mouseY
 
 bool TransformGizmo::TryBeginDrag(SceneObject& target, int mouseX, int mouseY, const GizmoViewInfo& view)
 {
-    m_DragAxis = PickAxis(target.GetPosition(), mouseX, mouseY, view);
-    if (m_DragAxis == EGizmoAxis::None)
+    DragAxis = PickAxis(target.GetPosition(), mouseX, mouseY, view);
+    if (DragAxis == EGizmoAxis::None)
         return false;
 
-    m_IsDragging = true;
-    m_DragStartMouseX = mouseX;
-    m_DragStartMouseY = mouseY;
-    m_DragStartPos      = target.GetPosition();
-    m_DragStartRotation = target.GetRotation();
-    m_DragStartScale    = target.GetScale();
+    bIsDragging = true;
+    DragStartMouseX = mouseX;
+    DragStartMouseY = mouseY;
+    DragStartPos      = target.GetPosition();
+    DragStartRotation = target.GetRotation();
+    DragStartScale    = target.GetScale();
     return true;
 }
 
 void TransformGizmo::UpdateDrag(SceneObject& target, int mouseX, int mouseY, const GizmoViewInfo& view)
 {
-    int axisIdx = AxisIndex(m_DragAxis);
-    if (!m_IsDragging || axisIdx < 0 || axisIdx > 2)
+    int axisIdx = AxisIndex(DragAxis);
+    if (!bIsDragging || axisIdx < 0 || axisIdx > 2)
         return;
 
     const Vec3 axisDir = kAxisDirs[axisIdx];
     Ray rayNow   = ScreenToRay(mouseX, mouseY, view.ScreenWidth, view.ScreenHeight, view.View, view.Projection);
-    Ray rayStart = ScreenToRay(m_DragStartMouseX, m_DragStartMouseY, view.ScreenWidth, view.ScreenHeight, view.View, view.Projection);
+    Ray rayStart = ScreenToRay(DragStartMouseX, DragStartMouseY, view.ScreenWidth, view.ScreenHeight, view.View, view.Projection);
 
-    if (m_Mode == EGizmoMode::Translate)
+    if (Mode == EGizmoMode::Translate)
     {
-        float tNow   = RayAxisClosestParam(rayNow,   m_DragStartPos, axisDir);
-        float tStart = RayAxisClosestParam(rayStart, m_DragStartPos, axisDir);
-        target.GetPosition() = m_DragStartPos + axisDir * (tNow - tStart);
+        float tNow   = RayAxisClosestParam(rayNow,   DragStartPos, axisDir);
+        float tStart = RayAxisClosestParam(rayStart, DragStartPos, axisDir);
+        target.GetPosition() = DragStartPos + axisDir * (tNow - tStart);
     }
-    else if (m_Mode == EGizmoMode::Rotate)
+    else if (Mode == EGizmoMode::Rotate)
     {
         // Signed angle between the start and current hits on the rotation plane
-        Vec3 center = m_DragStartPos;
+        Vec3 center = DragStartPos;
         Vec3 vStart = RayPlaneIntersect(rayStart, axisDir, center) - center;
         Vec3 vNow   = RayPlaneIntersect(rayNow,   axisDir, center) - center;
 
@@ -216,36 +217,65 @@ void TransformGizmo::UpdateDrag(SceneObject& target, int mouseX, int mouseY, con
             float cosAngle = vStart.Dot(vNow);
             float deltaDeg = atan2f(sinAngle, cosAngle) * (180.0f / PI);
 
-            Vec3 newRot = m_DragStartRotation;
-            if      (m_DragAxis == EGizmoAxis::X) newRot.x += deltaDeg;
-            else if (m_DragAxis == EGizmoAxis::Y) newRot.y += deltaDeg;
-            else if (m_DragAxis == EGizmoAxis::Z) newRot.z += deltaDeg;
+            Vec3 newRot = DragStartRotation;
+            if      (DragAxis == EGizmoAxis::X) newRot.x += deltaDeg;
+            else if (DragAxis == EGizmoAxis::Y) newRot.y += deltaDeg;
+            else if (DragAxis == EGizmoAxis::Z) newRot.z += deltaDeg;
             target.GetRotation() = newRot;
         }
     }
-    else if (m_Mode == EGizmoMode::Scale)
+    else if (Mode == EGizmoMode::Scale)
     {
-        float tNow   = RayAxisClosestParam(rayNow,   m_DragStartPos, axisDir);
-        float tStart = RayAxisClosestParam(rayStart, m_DragStartPos, axisDir);
+        float tNow   = RayAxisClosestParam(rayNow,   DragStartPos, axisDir);
+        float tStart = RayAxisClosestParam(rayStart, DragStartPos, axisDir);
         float delta  = tNow - tStart; // world units dragged
 
-        Vec3 newScale = m_DragStartScale;
-        if      (m_DragAxis == EGizmoAxis::X) newScale.x = std::max(0.001f, m_DragStartScale.x + delta);
-        else if (m_DragAxis == EGizmoAxis::Y) newScale.y = std::max(0.001f, m_DragStartScale.y + delta);
-        else if (m_DragAxis == EGizmoAxis::Z) newScale.z = std::max(0.001f, m_DragStartScale.z + delta);
+        Vec3 newScale = DragStartScale;
+        if      (DragAxis == EGizmoAxis::X) newScale.x = std::max(0.001f, DragStartScale.x + delta);
+        else if (DragAxis == EGizmoAxis::Y) newScale.y = std::max(0.001f, DragStartScale.y + delta);
+        else if (DragAxis == EGizmoAxis::Z) newScale.z = std::max(0.001f, DragStartScale.z + delta);
         target.GetScale() = newScale;
     }
+
+    if (Component* Primary = target.GetPrimaryComponent())
+        Primary->MarkRenderTransformDirty();
 }
 
 void TransformGizmo::EndDrag()
 {
-    m_IsDragging = false;
-    m_DragAxis = EGizmoAxis::None;
+    bIsDragging = false;
+    DragAxis = EGizmoAxis::None;
 }
 
-void TransformGizmo::Draw(RHICommandContext* ctx, SceneObject& target, const Vec3& cameraPosition, RHIBuffer* objectUB) const
+GizmoDrawState TransformGizmo::MakeDrawState(const SceneObject* Target) const
 {
-    Vec3 gizmoPos = target.GetPosition();
+    GizmoDrawState State;
+    if (!Target)
+        return State;
+    const auto* CamComp = Target->GetComponent<CameraComponent>();
+    if (CamComp && CamComp->IsMainCamera)
+        return State;
+
+    State.bVisible = true;
+    if (const Component* Primary = Target->GetPrimaryComponent())
+        State.Position = Primary->Position;
+    State.Mode = Mode;
+    State.HighlightAxis = bIsDragging ? DragAxis : EGizmoAxis::None;
+    if (const auto* DirLight = Target->GetComponent<DirectionalLightComponent>())
+    {
+        State.bHasDirectionalLight = true;
+        State.LightForward = DirLight->GetForward();
+        State.LightUp = DirLight->GetUp();
+        State.LightRight = DirLight->GetRight();
+    }
+    return State;
+}
+
+void TransformGizmo::Draw(RHICommandContext* ctx, const GizmoDrawState& State, const Vec3& cameraPosition, const TUniformBufferRef<PrimitiveUniformBuffer>& objectUB) const
+{
+    if (!State.bVisible)
+        return;
+    Vec3 gizmoPos = State.Position;
     float gizmoScale = ComputeScale(gizmoPos, cameraPosition);
 
     Vec4 colors[3] = {
@@ -254,12 +284,9 @@ void TransformGizmo::Draw(RHICommandContext* ctx, SceneObject& target, const Vec
         { 0.2f, 0.4f, 1.0f, 1.0f }, // Z - Blue
     };
 
-    if (m_IsDragging)
-    {
-        int axisIdx = AxisIndex(m_DragAxis);
-        if (axisIdx >= 0 && axisIdx < 3)
-            colors[axisIdx] = { 1.0f, 1.0f, 0.3f, 1.0f }; // Yellow highlight
-    }
+    int axisIdx = AxisIndex(State.HighlightAxis);
+    if (axisIdx >= 0 && axisIdx < 3)
+        colors[axisIdx] = { 1.0f, 1.0f, 0.3f, 1.0f }; // Yellow highlight
 
     auto submitMesh = [&](const GPUMesh& mesh, const Mat4& world, const Vec4& color)
     {
@@ -287,9 +314,8 @@ void TransformGizmo::Draw(RHICommandContext* ctx, SceneObject& target, const Vec
         oub.Selected    = 2.0f; // Unlit/gizmo mode
         oub.ObjectPadding[0] = oub.ObjectPadding[1] = 0.0f;
 
-        void* mapped = objectUB->Map();
-        if (mapped) { memcpy(mapped, &oub, sizeof(oub)); objectUB->Unmap(); }
-        ctx->SetConstantBuffer(1, objectUB);
+        objectUB.UpdateUniformBufferImmediate(oub);
+        ctx->SetConstantBuffer(1, objectUB.GetReference());
         ctx->DrawIndexed(mesh.IndexCount, 0, 0);
     };
 
@@ -297,19 +323,18 @@ void TransformGizmo::Draw(RHICommandContext* ctx, SceneObject& target, const Vec
     Mat4 transMat = Mat4::Translation(gizmoPos.x, gizmoPos.y, gizmoPos.z);
     Mat4 baseWorld = scaleMat * transMat; // scale then translate
 
-    const GPUMesh* handles = m_Mode == EGizmoMode::Rotate ? m_RotateGPU
-                           : m_Mode == EGizmoMode::Scale  ? m_ScaleGPU
-                                                          : m_TranslateGPU;
+    const GPUMesh* handles = State.Mode == EGizmoMode::Rotate ? RotateGPU
+                           : State.Mode == EGizmoMode::Scale  ? ScaleGPU
+                                                                : TranslateGPU;
     for (int i = 0; i < 3; i++)
         submitMesh(handles[i], baseWorld, colors[i]);
 
     // ---- Directional Light Direction Indicator ----
-    auto* dirLight = target.GetComponent<DirectionalLightComponent>();
-    if (dirLight)
+    if (State.bHasDirectionalLight)
     {
-        Vec3 fwd = dirLight->GetForward();
-        Vec3 up = dirLight->GetUp();
-        Vec3 right = dirLight->GetRight();
+        Vec3 fwd = State.LightForward;
+        Vec3 up = State.LightUp;
+        Vec3 right = State.LightRight;
 
         Mat4 rotMat = Mat4::Identity();
         rotMat.m[0][0] = right.x; rotMat.m[0][1] = right.y; rotMat.m[0][2] = right.z;
@@ -317,7 +342,7 @@ void TransformGizmo::Draw(RHICommandContext* ctx, SceneObject& target, const Vec
         rotMat.m[2][0] = fwd.x;   rotMat.m[2][1] = fwd.y;   rotMat.m[2][2] = fwd.z;
         Mat4 worldDL = scaleMat * rotMat * transMat;
 
-        submitMesh(m_DirLightIndicatorGPU, worldDL, { 1.0f, 0.9f, 0.2f, 1.0f });
+        submitMesh(DirLightIndicatorGPU, worldDL, { 1.0f, 0.9f, 0.2f, 1.0f });
     }
 }
 

@@ -1,4 +1,6 @@
 #include "RHI/Metal/MetalDevice.h"
+#include "RHI/ConstantBufferVersioning.h"
+#include "RHI/ImGuiRHI.h"
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -55,8 +57,7 @@ namespace Kiwi
             // Constant-address bindings must be 256-byte aligned on macOS.
             // setVertexBytes does not show up in the shader debugger and fails
             // to reach the shader on some Intel GPUs.
-            id<MTLBuffer> constantHeap;
-            uint32_t constantCursor = 0;
+            std::unique_ptr<ConstantUploadAllocator> constantAllocator;
         };
 
         uint32_t FormatBytes(EFormat format)
@@ -180,97 +181,116 @@ namespace Kiwi
     class MetalBuffer : public RHIBuffer
     {
     public:
-        MetalBuffer(id<MTLBuffer> buffer, const BufferDesc& desc) : m_Buffer(buffer), m_Desc(desc) {}
-        void* GetNativeHandle() const override { return (__bridge void*)m_Buffer; }
-        const BufferDesc& GetDesc() const override { return m_Desc; }
-        id<MTLBuffer> GetBuffer() const { return m_Buffer; }
-        void* Map(uint32_t) override { return m_Buffer ? m_Buffer.contents : nullptr; }
-        void Unmap(uint32_t) override {}
+        MetalBuffer(id<MTLBuffer> buffer, const BufferDesc& desc) : Buffer(buffer), Desc(desc) {}
+        MetalBuffer(ConstantUploadAllocator* allocator, const BufferDesc& desc, const void* initialData)
+            : Desc(desc)
+            , Constant(std::make_unique<VersionedConstantBuffer>(allocator, std::max(desc.SizeInBytes, 16u), initialData)) {}
+        void* GetNativeHandle() const override { return (__bridge void*)Buffer; }
+        const BufferDesc& GetDesc() const override { return Desc; }
+        id<MTLBuffer> GetBuffer() const { return Buffer; }
+        VersionedConstantBuffer* GetConstant() const { return Constant.get(); }
+        void* Map(uint32_t) override
+        {
+            if (Constant)
+                return Constant->Map();
+            return Buffer ? Buffer.contents : nullptr;
+        }
+        void Unmap(uint32_t) override
+        {
+            if (Constant)
+                Constant->Unmap();
+        }
         void UpdateData(const void* data, uint32_t size, uint32_t offset = 0) override
         {
-            if (!m_Buffer || !data || offset + size > m_Buffer.length)
+            if (Constant)
+            {
+                Constant->UpdateData(data, size, offset);
                 return;
-            std::memcpy(static_cast<uint8_t*>(m_Buffer.contents) + offset, data, size);
+            }
+            if (!Buffer || !data || offset + size > Buffer.length)
+                return;
+            std::memcpy(static_cast<uint8_t*>(Buffer.contents) + offset, data, size);
         }
 
     private:
-        id<MTLBuffer> m_Buffer;
-        BufferDesc m_Desc;
+        id<MTLBuffer> Buffer;
+        BufferDesc Desc;
+        std::unique_ptr<VersionedConstantBuffer> Constant;
     };
 
     class MetalTexture : public RHITexture
     {
     public:
-        MetalTexture(id<MTLTexture> texture, const TextureDesc& desc) : m_Texture(texture), m_Desc(desc) {}
-        void* GetNativeHandle() const override { return (__bridge void*)m_Texture; }
-        const TextureDesc& GetDesc() const override { return m_Desc; }
-        id<MTLTexture> GetTexture() const { return m_Texture; }
-        void SetTexture(id<MTLTexture> texture) { m_Texture = texture; }
+        MetalTexture(id<MTLTexture> texture, const TextureDesc& desc) : Texture(texture), Desc(desc) {}
+        void* GetNativeHandle() const override { return (__bridge void*)Texture; }
+        const TextureDesc& GetDesc() const override { return Desc; }
+        id<MTLTexture> GetTexture() const { return Texture; }
+        void SetTexture(id<MTLTexture> texture) { Texture = texture; }
 
     private:
-        id<MTLTexture> m_Texture;
-        TextureDesc m_Desc;
+        id<MTLTexture> Texture;
+        TextureDesc Desc;
     };
 
     class MetalTextureView : public RHITextureView
     {
     public:
-        explicit MetalTextureView(MetalTexture* texture) : m_Texture(texture) {}
-        explicit MetalTextureView(id<MTLBuffer> buffer) : m_Buffer(buffer) {}
+        explicit MetalTextureView(MetalTexture* texture) : Texture(texture) {}
+        explicit MetalTextureView(id<MTLBuffer> buffer) : Buffer(buffer) {}
         void* GetNativeHandle() const override
         {
-            if (m_Buffer)
-                return (__bridge void*)m_Buffer;
-            return m_Texture ? m_Texture->GetNativeHandle() : nullptr;
+            if (Buffer)
+                return (__bridge void*)Buffer;
+            return Texture ? Texture->GetNativeHandle() : nullptr;
         }
-        id<MTLTexture> GetTexture() const { return m_Texture ? m_Texture->GetTexture() : nil; }
-        id<MTLBuffer> GetBuffer() const { return m_Buffer; }
+        id<MTLTexture> GetTexture() const { return Texture ? Texture->GetTexture() : nil; }
+        id<MTLBuffer> GetBuffer() const { return Buffer; }
 
     private:
-        MetalTexture* m_Texture = nullptr;
-        id<MTLBuffer> m_Buffer = nil;
+        MetalTexture* Texture = nullptr;
+        id<MTLBuffer> Buffer = nil;
     };
 
     class MetalShader : public RHIShader
     {
     public:
-        MetalShader(EShaderType type, id<MTLFunction> function) : m_Type(type), m_Function(function) {}
-        void* GetNativeHandle() const override { return (__bridge void*)m_Function; }
-        EShaderType GetType() const override { return m_Type; }
-        id<MTLFunction> GetFunction() const { return m_Function; }
+        MetalShader(EShaderType type, id<MTLFunction> function) : Type(type), Function(function) {}
+        void* GetNativeHandle() const override { return (__bridge void*)Function; }
+        EShaderType GetType() const override { return Type; }
+        id<MTLFunction> GetFunction() const { return Function; }
 
     private:
-        EShaderType m_Type;
-        id<MTLFunction> m_Function;
+        EShaderType Type;
+        id<MTLFunction> Function;
     };
 
     class MetalInputLayout : public RHIInputLayout
     {
     public:
         MetalInputLayout(const InputElementDesc* elements, uint32_t count)
-            : m_Elements(elements, elements + count)
+            : Elements(elements, elements + count)
         {
-            for (const auto& element : m_Elements)
-                m_Stride = std::max(m_Stride, element.AlignedByteOffset + FormatBytes(element.Format));
+            for (const auto& element : Elements)
+                Stride = std::max(Stride, element.AlignedByteOffset + FormatBytes(element.Format));
         }
         void* GetNativeHandle() const override { return nullptr; }
-        const std::vector<InputElementDesc>& GetElements() const { return m_Elements; }
-        uint32_t GetStride() const { return m_Stride; }
+        const std::vector<InputElementDesc>& GetElements() const { return Elements; }
+        uint32_t GetStride() const { return Stride; }
 
     private:
-        std::vector<InputElementDesc> m_Elements;
-        uint32_t m_Stride = 0;
+        std::vector<InputElementDesc> Elements;
+        uint32_t Stride = 0;
     };
 
     class MetalSampler : public RHISampler
     {
     public:
-        explicit MetalSampler(id<MTLSamplerState> sampler) : m_Sampler(sampler) {}
-        void* GetNativeHandle() const override { return (__bridge void*)m_Sampler; }
-        id<MTLSamplerState> GetSampler() const { return m_Sampler; }
+        explicit MetalSampler(id<MTLSamplerState> sampler) : Sampler(sampler) {}
+        void* GetNativeHandle() const override { return (__bridge void*)Sampler; }
+        id<MTLSamplerState> GetSampler() const { return Sampler; }
 
     private:
-        id<MTLSamplerState> m_Sampler;
+        id<MTLSamplerState> Sampler;
     };
 
     class MetalPipelineState : public RHIPipelineState
@@ -365,8 +385,8 @@ namespace Kiwi
     class MetalCommandContext : public RHICommandContext
     {
     public:
-        explicit MetalCommandContext(const std::shared_ptr<MetalState>& state) : m_State(state) {}
-        void* GetNativeHandle() const override { return (__bridge void*)m_State->commandBuffer; }
+        explicit MetalCommandContext(const std::shared_ptr<MetalState>& state) : State(state) {}
+        void* GetNativeHandle() const override { return (__bridge void*)State->commandBuffer; }
         void BeginFrame(RHISwapChain* swapChain) override;
         void EndFrame(RHISwapChain*) override { EndEncoder(); }
         void BeginEvent(const char* name) override;
@@ -376,14 +396,14 @@ namespace Kiwi
         void SetRenderTargets(RHITextureView** rtvs, uint32_t rtvCount, RHITextureView* dsv) override;
         void ClearRenderTargetView(RHITextureView* rtv, const ClearColorValue& color) override;
         void ClearDepthStencilView(RHITextureView*, const ClearDepthStencilValue& value, uint8_t clearFlags) override;
-        void SetPipelineState(RHIPipelineState* pso) override { m_PSO = dynamic_cast<MetalPipelineState*>(pso); }
+        void SetPipelineState(RHIPipelineState* pso) override { PSO = dynamic_cast<MetalPipelineState*>(pso); }
         void SetCullMode(ECullMode mode) override
         {
-            m_CullOverride = true;
-            m_CullMode = mode;
+            CullOverride = true;
+            CullMode = mode;
         }
-        void ClearCullModeOverride() override { m_CullOverride = false; }
-        void SetPrimitiveTopology(EPrimitiveTopology topology) override { m_Topology = ToPrimitive(topology); }
+        void ClearCullModeOverride() override { CullOverride = false; }
+        void SetPrimitiveTopology(EPrimitiveTopology topology) override { Topology = ToPrimitive(topology); }
         void SetVertexBuffers(uint32_t, RHIBuffer* const* buffers, const VertexBufferView* views, uint32_t count) override;
         void SetIndexBuffer(RHIBuffer* buffer, const IndexBufferView* view) override;
         void SetVertexShader(RHIShader*) override {}
@@ -403,9 +423,9 @@ namespace Kiwi
         bool PrepareEncoder();
 
     private:
-        struct BoundBytes
+        struct BoundConstant
         {
-            bool Valid = false;
+            id<MTLBuffer> Buffer;
             uint32_t Offset = 0;
         };
 
@@ -413,172 +433,183 @@ namespace Kiwi
         bool EnsureEncoder();
         bool ApplyPipeline();
         void ApplyViewport();
-        void BindBytes(uint32_t slot, const void* data, uint32_t size);
 
-        std::shared_ptr<MetalState> m_State;
-        MetalPipelineState* m_PSO = nullptr;
-        bool m_CullOverride = false;
-        ECullMode m_CullMode = ECullMode::Back;
-        MTLPrimitiveType m_Topology = MTLPrimitiveTypeTriangle;
-        id<MTLBuffer> m_VertexBuffer;
-        uint32_t m_VertexStride = 0;
-        id<MTLBuffer> m_IndexBuffer;
-        MTLIndexType m_IndexType = MTLIndexTypeUInt32;
-        uint32_t m_IndexStride = 4;
-        BoundBytes m_Constants[kMaxSlots];
-        id<MTLBuffer> m_StorageBuffers[kMaxSlots] = {};
-        id<MTLTexture> m_Textures[kMaxSlots] = {};
-        id<MTLSamplerState> m_Samplers[kMaxSlots] = {};
-        bool m_ViewportValid = false;
-        MTLViewport m_Viewport = {};
-        bool m_ScissorValid = false;
-        MTLScissorRect m_Scissor = {};
-        bool m_ColorClear[kMaxColors] = {};
-        MTLClearColor m_ClearColor[kMaxColors] = {};
-        bool m_DepthClear = false;
-        float m_ClearDepth = 1.0f;
-        std::vector<std::string> m_Events;
+        std::shared_ptr<MetalState> State;
+        MetalPipelineState* PSO = nullptr;
+        bool CullOverride = false;
+        ECullMode CullMode = ECullMode::Back;
+        MTLPrimitiveType Topology = MTLPrimitiveTypeTriangle;
+        id<MTLBuffer> VertexBuffer;
+        uint32_t VertexStride = 0;
+        id<MTLBuffer> IndexBuffer;
+        MTLIndexType IndexType = MTLIndexTypeUInt32;
+        uint32_t IndexStride = 4;
+        BoundConstant Constants[kMaxSlots];
+        id<MTLBuffer> StorageBuffers[kMaxSlots] = {};
+        id<MTLTexture> Textures[kMaxSlots] = {};
+        id<MTLSamplerState> Samplers[kMaxSlots] = {};
+        bool ViewportValid = false;
+        MTLViewport Viewport = {};
+        bool ScissorValid = false;
+        MTLScissorRect Scissor = {};
+        bool ColorClear[kMaxColors] = {};
+        MTLClearColor ClearColor[kMaxColors] = {};
+        bool DepthClear = false;
+        float ClearDepth = 1.0f;
+        std::vector<std::string> Events;
     };
 
     class MetalSwapChain : public RHISwapChain
     {
     public:
         MetalSwapChain(const std::shared_ptr<MetalState>& state, const SwapChainDesc& desc)
-            : m_State(state), m_Desc(desc)
+            : State(state), Desc(desc)
         {
             NSView* view = (__bridge NSView*)desc.WindowHandle;
-            m_Layer = (CAMetalLayer*)view.layer;
-            m_Layer.device = state->device;
-            m_Layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-            m_Layer.framebufferOnly = YES;
-            m_Layer.drawableSize = CGSizeMake(desc.Width, desc.Height);
+            Layer = (CAMetalLayer*)view.layer;
+            Layer.device = state->device;
+            Layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+            Layer.framebufferOnly = YES;
+            Layer.drawableSize = CGSizeMake(desc.Width, desc.Height);
 
             TextureDesc textureDesc;
             textureDesc.Width = desc.Width;
             textureDesc.Height = desc.Height;
             textureDesc.Format = EFormat::R8G8B8A8_UNORM;
             textureDesc.BindFlags = TEXTURE_BIND_RENDER_TARGET;
-            m_BackBuffer = std::make_unique<MetalTexture>(nil, textureDesc);
-            m_BackBufferView = std::make_unique<MetalTextureView>(m_BackBuffer.get());
+            BackBuffer = std::make_unique<MetalTexture>(nil, textureDesc);
+            BackBufferView = std::make_unique<MetalTextureView>(BackBuffer.get());
         }
 
-        void* GetNativeHandle() const override { return (__bridge void*)m_Layer; }
+        void* GetNativeHandle() const override { return (__bridge void*)Layer; }
         uint32_t GetCurrentBackBufferIndex() const override { return 0; }
-        RHITexture* GetBackBuffer(uint32_t) override { return m_BackBuffer.get(); }
-        RHITextureView* GetBackBufferRTV(uint32_t) override { return m_BackBufferView.get(); }
+        RHITexture* GetBackBuffer(uint32_t) override { return BackBuffer.get(); }
+        RHITextureView* GetBackBufferRTV(uint32_t) override { return BackBufferView.get(); }
 
         void ResizeBuffers(uint32_t width, uint32_t height) override
         {
-            m_Desc.Width = width;
-            m_Desc.Height = height;
-            if (m_Layer)
-                m_Layer.drawableSize = CGSizeMake(width, height);
+            Desc.Width = width;
+            Desc.Height = height;
+            if (Layer)
+                Layer.drawableSize = CGSizeMake(width, height);
         }
 
         void Acquire()
         {
-            if (m_State->inflight)
+            if (State->inflight)
             {
-                [m_State->inflight waitUntilCompleted];
-                m_State->inflight = nil;
+                [State->inflight waitUntilCompleted];
+                State->inflight = nil;
             }
-            m_State->drawable = [m_Layer nextDrawable];
-            m_State->commandBuffer = [m_State->queue commandBuffer];
-            m_State->commandBuffer.label = @"KiwiFrame";
-            id<MTLTexture> texture = m_State->drawable ? m_State->drawable.texture : nil;
-            m_BackBuffer->SetTexture(texture);
+            State->drawable = [Layer nextDrawable];
+            State->commandBuffer = [State->queue commandBuffer];
+            State->commandBuffer.label = @"KiwiFrame";
+            id<MTLTexture> texture = State->drawable ? State->drawable.texture : nil;
+            BackBuffer->SetTexture(texture);
             if (!texture)
                 std::cerr << "[Kiwi Metal] CAMetalLayer did not provide a drawable." << std::endl;
         }
 
         void Present(uint32_t syncInterval = 0) override
         {
-            if (!m_State->commandBuffer)
+            if (!State->commandBuffer)
                 return;
-            if (m_Layer)
-                m_Layer.displaySyncEnabled = syncInterval > 0;
-            if (m_State->drawable)
-                [m_State->commandBuffer presentDrawable:m_State->drawable];
-            [m_State->commandBuffer commit];
-            m_State->inflight = m_State->commandBuffer;
-            m_State->commandBuffer = nil;
-            m_State->drawable = nil;
-            m_State->encoder = nil;
+            if (Layer)
+                Layer.displaySyncEnabled = syncInterval > 0;
+            if (State->drawable)
+                [State->commandBuffer presentDrawable:State->drawable];
+            [State->commandBuffer commit];
+            State->inflight = State->commandBuffer;
+            State->commandBuffer = nil;
+            State->drawable = nil;
+            State->encoder = nil;
         }
 
     private:
-        std::shared_ptr<MetalState> m_State;
-        SwapChainDesc m_Desc;
-        CAMetalLayer* m_Layer = nil;
-        std::unique_ptr<MetalTexture> m_BackBuffer;
-        std::unique_ptr<MetalTextureView> m_BackBufferView;
+        std::shared_ptr<MetalState> State;
+        SwapChainDesc Desc;
+        CAMetalLayer* Layer = nil;
+        std::unique_ptr<MetalTexture> BackBuffer;
+        std::unique_ptr<MetalTextureView> BackBufferView;
     };
 
     class MetalDevice : public RHIDevice
     {
     public:
         explicit MetalDevice(bool enableDebug)
-            : m_State(std::make_shared<MetalState>())
+            : State(std::make_shared<MetalState>())
         {
             if (enableDebug)
             {
                 setenv("MTL_DEBUG_LAYER", "1", 0);
                 setenv("MTL_SHADER_VALIDATION", "1", 0);
             }
-            m_State->device = MTLCreateSystemDefaultDevice();
-            if (!m_State->device)
+            State->device = MTLCreateSystemDefaultDevice();
+            if (!State->device)
                 throw std::runtime_error("Metal device is not available");
-            m_State->queue = [m_State->device newCommandQueue];
+            State->queue = [State->device newCommandQueue];
 
             auto* depthDesc = [MTLDepthStencilDescriptor new];
             depthDesc.depthCompareFunction = MTLCompareFunctionLess;
             depthDesc.depthWriteEnabled = YES;
-            m_State->depthWrite = [m_State->device newDepthStencilStateWithDescriptor:depthDesc];
+            State->depthWrite = [State->device newDepthStencilStateWithDescriptor:depthDesc];
             depthDesc.depthWriteEnabled = NO;
-            m_State->depthRead = [m_State->device newDepthStencilStateWithDescriptor:depthDesc];
+            State->depthRead = [State->device newDepthStencilStateWithDescriptor:depthDesc];
             depthDesc.depthCompareFunction = MTLCompareFunctionAlways;
-            m_State->depthOff = [m_State->device newDepthStencilStateWithDescriptor:depthDesc];
-            m_State->constantHeap = [m_State->device newBufferWithLength:2 * 1024 * 1024 options:MTLResourceStorageModeShared];
-            m_State->constantHeap.label = @"KiwiConstantHeap";
-            std::cout << "[Kiwi Metal] Device: " << m_State->device.name.UTF8String << std::endl;
+            State->depthOff = [State->device newDepthStencilStateWithDescriptor:depthDesc];
+            id<MTLDevice> device = State->device;
+            State->constantAllocator = std::make_unique<ConstantUploadAllocator>([device](uint32_t size)
+            {
+                ConstantUploadAllocator::Page page;
+                id<MTLBuffer> buffer = [device newBufferWithLength:size options:MTLResourceStorageModeShared];
+                if (!buffer)
+                    return page;
+                buffer.label = @"KiwiConstantPage";
+                page.CpuBase = static_cast<uint8_t*>(buffer.contents);
+                page.NativeHandle = (__bridge void*)buffer;
+                page.Size = size;
+                page.Owner = std::shared_ptr<void>((__bridge_retained void*)buffer, [](void* p) { CFRelease(p); });
+                return page;
+            });
+            std::cout << "[Kiwi Metal] Device: " << State->device.name.UTF8String << std::endl;
             (void)enableDebug;
         }
 
         ~MetalDevice() override
         {
             ShutdownImGui();
-            if (m_State->encoder)
+            if (State->encoder)
             {
-                [m_State->encoder endEncoding];
-                m_State->encoder = nil;
+                [State->encoder endEncoding];
+                State->encoder = nil;
             }
-            if (m_State->commandBuffer)
+            if (State->commandBuffer)
             {
-                [m_State->commandBuffer commit];
-                m_State->inflight = m_State->commandBuffer;
-                m_State->commandBuffer = nil;
+                [State->commandBuffer commit];
+                State->inflight = State->commandBuffer;
+                State->commandBuffer = nil;
             }
-            if (m_State->inflight)
-                [m_State->inflight waitUntilCompleted];
+            if (State->inflight)
+                [State->inflight waitUntilCompleted];
         }
 
         RHI_API_TYPE GetApiType() const override { return RHI_API_TYPE::METAL; }
-        void* GetNativeDevice() const override { return (__bridge void*)m_State->device; }
-        void* GetImmediateContext() const override { return (__bridge void*)m_State->queue; }
+        void* GetNativeDevice() const override { return (__bridge void*)State->device; }
+        void* GetImmediateContext() const override { return (__bridge void*)State->queue; }
         bool IsFeatureSupported(const char*) const override { return true; }
-        std::shared_ptr<MetalState> GetState() const { return m_State; }
+        std::shared_ptr<MetalState> GetState() const { return State; }
 
         std::unique_ptr<RHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override
         {
-            return std::make_unique<MetalSwapChain>(m_State, desc);
+            return std::make_unique<MetalSwapChain>(State, desc);
         }
 
         std::unique_ptr<RHIBuffer> CreateBuffer(const BufferDesc& desc, const void* initialData) override
         {
-            NSUInteger size = desc.SizeInBytes ? desc.SizeInBytes : 16;
             if (desc.BindFlags & BUFFER_USAGE_CONSTANT)
-                size = (size + 255u) & ~255u;
-            id<MTLBuffer> buffer = [m_State->device newBufferWithLength:size options:MTLResourceStorageModeShared];
+                return std::make_unique<MetalBuffer>(State->constantAllocator.get(), desc, initialData);
+            NSUInteger size = desc.SizeInBytes ? desc.SizeInBytes : 16;
+            id<MTLBuffer> buffer = [State->device newBufferWithLength:size options:MTLResourceStorageModeShared];
             if (initialData && desc.SizeInBytes)
                 std::memcpy(buffer.contents, initialData, desc.SizeInBytes);
             if (desc.DebugName)
@@ -603,15 +634,15 @@ namespace Kiwi
                 textureDesc.usage |= MTLTextureUsageRenderTarget;
             textureDesc.sampleCount = desc.SampleCount ? desc.SampleCount : 1;
 
-            id<MTLTexture> texture = [m_State->device newTextureWithDescriptor:textureDesc];
+            id<MTLTexture> texture = [State->device newTextureWithDescriptor:textureDesc];
             if (desc.DebugName)
                 texture.label = @(desc.DebugName);
             if (initialData && !depth)
             {
                 NSUInteger row = (NSUInteger)desc.Width * FormatBytes(desc.Format);
                 NSUInteger bytes = row * desc.Height;
-                id<MTLBuffer> staging = [m_State->device newBufferWithBytes:initialData length:bytes options:MTLResourceStorageModeShared];
-                id<MTLCommandBuffer> upload = [m_State->queue commandBuffer];
+                id<MTLBuffer> staging = [State->device newBufferWithBytes:initialData length:bytes options:MTLResourceStorageModeShared];
+                id<MTLCommandBuffer> upload = [State->queue commandBuffer];
                 id<MTLBlitCommandEncoder> blit = [upload blitCommandEncoder];
                 [blit copyFromBuffer:staging sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:bytes
                     sourceSize:MTLSizeMake(desc.Width, desc.Height, 1)
@@ -646,7 +677,7 @@ namespace Kiwi
         {
             if (type != EShaderType::Vertex && type != EShaderType::Pixel)
                 return nullptr;
-            id<MTLFunction> function = CompileFunction(m_State->device, type, source, entryPoint, macros, macroCount);
+            id<MTLFunction> function = CompileFunction(State->device, type, source, entryPoint, macros, macroCount);
             return function ? std::make_unique<MetalShader>(type, function) : nullptr;
         }
 
@@ -685,7 +716,7 @@ namespace Kiwi
             desc.mipFilter = MTLSamplerMipFilterLinear;
             desc.sAddressMode = MTLSamplerAddressModeRepeat;
             desc.tAddressMode = MTLSamplerAddressModeRepeat;
-            return std::make_unique<MetalSampler>([m_State->device newSamplerStateWithDescriptor:desc]);
+            return std::make_unique<MetalSampler>([State->device newSamplerStateWithDescriptor:desc]);
         }
 
         std::unique_ptr<RHISampler> CreateComparisonSampler() override
@@ -696,35 +727,47 @@ namespace Kiwi
             desc.sAddressMode = MTLSamplerAddressModeClampToEdge;
             desc.tAddressMode = MTLSamplerAddressModeClampToEdge;
             desc.compareFunction = MTLCompareFunctionLessEqual;
-            return std::make_unique<MetalSampler>([m_State->device newSamplerStateWithDescriptor:desc]);
+            return std::make_unique<MetalSampler>([State->device newSamplerStateWithDescriptor:desc]);
         }
 
         void InitImGui(void* windowHandle) override
         {
-            if (m_State->imgui)
+            if (State->imgui)
                 return;
-            m_View = (__bridge NSView*)windowHandle;
-            ImGui_ImplMetal_Init(m_State->device);
-            ImGui_ImplOSX_Init(m_View);
-            m_State->imgui = true;
+            View = (__bridge NSView*)windowHandle;
+            ImGui_ImplMetal_Init(State->device);
+            ImGui_ImplOSX_Init(View);
+            State->imgui = true;
         }
 
         void ShutdownImGui() override
         {
-            if (!m_State->imgui)
+            if (!State->imgui)
                 return;
             ImGui_ImplMetal_Shutdown();
             ImGui_ImplOSX_Shutdown();
-            m_State->imgui = false;
-            m_View = nil;
+            State->imgui = false;
+            View = nil;
         }
 
         void ImGuiNewFrame() override
         {
-            if (!m_State->imgui)
+            if (!State->imgui)
                 return;
-            ImGui_ImplOSX_NewFrame(m_View);
-            id<MTLTexture> color = m_State->colorCount > 0 ? m_State->colors[0] : nil;
+            ImGui_ImplOSX_NewFrame(View);
+        }
+
+        void ImGuiUpdateTextures(ImDrawData* DrawData) override
+        {
+            if (State->imgui)
+                UpdateImGuiTextures(DrawData, ImGui_ImplMetal_UpdateTexture);
+        }
+
+        void ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData) override
+        {
+            if (!State->imgui || !DrawData)
+                return;
+            id<MTLTexture> color = State->colorCount > 0 ? State->colors[0] : nil;
             if (!color)
                 return;
             auto* desc = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -732,161 +775,176 @@ namespace Kiwi
             desc.colorAttachments[0].loadAction = MTLLoadActionLoad;
             desc.colorAttachments[0].storeAction = MTLStoreActionStore;
             ImGui_ImplMetal_NewFrame(desc);
-        }
 
-        void ImGuiRenderDrawData(RHICommandContext* ctx) override
-        {
-            auto* metal = static_cast<MetalCommandContext*>(ctx);
-            if (!metal->PrepareEncoder() || !m_State->encoder)
+            auto* metal = static_cast<MetalCommandContext*>(Ctx);
+            if (!metal->PrepareEncoder() || !State->encoder)
                 return;
-            ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), m_State->commandBuffer, m_State->encoder);
+            ImGui_ImplMetal_RenderDrawData(DrawData, State->commandBuffer, State->encoder);
         }
 
     private:
-        std::shared_ptr<MetalState> m_State;
-        NSView* m_View = nil;
+        std::shared_ptr<MetalState> State;
+        NSView* View = nil;
     };
 
     void MetalCommandContext::BeginFrame(RHISwapChain* swapChain)
     {
         EndEncoder();
         static_cast<MetalSwapChain*>(swapChain)->Acquire();
-        m_State->constantCursor = 0;
+        State->constantAllocator->BeginFrame();
     }
 
     void MetalCommandContext::BeginEvent(const char* name)
     {
-        m_Events.emplace_back(name ? name : "");
-        if (m_State->encoder)
-            [m_State->encoder pushDebugGroup:@(name ? name : "")];
+        Events.emplace_back(name ? name : "");
+        if (State->encoder)
+            [State->encoder pushDebugGroup:@(name ? name : "")];
     }
 
     void MetalCommandContext::EndEvent()
     {
-        if (!m_Events.empty())
-            m_Events.pop_back();
-        if (m_State->encoder)
-            [m_State->encoder popDebugGroup];
+        if (!Events.empty())
+            Events.pop_back();
+        if (State->encoder)
+            [State->encoder popDebugGroup];
     }
 
     void MetalCommandContext::SetMarker(const char* name)
     {
-        if (m_State->encoder)
-            [m_State->encoder insertDebugSignpost:@(name ? name : "")];
+        if (State->encoder)
+            [State->encoder insertDebugSignpost:@(name ? name : "")];
     }
 
     void MetalCommandContext::EndEncoder()
     {
-        if (!m_State->encoder)
+        if (!State->encoder)
             return;
-        [m_State->encoder endEncoding];
-        m_State->encoder = nil;
+        [State->encoder endEncoding];
+        State->encoder = nil;
     }
 
     void MetalCommandContext::SetRenderTargets(RHITextureView** rtvs, uint32_t rtvCount, RHITextureView* dsv)
     {
         EndEncoder();
-        m_State->colorCount = std::min(rtvCount, kMaxColors);
+        State->colorCount = std::min(rtvCount, kMaxColors);
         for (uint32_t i = 0; i < kMaxColors; ++i)
         {
-            m_State->colors[i] = nil;
-            m_ColorClear[i] = false;
+            State->colors[i] = nil;
+            ColorClear[i] = false;
         }
-        for (uint32_t i = 0; i < m_State->colorCount; ++i)
+        for (uint32_t i = 0; i < State->colorCount; ++i)
         {
             auto* view = rtvs ? static_cast<MetalTextureView*>(rtvs[i]) : nullptr;
-            m_State->colors[i] = view ? view->GetTexture() : nil;
+            State->colors[i] = view ? view->GetTexture() : nil;
         }
         auto* depth = static_cast<MetalTextureView*>(dsv);
-        m_State->depth = depth ? depth->GetTexture() : nil;
-        m_DepthClear = false;
+        State->depth = depth ? depth->GetTexture() : nil;
+        DepthClear = false;
     }
 
     void MetalCommandContext::ClearRenderTargetView(RHITextureView* rtv, const ClearColorValue& color)
     {
         id<MTLTexture> texture = rtv ? static_cast<MetalTextureView*>(rtv)->GetTexture() : nil;
-        for (uint32_t i = 0; i < m_State->colorCount; ++i)
+        for (uint32_t i = 0; i < State->colorCount; ++i)
         {
-            if (m_State->colors[i] != texture)
+            if (State->colors[i] != texture)
                 continue;
-            if (m_State->encoder)
+            if (State->encoder)
                 EndEncoder();
-            m_ColorClear[i] = true;
-            m_ClearColor[i] = MTLClearColorMake(color.R, color.G, color.B, color.A);
+            ColorClear[i] = true;
+            ClearColor[i] = MTLClearColorMake(color.R, color.G, color.B, color.A);
         }
     }
 
     void MetalCommandContext::ClearDepthStencilView(RHITextureView*, const ClearDepthStencilValue& value, uint8_t clearFlags)
     {
-        if ((clearFlags & 0x1) == 0 || !m_State->depth)
+        if ((clearFlags & 0x1) == 0 || !State->depth)
             return;
-        if (m_State->encoder)
+        if (State->encoder)
             EndEncoder();
-        m_DepthClear = true;
-        m_ClearDepth = value.Depth;
+        DepthClear = true;
+        ClearDepth = value.Depth;
     }
 
     void MetalCommandContext::SetVertexBuffers(uint32_t, RHIBuffer* const* buffers, const VertexBufferView* views, uint32_t count)
     {
-        m_VertexBuffer = nil;
-        m_VertexStride = 0;
+        VertexBuffer = nil;
+        VertexStride = 0;
         if (!count || !buffers || !buffers[0])
             return;
-        m_VertexBuffer = static_cast<MetalBuffer*>(buffers[0])->GetBuffer();
+        VertexBuffer = static_cast<MetalBuffer*>(buffers[0])->GetBuffer();
         if (views)
-            m_VertexStride = views[0].StrideInBytes;
+            VertexStride = views[0].StrideInBytes;
     }
 
     void MetalCommandContext::SetIndexBuffer(RHIBuffer* buffer, const IndexBufferView* view)
     {
-        m_IndexBuffer = buffer ? static_cast<MetalBuffer*>(buffer)->GetBuffer() : nil;
-        m_IndexType = (view && view->Format == EFormat::R16_UINT) ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
-        m_IndexStride = m_IndexType == MTLIndexTypeUInt16 ? 2u : 4u;
-    }
-
-    void MetalCommandContext::BindBytes(uint32_t slot, const void* data, uint32_t size)
-    {
-        if (slot >= kMaxSlots || !data || size < 4 || !m_State->constantHeap)
-            return;
-        size -= size % 4;
-        uint32_t aligned = (size + 255u) & ~255u;
-        if (m_State->constantCursor + aligned > m_State->constantHeap.length)
-        {
-            std::cerr << "[Kiwi Metal] Constant heap exhausted." << std::endl;
-            return;
-        }
-        auto* dst = static_cast<uint8_t*>(m_State->constantHeap.contents) + m_State->constantCursor;
-        std::memcpy(dst, data, size);
-        if (aligned > size)
-            std::memset(dst + size, 0, aligned - size);
-        m_Constants[slot].Valid = true;
-        m_Constants[slot].Offset = m_State->constantCursor;
-        m_State->constantCursor += aligned;
+        IndexBuffer = buffer ? static_cast<MetalBuffer*>(buffer)->GetBuffer() : nil;
+        IndexType = (view && view->Format == EFormat::R16_UINT) ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
+        IndexStride = IndexType == MTLIndexTypeUInt16 ? 2u : 4u;
     }
 
     void MetalCommandContext::SetConstantBuffer(uint32_t slot, RHIBuffer* buffer)
     {
-        if (!buffer)
+        if (!buffer || slot >= kMaxSlots)
             return;
         auto* metal = static_cast<MetalBuffer*>(buffer);
-        uint32_t size = metal->GetDesc().SizeInBytes;
-        if ((NSUInteger)size > metal->GetBuffer().length)
-            size = (uint32_t)metal->GetBuffer().length;
-        BindBytes(slot, metal->GetBuffer().contents, size);
+        if (auto* constant = metal->GetConstant())
+        {
+            const auto& version = constant->GetCurrent();
+            Constants[slot].Buffer = (__bridge id<MTLBuffer>)version.NativeHandle;
+            Constants[slot].Offset = version.Offset;
+        }
+        else
+        {
+            Constants[slot].Buffer = metal->GetBuffer();
+            Constants[slot].Offset = 0;
+        }
     }
 
     void MetalCommandContext::SetConstantBufferOffset(uint32_t slot, RHIBuffer* buffer,
         uint32_t offsetIn16Constants, uint32_t sizeIn16Constants)
     {
-        if (!buffer)
+        if (!buffer || slot >= kMaxSlots)
             return;
         auto* metal = static_cast<MetalBuffer*>(buffer);
         uint32_t offset = offsetIn16Constants * 16;
         uint32_t size = sizeIn16Constants * 16;
-        if ((NSUInteger)offset + size > metal->GetBuffer().length)
+
+        id<MTLBuffer> base = nil;
+        uint32_t baseOffset = 0;
+        const uint8_t* contents = nullptr;
+        NSUInteger length = 0;
+        if (auto* constant = metal->GetConstant())
+        {
+            const auto& version = constant->GetCurrent();
+            base = (__bridge id<MTLBuffer>)version.NativeHandle;
+            baseOffset = version.Offset;
+            contents = version.Cpu;
+            length = constant->GetSize();
+        }
+        else
+        {
+            base = metal->GetBuffer();
+            contents = static_cast<const uint8_t*>(base.contents);
+            length = base.length;
+        }
+        if (!base || size == 0 || (NSUInteger)offset + size > length)
             return;
-        auto* contents = static_cast<const uint8_t*>(metal->GetBuffer().contents);
-        BindBytes(slot, contents + offset, size);
+
+        if ((baseOffset + offset) % ConstantUploadAllocator::kAlignment == 0)
+        {
+            Constants[slot].Buffer = base;
+            Constants[slot].Offset = baseOffset + offset;
+            return;
+        }
+
+        ConstantUploadAllocator::Allocation copy;
+        if (!State->constantAllocator->Allocate(size, copy))
+            return;
+        std::memcpy(copy.Cpu, contents + offset, size);
+        Constants[slot].Buffer = (__bridge id<MTLBuffer>)copy.NativeHandle;
+        Constants[slot].Offset = copy.Offset;
     }
 
     void MetalCommandContext::SetShaderResourceView(uint32_t slot, RHITextureView* srv)
@@ -895,83 +953,83 @@ namespace Kiwi
             return;
         if (!srv)
         {
-            m_Textures[slot] = nil;
-            m_StorageBuffers[slot] = nil;
+            Textures[slot] = nil;
+            StorageBuffers[slot] = nil;
             return;
         }
         auto* view = static_cast<MetalTextureView*>(srv);
-        m_Textures[slot] = view->GetTexture();
-        m_StorageBuffers[slot] = view->GetBuffer();
+        Textures[slot] = view->GetTexture();
+        StorageBuffers[slot] = view->GetBuffer();
     }
 
     void MetalCommandContext::SetSampler(uint32_t slot, RHISampler* sampler)
     {
         if (slot >= kMaxSlots)
             return;
-        m_Samplers[slot] = sampler ? static_cast<MetalSampler*>(sampler)->GetSampler() : nil;
+        Samplers[slot] = sampler ? static_cast<MetalSampler*>(sampler)->GetSampler() : nil;
     }
 
-    void MetalCommandContext::SetViewports(const Viewport* viewports, uint32_t count)
+    void MetalCommandContext::SetViewports(const Kiwi::Viewport* viewports, uint32_t count)
     {
         if (!viewports || !count)
             return;
-        m_ViewportValid = true;
-        m_Viewport.originX = viewports[0].TopLeftX;
-        m_Viewport.originY = viewports[0].TopLeftY;
-        m_Viewport.width = viewports[0].Width;
-        m_Viewport.height = viewports[0].Height;
-        m_Viewport.znear = viewports[0].MinDepth;
-        m_Viewport.zfar = viewports[0].MaxDepth;
+        ViewportValid = true;
+        Viewport.originX = viewports[0].TopLeftX;
+        Viewport.originY = viewports[0].TopLeftY;
+        Viewport.width = viewports[0].Width;
+        Viewport.height = viewports[0].Height;
+        Viewport.znear = viewports[0].MinDepth;
+        Viewport.zfar = viewports[0].MaxDepth;
     }
 
     void MetalCommandContext::SetScissorRects(const ScissorRect* rects, uint32_t count)
     {
         if (!rects || !count)
             return;
-        m_ScissorValid = true;
-        m_Scissor.x = (NSUInteger)std::max(0, rects[0].Left);
-        m_Scissor.y = (NSUInteger)std::max(0, rects[0].Top);
-        m_Scissor.width = (NSUInteger)std::max(0, rects[0].Right - rects[0].Left);
-        m_Scissor.height = (NSUInteger)std::max(0, rects[0].Bottom - rects[0].Top);
+        ScissorValid = true;
+        Scissor.x = (NSUInteger)std::max(0, rects[0].Left);
+        Scissor.y = (NSUInteger)std::max(0, rects[0].Top);
+        Scissor.width = (NSUInteger)std::max(0, rects[0].Right - rects[0].Left);
+        Scissor.height = (NSUInteger)std::max(0, rects[0].Bottom - rects[0].Top);
     }
 
     bool MetalCommandContext::EnsureEncoder()
     {
-        if (m_State->encoder)
+        if (State->encoder)
             return true;
-        if (!m_State->commandBuffer)
+        if (!State->commandBuffer)
             return false;
 
         auto* desc = [MTLRenderPassDescriptor renderPassDescriptor];
         bool any = false;
-        for (uint32_t i = 0; i < m_State->colorCount; ++i)
+        for (uint32_t i = 0; i < State->colorCount; ++i)
         {
-            if (!m_State->colors[i])
+            if (!State->colors[i])
                 continue;
             any = true;
-            desc.colorAttachments[i].texture = m_State->colors[i];
-            desc.colorAttachments[i].loadAction = m_ColorClear[i] ? MTLLoadActionClear : MTLLoadActionLoad;
+            desc.colorAttachments[i].texture = State->colors[i];
+            desc.colorAttachments[i].loadAction = ColorClear[i] ? MTLLoadActionClear : MTLLoadActionLoad;
             desc.colorAttachments[i].storeAction = MTLStoreActionStore;
-            if (m_ColorClear[i])
-                desc.colorAttachments[i].clearColor = m_ClearColor[i];
-            m_ColorClear[i] = false;
+            if (ColorClear[i])
+                desc.colorAttachments[i].clearColor = ClearColor[i];
+            ColorClear[i] = false;
         }
-        if (m_State->depth)
+        if (State->depth)
         {
             any = true;
-            desc.depthAttachment.texture = m_State->depth;
-            desc.depthAttachment.loadAction = m_DepthClear ? MTLLoadActionClear : MTLLoadActionLoad;
+            desc.depthAttachment.texture = State->depth;
+            desc.depthAttachment.loadAction = DepthClear ? MTLLoadActionClear : MTLLoadActionLoad;
             desc.depthAttachment.storeAction = MTLStoreActionStore;
-            desc.depthAttachment.clearDepth = m_ClearDepth;
-            m_DepthClear = false;
+            desc.depthAttachment.clearDepth = ClearDepth;
+            DepthClear = false;
         }
         if (!any)
             return false;
 
-        m_State->encoder = [m_State->commandBuffer renderCommandEncoderWithDescriptor:desc];
-        for (const auto& event : m_Events)
-            [m_State->encoder pushDebugGroup:@(event.c_str())];
-        return m_State->encoder != nil;
+        State->encoder = [State->commandBuffer renderCommandEncoderWithDescriptor:desc];
+        for (const auto& event : Events)
+            [State->encoder pushDebugGroup:@(event.c_str())];
+        return State->encoder != nil;
     }
 
     void MetalCommandContext::ApplyViewport()
@@ -986,51 +1044,51 @@ namespace Kiwi
             if (height == 0 || texture.height < height)
                 height = texture.height;
         };
-        for (uint32_t i = 0; i < m_State->colorCount; ++i)
-            limitTo(m_State->colors[i]);
-        limitTo(m_State->depth);
+        for (uint32_t i = 0; i < State->colorCount; ++i)
+            limitTo(State->colors[i]);
+        limitTo(State->depth);
         if (width == 0) width = 1;
         if (height == 0) height = 1;
 
-        MTLViewport viewport = m_ViewportValid ? m_Viewport : MTLViewport{ 0, 0, (double)width, (double)height, 0.0, 1.0 };
+        MTLViewport viewport = ViewportValid ? Viewport : MTLViewport{ 0, 0, (double)width, (double)height, 0.0, 1.0 };
         if (viewport.originX < 0.0) viewport.originX = 0.0;
         if (viewport.originY < 0.0) viewport.originY = 0.0;
         if (viewport.originX + viewport.width > (double)width)
             viewport.width = std::max(1.0, (double)width - viewport.originX);
         if (viewport.originY + viewport.height > (double)height)
             viewport.height = std::max(1.0, (double)height - viewport.originY);
-        [m_State->encoder setViewport:viewport];
+        [State->encoder setViewport:viewport];
 
-        MTLScissorRect scissor = m_ScissorValid ? m_Scissor : MTLScissorRect{ 0, 0, width, height };
+        MTLScissorRect scissor = ScissorValid ? Scissor : MTLScissorRect{ 0, 0, width, height };
         if (scissor.x >= width) scissor.x = 0;
         if (scissor.y >= height) scissor.y = 0;
         if (scissor.x + scissor.width > width) scissor.width = width - scissor.x;
         if (scissor.y + scissor.height > height) scissor.height = height - scissor.y;
         if (scissor.width == 0 || scissor.height == 0)
             scissor = MTLScissorRect{ 0, 0, width, height };
-        [m_State->encoder setScissorRect:scissor];
+        [State->encoder setScissorRect:scissor];
     }
 
     bool MetalCommandContext::ApplyPipeline()
     {
         ApplyViewport();
-        if (!m_PSO || !m_PSO->VertexFunction)
+        if (!PSO || !PSO->VertexFunction)
             return false;
 
         MTLPixelFormat colors[kMaxColors] = {};
-        for (uint32_t i = 0; i < m_State->colorCount; ++i)
-            colors[i] = m_State->colors[i] ? m_State->colors[i].pixelFormat : MTLPixelFormatInvalid;
-        MTLPixelFormat depthFormat = m_State->depth ? m_State->depth.pixelFormat : MTLPixelFormatInvalid;
-        id<MTLRenderPipelineState> pipeline = m_PSO->GetOrCreate(
-            m_State->device, colors, m_State->colorCount, depthFormat,
-            m_VertexStride ? m_VertexStride : m_PSO->LayoutStride);
+        for (uint32_t i = 0; i < State->colorCount; ++i)
+            colors[i] = State->colors[i] ? State->colors[i].pixelFormat : MTLPixelFormatInvalid;
+        MTLPixelFormat depthFormat = State->depth ? State->depth.pixelFormat : MTLPixelFormatInvalid;
+        id<MTLRenderPipelineState> pipeline = PSO->GetOrCreate(
+            State->device, colors, State->colorCount, depthFormat,
+            VertexStride ? VertexStride : PSO->LayoutStride);
         if (!pipeline)
             return false;
 
-        [m_State->encoder setRenderPipelineState:pipeline];
-        const RasterizerStateDesc& raster = m_PSO->Initializer.RasterizerState;
-        ERasterizerCullMode winding = MetalDiscardWinding(m_CullOverride ? m_CullMode : raster.CullMode);
-        [m_State->encoder setFrontFacingWinding:MTLWindingClockwise];
+        [State->encoder setRenderPipelineState:pipeline];
+        const RasterizerStateDesc& raster = PSO->Initializer.RasterizerState;
+        ERasterizerCullMode winding = MetalDiscardWinding(CullOverride ? CullMode : raster.CullMode);
+        [State->encoder setFrontFacingWinding:MTLWindingClockwise];
         MTLCullMode cullMode = MTLCullModeNone;
         switch (winding)
         {
@@ -1038,35 +1096,35 @@ namespace Kiwi
         case ERasterizerCullMode::CCW: cullMode = MTLCullModeBack; break;
         default: break;
         }
-        [m_State->encoder setCullMode:cullMode];
-        [m_State->encoder setTriangleFillMode:raster.FillMode == ERasterizerFillMode::Wireframe
+        [State->encoder setCullMode:cullMode];
+        [State->encoder setTriangleFillMode:raster.FillMode == ERasterizerFillMode::Wireframe
             ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
-        [m_State->encoder setDepthBias:raster.DepthBias slopeScale:raster.SlopeScaleDepthBias clamp:0.0f];
-        if (m_State->depth && m_PSO->Initializer.DepthEnabled)
-            [m_State->encoder setDepthStencilState:m_PSO->Initializer.DepthWrite ? m_State->depthWrite : m_State->depthRead];
+        [State->encoder setDepthBias:raster.DepthBias slopeScale:raster.SlopeScaleDepthBias clamp:0.0f];
+        if (State->depth && PSO->Initializer.DepthEnabled)
+            [State->encoder setDepthStencilState:PSO->Initializer.DepthWrite ? State->depthWrite : State->depthRead];
         else
-            [m_State->encoder setDepthStencilState:m_State->depthOff];
+            [State->encoder setDepthStencilState:State->depthOff];
 
-        if (m_VertexBuffer)
-            [m_State->encoder setVertexBuffer:m_VertexBuffer offset:0 atIndex:kVertexBufferIndex];
+        if (VertexBuffer)
+            [State->encoder setVertexBuffer:VertexBuffer offset:0 atIndex:kVertexBufferIndex];
         for (uint32_t slot = 0; slot < kMaxSlots; ++slot)
         {
-            if (m_Constants[slot].Valid)
+            if (Constants[slot].Buffer)
             {
-                [m_State->encoder setVertexBuffer:m_State->constantHeap offset:m_Constants[slot].Offset atIndex:slot];
-                [m_State->encoder setFragmentBuffer:m_State->constantHeap offset:m_Constants[slot].Offset atIndex:slot];
+                [State->encoder setVertexBuffer:Constants[slot].Buffer offset:Constants[slot].Offset atIndex:slot];
+                [State->encoder setFragmentBuffer:Constants[slot].Buffer offset:Constants[slot].Offset atIndex:slot];
             }
-            if (m_StorageBuffers[slot])
-                [m_State->encoder setVertexBuffer:m_StorageBuffers[slot] offset:0 atIndex:slot];
-            if (m_Textures[slot])
+            if (StorageBuffers[slot])
+                [State->encoder setVertexBuffer:StorageBuffers[slot] offset:0 atIndex:slot];
+            if (Textures[slot])
             {
-                [m_State->encoder setVertexTexture:m_Textures[slot] atIndex:slot];
-                [m_State->encoder setFragmentTexture:m_Textures[slot] atIndex:slot];
+                [State->encoder setVertexTexture:Textures[slot] atIndex:slot];
+                [State->encoder setFragmentTexture:Textures[slot] atIndex:slot];
             }
-            if (m_Samplers[slot])
+            if (Samplers[slot])
             {
-                [m_State->encoder setVertexSamplerState:m_Samplers[slot] atIndex:slot];
-                [m_State->encoder setFragmentSamplerState:m_Samplers[slot] atIndex:slot];
+                [State->encoder setVertexSamplerState:Samplers[slot] atIndex:slot];
+                [State->encoder setFragmentSamplerState:Samplers[slot] atIndex:slot];
             }
         }
         return true;
@@ -1084,7 +1142,7 @@ namespace Kiwi
     {
         if (!EnsureEncoder() || !ApplyPipeline())
             return;
-        [m_State->encoder drawPrimitives:m_Topology vertexStart:vertexStart vertexCount:vertexCount];
+        [State->encoder drawPrimitives:Topology vertexStart:vertexStart vertexCount:vertexCount];
     }
 
     void MetalCommandContext::DrawIndexed(uint32_t indexCount, uint32_t indexStart, int32_t vertexOffset)
@@ -1095,11 +1153,11 @@ namespace Kiwi
     void MetalCommandContext::DrawIndexedInstanced(uint32_t indexCountPerInstance, uint32_t instanceCount,
         uint32_t startIndex, int32_t baseVertex, uint32_t startInstance)
     {
-        if (!m_IndexBuffer || !instanceCount || !EnsureEncoder() || !ApplyPipeline())
+        if (!IndexBuffer || !instanceCount || !EnsureEncoder() || !ApplyPipeline())
             return;
-        [m_State->encoder drawIndexedPrimitives:m_Topology
-            indexCount:indexCountPerInstance indexType:m_IndexType indexBuffer:m_IndexBuffer
-            indexBufferOffset:(NSUInteger)startIndex * m_IndexStride instanceCount:instanceCount
+        [State->encoder drawIndexedPrimitives:Topology
+            indexCount:indexCountPerInstance indexType:IndexType indexBuffer:IndexBuffer
+            indexBufferOffset:(NSUInteger)startIndex * IndexStride instanceCount:instanceCount
             baseVertex:baseVertex baseInstance:startInstance];
     }
 

@@ -301,7 +301,7 @@ namespace Kiwi
             }
 
             // Build the Mesh using the friend access pattern
-            // Mesh::m_Vertices and m_Indices are private, so we use SetData
+            // Mesh::Vertices and Indices are private, so we use SetData
             subMesh.MeshData.SetData(std::move(vertices), std::move(indices));
 
             result.SubMeshes.push_back(std::move(subMesh));

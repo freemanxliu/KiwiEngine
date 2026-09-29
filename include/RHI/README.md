@@ -63,7 +63,7 @@ RHICommandContext ─── DX11CommandContext  DX12CommandContext  GLCommandCon
 | `CreateGraphicsPipelineState(vs, ps, layout, desc)` | 创建 MRT 管线状态 |
 | `CreateSampler()` | 创建采样器 |
 | `CreateComparisonSampler()` | 创建比较采样器（阴影 PCF） |
-| `InitImGui / ShutdownImGui / ImGuiNewFrame / ImGuiRenderDrawData` | ImGui 集成 |
+| `InitImGui / ShutdownImGui / ImGuiNewFrame / ImGuiUpdateTextures / ImGuiRenderDrawData` | ImGui 集成：游戏线程 NewFrame 和纹理更新，RHI 线程绘制 draw data 快照 |
 
 ### RHICommandContext（命令录制）
 

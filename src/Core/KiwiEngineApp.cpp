@@ -2,6 +2,7 @@
 
 #include "Core/EngineConfig.h"
 #include "Core/Platform.h"
+#include "RHI/ImGuiRHI.h"
 #include "Math/RayMath.h"
 
 #include <imgui.h>
@@ -9,36 +10,6 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
-
-namespace
-{
-
-void ComputeWorldAABB(const MeshComponent& mesh, Vec3& outMin, Vec3& outMax)
-{
-    Mat4 world = mesh.GetWorldMatrix();
-    const auto& verts = mesh.MeshData.GetVertices();
-
-    if (verts.empty())
-    {
-        outMin = outMax = mesh.Position;
-        return;
-    }
-
-    outMin = { 1e30f, 1e30f, 1e30f };
-    outMax = { -1e30f, -1e30f, -1e30f };
-
-    for (const auto& v : verts)
-    {
-        float wx = v.Position.x * world.m[0][0] + v.Position.y * world.m[1][0] + v.Position.z * world.m[2][0] + world.m[3][0];
-        float wy = v.Position.x * world.m[0][1] + v.Position.y * world.m[1][1] + v.Position.z * world.m[2][1] + world.m[3][1];
-        float wz = v.Position.x * world.m[0][2] + v.Position.y * world.m[1][2] + v.Position.z * world.m[2][2] + world.m[3][2];
-
-        outMin.x = std::min(outMin.x, wx); outMin.y = std::min(outMin.y, wy); outMin.z = std::min(outMin.z, wz);
-        outMax.x = std::max(outMax.x, wx); outMax.y = std::max(outMax.y, wy); outMax.z = std::max(outMax.z, wz);
-    }
-}
-
-} // namespace
 
 KiwiEngineApp::KiwiEngineApp()
     : Application(
@@ -96,18 +67,16 @@ void KiwiEngineApp::OnInit()
     InitRHIResources();
 
     // ---- Load default scene from file ----
-    std::string defaultScene = m_ScenesDir + "/Default.json";
+    std::string defaultScene = ScenesDir + "/Default.json";
     if (std::filesystem::exists(defaultScene))
     {
-        m_Scene.LoadFromFile(defaultScene);
+        Scene.LoadFromFile(defaultScene);
         std::cout << "[Kiwi] Loaded default scene: " << defaultScene << std::endl;
     }
     else
     {
         CreateDefaultScene(defaultScene);
     }
-
-    RebuildAllGPUBuffers();
 
     // ---- Update camera matrices ----
     UpdateCameraFromScene();
@@ -116,10 +85,10 @@ void KiwiEngineApp::OnInit()
         UpdateCameraProjection();
     });
 
-    m_Gizmo.CreateGPUResources(GetDevice());
-    m_TextureManager.Initialize(GetDevice(), GetContext());
-    m_MaterialLibrary.Initialize(m_MaterialsDir);
-    m_EditorInput.Init(GetWindow(), &m_Scene);
+    Gizmo.CreateGPUResources(GetDevice());
+    TextureManager.Initialize(GetDevice());
+    MaterialLibrary.Initialize(MaterialsDir);
+    EditorInput.Init(GetWindow(), &Scene);
 
     std::cout << "[Kiwi] Scene Editor initialized!" << std::endl;
 }
@@ -158,39 +127,39 @@ void KiwiEngineApp::ResolveAssetDirectories()
         return created;
     };
 
-    m_ShaderDir = resolveDir("Shaders", false);
-    m_PostProcessShaderDir = resolveDir("PostProcessShaders", false);
+    ShaderDir = resolveDir("Shaders", false);
+    PostProcessShaderDir = resolveDir("PostProcessShaders", false);
     if (GetCurrentRHIType() == RHI_API_TYPE::METAL)
     {
         std::string metalPost = resolveDir("MetalPostProcess", false);
         if (std::filesystem::exists(metalPost))
-            m_PostProcessShaderDir = metalPost;
+            PostProcessShaderDir = metalPost;
     }
-    std::cout << "[Kiwi] Shader directory: " << m_ShaderDir << std::endl;
-    std::cout << "[Kiwi] PostProcess shader directory: " << m_PostProcessShaderDir << std::endl;
+    std::cout << "[Kiwi] Shader directory: " << ShaderDir << std::endl;
+    std::cout << "[Kiwi] PostProcess shader directory: " << PostProcessShaderDir << std::endl;
 
-    m_ScenesDir = resolveDir("Scenes", true);
-    std::cout << "[Kiwi] Scenes directory: " << m_ScenesDir << std::endl;
-    m_TexturesDir = resolveDir("Textures", true);
-    m_GLShaderDir = resolveDir("GLShaders", false);
-    m_MaterialsDir = resolveDir("Materials", true);
+    ScenesDir = resolveDir("Scenes", true);
+    std::cout << "[Kiwi] Scenes directory: " << ScenesDir << std::endl;
+    TexturesDir = resolveDir("Textures", true);
+    GLShaderDir = resolveDir("GLShaders", false);
+    MaterialsDir = resolveDir("Materials", true);
 }
 
 // First run: build a GPU Scene debug scene (multiple primitive types, materials, lights
 // and transforms, to exercise GPU Scene offset binding) and save it to savePath.
 void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
 {
-    m_Scene.SetName("GPU Scene Debug");
+    Scene.SetName("GPU Scene Debug");
 
     // ---- Camera ----
-    auto* camObj = m_Scene.AddCameraObject("Main Camera");
+    auto* camObj = Scene.AddCameraObject("Main Camera");
     auto* cam = camObj->GetComponent<CameraComponent>();
     cam->Position = Vec3(0.0f, 5.0f, -12.0f);
     cam->Rotation = Vec3(25.0f, 0.0f, 0.0f);
     cam->FieldOfView = 45.0f;
 
     // ---- Directional Light (Sun) ----
-    auto* lightObj = m_Scene.AddDirectionalLightObject("Sun Light");
+    auto* lightObj = Scene.AddDirectionalLightObject("Sun Light");
     auto* sunLight = lightObj->GetComponent<DirectionalLightComponent>();
     if (sunLight)
     {
@@ -200,7 +169,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
     }
 
     // ---- Point Light (warm fill) ----
-    auto* pointLightObj = m_Scene.AddPointLightObject("Point Light Warm");
+    auto* pointLightObj = Scene.AddPointLightObject("Point Light Warm");
     auto* pointLight = pointLightObj->GetComponent<PointLightComponent>();
     if (pointLight)
     {
@@ -211,7 +180,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
     }
 
     // ---- Point Light (cool fill) ----
-    auto* pointLightObj2 = m_Scene.AddPointLightObject("Point Light Cool");
+    auto* pointLightObj2 = Scene.AddPointLightObject("Point Light Cool");
     auto* pointLight2 = pointLightObj2->GetComponent<PointLightComponent>();
     if (pointLight2)
     {
@@ -222,7 +191,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
     }
 
     // ---- Ground (large floor) ----
-    auto* floor = m_Scene.AddMeshObject(EPrimitiveType::Floor, "Ground");
+    auto* floor = Scene.AddMeshObject(EPrimitiveType::Floor, "Ground");
     auto* floorMesh = floor->GetComponent<MeshComponent>();
     if (floorMesh) floorMesh->Scale = { 3.0f, 1.0f, 3.0f };
 
@@ -232,7 +201,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
     {
         float x = (i - 2) * cubeSpacing;
         std::string name = "Cube_" + std::to_string(i + 1);
-        auto* cubeObj = m_Scene.AddMeshObject(EPrimitiveType::Cube, name);
+        auto* cubeObj = Scene.AddMeshObject(EPrimitiveType::Cube, name);
         auto* mesh = cubeObj->GetComponent<MeshComponent>();
         if (mesh)
         {
@@ -248,7 +217,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
     {
         float x = (i - 1.5f) * 3.0f;
         std::string name = "Sphere_" + std::to_string(i + 1);
-        auto* sphereObj = m_Scene.AddMeshObject(EPrimitiveType::Sphere, name);
+        auto* sphereObj = Scene.AddMeshObject(EPrimitiveType::Sphere, name);
         auto* mesh = sphereObj->GetComponent<MeshComponent>();
         if (mesh)
         {
@@ -262,7 +231,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
     {
         float x = (i == 0) ? -6.0f : 6.0f;
         std::string name = "Column_" + std::to_string(i + 1);
-        auto* cylObj = m_Scene.AddMeshObject(EPrimitiveType::Cylinder, name);
+        auto* cylObj = Scene.AddMeshObject(EPrimitiveType::Cylinder, name);
         auto* mesh = cylObj->GetComponent<MeshComponent>();
         if (mesh)
         {
@@ -272,7 +241,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
     }
 
     // ---- Rotated cube (tests rotation in GPU Scene) ----
-    auto* rotCubeObj = m_Scene.AddMeshObject(EPrimitiveType::Cube, "Rotated_Cube");
+    auto* rotCubeObj = Scene.AddMeshObject(EPrimitiveType::Cube, "Rotated_Cube");
     auto* rotMesh = rotCubeObj->GetComponent<MeshComponent>();
     if (rotMesh)
     {
@@ -281,25 +250,22 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
         rotMesh->Scale = { 1.2f, 1.2f, 1.2f };
     }
 
-    m_Scene.SaveToFile(savePath);
+    Scene.SaveToFile(savePath);
     std::cout << "[Kiwi] Created GPU Scene debug scene ("
-              << m_Scene.GetObjects().size() << " objects)" << std::endl;
+              << Scene.GetObjects().size() << " objects)" << std::endl;
 }
 
 void KiwiEngineApp::OnUpdate(float deltaTime)
 {
-    m_TotalTime += deltaTime;
+    TotalTime += deltaTime;
 
     // Update window title with scene name (only when changed)
     UpdateWindowTitle();
     // Camera fly navigation: hold right mouse button + WASD / arrow keys
-    m_EditorInput.Update(deltaTime);
+    EditorInput.Update(deltaTime);
 
     // Update camera matrices each frame
     UpdateCameraFromScene();
-
-    // Collect light data from scene each frame
-    CollectLightsFromScene();
 
     if (!ImGui::GetIO().WantCaptureMouse)
         HandleViewportMouse();
@@ -308,9 +274,9 @@ void KiwiEngineApp::OnUpdate(float deltaTime)
 GizmoViewInfo KiwiEngineApp::MakeGizmoViewInfo() const
 {
     GizmoViewInfo view;
-    view.View = m_ViewMatrix;
-    view.Projection = m_ProjectionMatrix;
-    view.CameraPosition = m_CameraPosition;
+    view.View = ViewMatrix;
+    view.Projection = ProjectionMatrix;
+    view.CameraPosition = CameraPosition;
     view.ScreenWidth = GetWindow()->GetWidth();
     view.ScreenHeight = GetWindow()->GetHeight();
     return view;
@@ -324,54 +290,132 @@ void KiwiEngineApp::HandleViewportMouse()
 
     if (mouse.LeftClicked)
     {
-        SceneObject* sel = m_Scene.GetSelectedObject();
-        if (!sel || !m_Gizmo.TryBeginDrag(*sel, mouse.X, mouse.Y, view))
+        SceneObject* sel = Scene.GetSelectedObject();
+        if (!sel || !Gizmo.TryBeginDrag(*sel, mouse.X, mouse.Y, view))
             PickObject(mouse.X, mouse.Y);
     }
 
-    if (m_Gizmo.IsDragging())
+    if (Gizmo.IsDragging())
     {
-        SceneObject* sel = m_Scene.GetSelectedObject();
+        SceneObject* sel = Scene.GetSelectedObject();
         if (!mouse.LeftDown)
-            m_Gizmo.EndDrag();
+            Gizmo.EndDrag();
         else if (sel)
-            m_Gizmo.UpdateDrag(*sel, mouse.X, mouse.Y, view);
+            Gizmo.UpdateDrag(*sel, mouse.X, mouse.Y, view);
     }
 }
 
+// Game thread: finish the editor frame, snapshot everything the renderer needs and hand the frame over.
 void KiwiEngineApp::OnRender()
 {
-    InitView();
-    UploadViewUB();
+    SanitizeRenderPath();
 
-    auto ctx = GetContext();
+    // Shader reload rebuilds pipelines, material shader maps and the post-process library, which both threads read.
+    if (PendingShaderReload)
+    {
+        PendingShaderReload = false;
+        FlushRenderingCommands();
+        ReloadModifiedShaders();
+    }
+
+    // ---- ImGui: built here, drawn from a copy on the RHI thread ----
+    RHIDevice* device = GetDevice();
+    device->ImGuiNewFrame();
+    ImGui::NewFrame();
+    DrawEditorUI();
+    ImGui::Render();
+    ImDrawData* drawData = ImGui::GetDrawData();
+    device->ImGuiUpdateTextures(drawData);
+
+    // Multi-viewport: windows dragged outside the main window are rendered right away by the platform backend.
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+    {
+        std::lock_guard<std::recursive_mutex> Guard(GetRHILock());
+        ImGui::UpdatePlatformWindows();
+        ImGui::RenderPlatformWindowsDefault();
+    }
+
+    // UI edits above are part of this frame.
+    RenderScene.SendAllEndOfFrameUpdates(MaterialLibrary);
+
+    auto params = std::make_shared<FrameRenderParams>();
+    BuildFrameRenderParams(*params);
+    params->ImGuiDrawData = CloneImDrawData(drawData);
+    if (ImDrawData* Snapshot = params->ImGuiDrawData.get(); Snapshot && Snapshot->DisplaySize.x > 0.0f && Snapshot->DisplaySize.y > 0.0f)
+    {
+        // ImGui reads the live window size, which can run ahead of the swap chain until the next flush + resize; its framebuffer must not exceed the back buffer.
+        Snapshot->FramebufferScale.x = std::min(Snapshot->FramebufferScale.x, (float)params->ViewWidth / Snapshot->DisplaySize.x);
+        Snapshot->FramebufferScale.y = std::min(Snapshot->FramebufferScale.y, (float)params->ViewHeight / Snapshot->DisplaySize.y);
+    }
+    EnqueueRenderCommand([this, params] { RenderFrame_RenderThread(*params); });
+}
+
+void KiwiEngineApp::BuildFrameRenderParams(FrameRenderParams& Out)
+{
+    Out.RenderPath = RenderPath;
+    Out.ViewMode = ViewMode;
+    Out.ViewMatrix = ViewMatrix;
+    Out.ProjectionMatrix = ProjectionMatrix;
+    Out.CameraPosition = CameraPosition;
+    if (const CameraComponent* Cam = Scene.GetActiveCamera())
+    {
+        Out.bHasCamera = true;
+        Out.FieldOfView = Cam->FieldOfView;
+        Out.NearPlane = Cam->NearPlane;
+        Out.FarPlane = Cam->FarPlane;
+    }
+    Out.ViewWidth = GetSwapChainWidth();
+    Out.ViewHeight = GetSwapChainHeight();
+    Out.TotalTime = TotalTime;
+    CollectActivePostProcessEffects(Out.PostProcessEffects);
+    Out.Gizmo = Gizmo.MakeDrawState(Scene.GetSelectedObject());
+    Out.RayTracingSamplesPerPixel = RayTracingSamplesPerPixel;
+    Out.RayTracingResolutionPercent = RayTracingResolutionPercent;
+}
+
+RenderStats KiwiEngineApp::GetRenderStats() const
+{
+    std::lock_guard<std::mutex> Lock(RenderStatsMutex);
+    return PublishedRenderStats;
+}
+
+RHITextureView* KiwiEngineApp::GetBackBufferRTV()
+{
+    return GetContext()->GetBackBufferRTV(GetSwapChain());
+}
+
+void KiwiEngineApp::RenderFrame_RenderThread(FrameRenderParams& Params)
+{
+    RenderParams = std::move(Params);
+    Kiwi::RenderingThread& renderingThread = GetRenderingThread();
+    RHICommandList* ctx = GetContext();
     auto swapChain = GetSwapChain();
     auto device = GetDevice();
+
+    // ---- Size-dependent targets. Submitted frames may still use the old ones. ----
+    uint32_t winW = RenderParams.ViewWidth;
+    uint32_t winH = RenderParams.ViewHeight;
+    if (OffscreenWidth != winW || OffscreenHeight != winH || GBufferWidth != winW || GBufferHeight != winH)
+    {
+        renderingThread.WaitForRHIThread();
+        if (OffscreenWidth != winW || OffscreenHeight != winH)
+            CreateOffscreenRenderTargets(device, winW, winH);
+        if (GBufferWidth != winW || GBufferHeight != winH)
+            CreateGBufferResources(device, winW, winH);
+    }
+    // Always use offscreen RT for HDR pipeline (Tonemap is always-on)
+    bool hasPostProcess = (OffscreenRT[0] != nullptr);
+
+    PrepareSceneRenderer(ResolveRenderPath());
+    ViewInfo& view = GetViewInfo();
 
     // ---- Begin frame (DX12: Reset + RootSig + DescriptorHeaps + Barrier; DX11: no-op) ----
     ctx->BeginFrame(swapChain);
 
-    // ---- Collect user post-process effects ----
-    std::vector<PostProcessMaterial*> activeEffects;
-    CollectActivePostProcessEffects(activeEffects);
+    // Apply queued primitive and light changes and upload GPU Scene once per frame, independent of the render path.
+    RenderScene.Update();
 
-    // Always use offscreen RT for HDR pipeline (Tonemap is always-on)
-    bool hasPostProcess = (m_OffscreenRT[0] != nullptr);
-
-    // ---- Ensure offscreen RT size matches window ----
-    uint32_t winW = GetWindow()->GetWidth();
-    uint32_t winH = GetWindow()->GetHeight();
-    if (m_OffscreenWidth != winW || m_OffscreenHeight != winH)
-    {
-        CreateOffscreenRenderTargets(device, winW, winH);
-        hasPostProcess = (m_OffscreenRT[0] != nullptr);
-    }
-
-    // ---- Ensure G-Buffer size matches window ----
-    if (m_GBufferWidth != winW || m_GBufferHeight != winH)
-    {
-        CreateGBufferResources(device, winW, winH);
-    }
+    view.UpdateViewUniformBuffer(RenderScene.GetLightData(), RenderScene.GetNumLights(), RenderScene.GetNumDirectionalLights());
 
     // ---- Viewport and scissor (shared) ----
     Viewport vp;
@@ -385,354 +429,101 @@ void KiwiEngineApp::OnRender()
     sr.Right = (int32_t)winW;
     sr.Bottom = (int32_t)winH;
 
-    m_PassTimer.BeginFrame();
-
-    // GL/Vulkan have no G-Buffer. Buffer visualization needs the deferred path.
-    bool canDeferred = IsDeferredRHI(GetCurrentRHIType());
-    if (!canDeferred)
-        m_RenderPath = ERenderPath::Forward;
-    if (m_RenderPath == ERenderPath::Forward && IsBufferVisualization(m_ViewMode))
-        m_ViewMode = EViewMode::Lit;
-    bool useDeferredPipeline = canDeferred && m_RenderPath == ERenderPath::Deferred;
-    if (m_RenderPath == ERenderPath::RayTracing && IsBufferVisualization(m_ViewMode))
-        m_ViewMode = EViewMode::Lit;
+    PassTimer.BeginFrame();
 
     // Determine the final scene render target (before post-process)
     // If post-process active, render to offscreen RT[0]; else to backbuffer
     RHITextureView* sceneRTV = nullptr;
     if (hasPostProcess)
     {
-        sceneRTV = m_OffscreenRTV[0].get();
-        ctx->ResourceBarrier(m_OffscreenRT[0].get(),
+        sceneRTV = OffscreenRTV[0].get();
+        ctx->ResourceBarrier(OffscreenRT[0].get(),
             RESOURCE_STATE_COMMON, RESOURCE_STATE_RENDER_TARGET);
     }
     else
     {
-        sceneRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
+        sceneRTV = GetBackBufferRTV();
     }
 
-    if (m_RenderPath == ERenderPath::RayTracing)
-        RenderRayTracing(ctx, sceneRTV, vp, sr);
-    else if (useDeferredPipeline && m_GBufferPSO && m_GBufferRT[0])
-        RenderDeferred(ctx, sceneRTV, vp, sr);
-    else
-        RenderForward(ctx, sceneRTV, vp, sr);
-
+    SceneRenderer->Render(ctx, sceneRTV, vp, sr);
 
     // ---- Post-Process Pass (always runs — HDR Tonemap is built-in) ----
     if (hasPostProcess)
     {
         ctx->BeginEvent("Post-Process Pass");
-        m_PassTimer.Begin("Post-Process Pass");
-        ExecutePostProcessPasses(ctx, device, activeEffects, swapChain);
-        m_PassTimer.End();
+        PassTimer.Begin("Post-Process Pass");
+        ExecutePostProcessPasses(ctx, RenderParams.PostProcessEffects);
+        PassTimer.End();
         ctx->EndEvent();
     }
 
     // ---- ImGui ----
     ctx->BeginEvent("ImGui Pass");
-    m_PassTimer.Begin("ImGui Pass");
+    PassTimer.Begin("ImGui Pass");
     // ImGui always renders to the backbuffer
-    auto backBufferRTV = swapChain->GetBackBufferRTV(swapChain->GetCurrentBackBufferIndex());
+    auto backBufferRTV = GetBackBufferRTV();
     ctx->SetRenderTargets(&backBufferRTV, 1, nullptr);
     ctx->SetViewports(&vp, 1);
     ctx->SetScissorRects(&sr, 1);
-
-    device->ImGuiNewFrame();
-    ImGui::NewFrame();
-
-    DrawEditorUI();
-
-    ImGui::Render();
-    device->ImGuiRenderDrawData(ctx);
-
-    // Multi-viewport: render windows that have been dragged outside the main window
-    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-    {
-        ImGui::UpdatePlatformWindows();
-        ImGui::RenderPlatformWindowsDefault();
-    }
-
-    m_PassTimer.End();
+    ctx->RenderImGui(std::move(RenderParams.ImGuiDrawData));
+    PassTimer.End();
     ctx->EndEvent();
 
-    m_PassTimer.EndFrame();
-
-    // ---- Hot-reload shaders after all rendering is done ----
-    if (m_PendingShaderReload)
-    {
-        m_PendingShaderReload = false;
-        ReloadModifiedShaders();
-    }
+    PassTimer.EndFrame();
 
     // ---- End frame (DX12: BackBuffer->Present barrier; DX11: no-op) ----
     ctx->EndFrame(swapChain);
-
     ctx->Flush();
+    ctx->Present(swapChain, 1); // VSync ON
+
+    PublishRenderStats();
+    renderingThread.SubmitCommandList(swapChain);
+}
+
+void KiwiEngineApp::PublishRenderStats()
+{
+    std::lock_guard<std::mutex> Lock(RenderStatsMutex);
+    PublishedRenderStats.PassTimings = PassTimer.GetEntries();
+    PublishedRenderStats.FrameTotalMs = PassTimer.GetFrameTotalMs();
+    PublishedRenderStats.VisibleItems = SceneRenderer ? (uint32_t)GetViewInfo().VisibleItems.size() : 0;
+    PublishedRenderStats.RayTraceWidth = RayTraceWidth;
+    PublishedRenderStats.RayTraceHeight = RayTraceHeight;
 }
 
 void KiwiEngineApp::UpdateWindowTitle()
 {
-    std::string title = "Kiwi Engine - " + m_Scene.GetName();
-    if (title != m_LastWindowTitle)
+    std::string title = "Kiwi Engine - " + Scene.GetName();
+    if (title != LastWindowTitle)
     {
-        m_LastWindowTitle = title;
+        LastWindowTitle = title;
         GetWindow()->SetTitle(title);
     }
 }
 
 void KiwiEngineApp::UpdateCameraFromScene()
 {
-    auto* cam = m_Scene.GetActiveCamera();
+    auto* cam = Scene.GetActiveCamera();
     if (cam)
     {
         cam->UpdateViewMatrix();
         float aspect = (float)GetWindow()->GetWidth() / (float)GetWindow()->GetHeight();
         cam->UpdateProjectionMatrix(aspect);
 
-        m_ViewMatrix = cam->ViewMatrix;
-        m_ProjectionMatrix = cam->ProjectionMatrix;
-        m_CameraPosition = cam->Position;
+        ViewMatrix = cam->ViewMatrix;
+        ProjectionMatrix = cam->ProjectionMatrix;
+        CameraPosition = cam->Position;
     }
 }
 
 void KiwiEngineApp::UpdateCameraProjection()
 {
-    auto* cam = m_Scene.GetActiveCamera();
+    auto* cam = Scene.GetActiveCamera();
     if (cam)
     {
         float aspect = (float)GetWindow()->GetWidth() / (float)GetWindow()->GetHeight();
         cam->UpdateProjectionMatrix(aspect);
-        m_ProjectionMatrix = cam->ProjectionMatrix;
+        ProjectionMatrix = cam->ProjectionMatrix;
     }
-}
-
-// Collect all active light components from the scene into the GPU cache
-void KiwiEngineApp::CollectLightsFromScene()
-{
-    m_NumActiveLights = 0;
-    memset(m_LightDataCache, 0, sizeof(m_LightDataCache));
-
-    for (auto& objPtr : m_Scene.GetObjects())
-    {
-        if (m_NumActiveLights >= MAX_LIGHTS) break;
-
-        auto& obj = *objPtr;
-
-        // Check all light components on this object
-        auto lights = obj.GetComponents<LightComponent>();
-        for (auto* light : lights)
-        {
-            if (!light || !light->Enabled || !light->AffectWorld) continue;
-            if (m_NumActiveLights >= MAX_LIGHTS) break;
-
-            auto& gpuLight = m_LightDataCache[m_NumActiveLights];
-
-            // Color * Intensity
-            gpuLight.ColorIntensity[0] = light->LightColor.x * light->Intensity;
-            gpuLight.ColorIntensity[1] = light->LightColor.y * light->Intensity;
-            gpuLight.ColorIntensity[2] = light->LightColor.z * light->Intensity;
-
-            if (light->GetLightType() == ELightType::Directional)
-            {
-                gpuLight.Type = 0; // Directional
-                Vec3 fwd = light->GetForward();
-                gpuLight.DirectionOrPos[0] = fwd.x;
-                gpuLight.DirectionOrPos[1] = fwd.y;
-                gpuLight.DirectionOrPos[2] = fwd.z;
-                gpuLight.Radius = 0.0f;
-            }
-            else // Point
-            {
-                gpuLight.Type = 1; // Point
-                gpuLight.DirectionOrPos[0] = light->Position.x;
-                gpuLight.DirectionOrPos[1] = light->Position.y;
-                gpuLight.DirectionOrPos[2] = light->Position.z;
-                auto* pointLight = dynamic_cast<PointLightComponent*>(light);
-                gpuLight.Radius = pointLight ? pointLight->Radius : 10.0f;
-            }
-
-            m_NumActiveLights++;
-        }
-    }
-
-    // Deferred lighting draws directional and point lights as two instanced ranges of g_Lights.
-    auto* lightsEnd = std::stable_partition(m_LightDataCache, m_LightDataCache + m_NumActiveLights,
-        [](const GPULightData& light) { return light.Type == 0; });
-    m_NumDirectionalLights = (int)(lightsEnd - m_LightDataCache);
-}
-
-void KiwiEngineApp::InitView()
-{
-    m_RenderList.clear();
-
-    auto& objects = m_Scene.GetObjects();
-    if (objects.empty()) return;
-
-    // Build frustum from current view-projection
-    Mat4 vp = m_ViewMatrix * m_ProjectionMatrix;
-    Frustum frustum;
-    frustum.ExtractFromViewProjection(vp);
-
-    // Get camera position for distance calculation
-    Vec3 camPos = m_CameraPosition;
-
-    // Frustum cull and collect visible mesh components
-    for (size_t i = 0; i < objects.size(); i++)
-    {
-        auto& obj = *objects[i];
-        auto* meshComp = obj.GetComponent<MeshComponent>();
-        if (!meshComp || !meshComp->Enabled) continue;
-
-        // Compute world AABB
-        AABB worldAABB;
-        ComputeWorldAABB(*meshComp, worldAABB.Min, worldAABB.Max);
-
-        // Frustum test
-        if (!frustum.TestAABB(worldAABB))
-            continue; // Object is completely outside frustum — skip
-
-        // Compute distance from object center to camera
-        Vec3 center = worldAABB.GetCenter();
-        Vec3 diff = center - camPos;
-        float distSq = diff.Dot(diff); // Squared distance (avoid sqrt for perf)
-
-        RenderItem item;
-        item.ObjectIndex = i;
-        item.MeshComp = meshComp;
-        item.SortOrder = meshComp->SortOrder;
-        item.DistToCamera = distSq;
-        // DC merge keys: group by mesh type + material
-        item.MeshID = (uint32_t)meshComp->PrimitiveType;
-        item.MaterialName = meshComp->Material.Parent.c_str();
-        item.BatchKey = MakeMeshBatchKey(item, m_MaterialLibrary);
-        m_RenderList.push_back(item);
-    }
-
-    // Same key as mesh batching. Distance only orders draws inside one batch.
-    std::sort(m_RenderList.begin(), m_RenderList.end(),
-        [](const RenderItem& a, const RenderItem& b)
-        {
-            int keyCmp = a.BatchKey.Compare(b.BatchKey);
-            if (keyCmp != 0)
-                return keyCmp < 0;
-            return a.DistToCamera < b.DistToCamera;
-        });
-}
-
-void KiwiEngineApp::RebuildAllGPUBuffers()
-{
-    auto device = GetDevice();
-    auto& objects = m_Scene.GetObjects();
-
-    // ---- Shared Mesh Pool: same EPrimitiveType shares one VB/IB ----
-    m_SharedMeshPool.clear();
-    m_GPUMeshes.resize(objects.size());
-
-    // Map: PrimitiveType -> index in m_SharedMeshPool
-    std::unordered_map<int, size_t> meshTypeToPoolIndex;
-
-    for (size_t i = 0; i < objects.size(); i++)
-    {
-        auto& obj = *objects[i];
-        auto& gpu = m_GPUMeshes[i];
-
-        auto* meshComp = obj.GetComponent<MeshComponent>();
-        if (!meshComp)
-        {
-            gpu.VertexBuffer.reset();
-            gpu.IndexBuffer.reset();
-            gpu.VertexCount = 0;
-            gpu.IndexCount = 0;
-            continue;
-        }
-
-        int primType = (int)meshComp->PrimitiveType;
-
-        // Check if we already have a shared VB/IB for this primitive type
-        auto it = meshTypeToPoolIndex.find(primType);
-        if (it != meshTypeToPoolIndex.end())
-        {
-            // Reuse existing shared mesh — point to same VB/IB
-            auto& shared = m_SharedMeshPool[it->second];
-            gpu.VertexBuffer.reset();  // No owned buffer — use shared
-            gpu.IndexBuffer.reset();
-            gpu.VertexCount = shared.VertexCount;
-            gpu.IndexCount  = shared.IndexCount;
-        }
-        else
-        {
-            // First instance of this primitive type — create VB/IB and share
-            gpu.VertexCount = meshComp->MeshData.GetVertexCount();
-            gpu.IndexCount = meshComp->MeshData.GetIndexCount();
-
-            if (gpu.VertexCount == 0 || gpu.IndexCount == 0) continue;
-
-            std::string typeName = std::to_string(primType);
-            std::string vbName = "SharedVB_Type" + typeName;
-            std::string ibName = "SharedIB_Type" + typeName;
-
-            BufferDesc vbDesc;
-            vbDesc.SizeInBytes = gpu.VertexCount * sizeof(Vertex);
-            vbDesc.BindFlags = BUFFER_USAGE_VERTEX;
-            vbDesc.Usage = EResourceUsage::Immutable;
-            vbDesc.DebugName = vbName.c_str();
-            gpu.VertexBuffer = device->CreateBuffer(vbDesc, meshComp->MeshData.GetVertices().data());
-
-            BufferDesc ibDesc;
-            ibDesc.SizeInBytes = gpu.IndexCount * sizeof(uint32_t);
-            ibDesc.BindFlags = BUFFER_USAGE_INDEX;
-            ibDesc.Usage = EResourceUsage::Immutable;
-            ibDesc.DebugName = ibName.c_str();
-            gpu.IndexBuffer = device->CreateBuffer(ibDesc, meshComp->MeshData.GetIndices().data());
-
-            // Register in shared pool
-            SharedMeshEntry entry;
-            entry.VertexBuffer = gpu.VertexBuffer.get();
-            entry.IndexBuffer  = gpu.IndexBuffer.get();
-            entry.VertexCount  = gpu.VertexCount;
-            entry.IndexCount   = gpu.IndexCount;
-            entry.MeshID       = primType;
-
-            meshTypeToPoolIndex[primType] = m_SharedMeshPool.size();
-            m_SharedMeshPool.push_back(entry);
-        }
-    }
-
-    std::cout << "[Kiwi] Shared Mesh Pool: " << m_SharedMeshPool.size()
-              << " unique meshes for " << objects.size() << " objects" << std::endl;
-}
-
-// Get shared mesh entry for a given object (returns non-owning pointers)
-SharedMeshEntry KiwiEngineApp::GetSharedMesh(size_t objectIndex) const
-{
-    if (objectIndex >= m_GPUMeshes.size()) return {};
-    auto& gpu = m_GPUMeshes[objectIndex];
-
-    // If this GPUMeshData owns its own VB/IB, return it directly
-    if (gpu.VertexBuffer)
-    {
-        SharedMeshEntry e;
-        e.VertexBuffer = gpu.VertexBuffer.get();
-        e.IndexBuffer  = gpu.IndexBuffer.get();
-        e.VertexCount  = gpu.VertexCount;
-        e.IndexCount   = gpu.IndexCount;
-        return e;
-    }
-
-    // Otherwise, find shared entry by primitive type
-    auto& objects = m_Scene.GetObjects();
-    if (objectIndex >= objects.size()) return {};
-    auto* meshComp = objects[objectIndex]->GetComponent<MeshComponent>();
-    if (!meshComp) return {};
-
-    int primType = (int)meshComp->PrimitiveType;
-    for (auto& entry : m_SharedMeshPool)
-    {
-        if (entry.MeshID == (uint32_t)primType)
-            return entry;
-    }
-    return {};
 }
 
 void KiwiEngineApp::PickObject(int mouseX, int mouseY)
@@ -740,12 +531,12 @@ void KiwiEngineApp::PickObject(int mouseX, int mouseY)
     uint32_t w = GetWindow()->GetWidth();
     uint32_t h = GetWindow()->GetHeight();
 
-    Ray ray = ScreenToRay(mouseX, mouseY, w, h, m_ViewMatrix, m_ProjectionMatrix);
+    Ray ray = ScreenToRay(mouseX, mouseY, w, h, ViewMatrix, ProjectionMatrix);
 
     float closestT = 1e30f;
     int32_t closestID = -1;
 
-    for (auto& objPtr : m_Scene.GetObjects())
+    for (auto& objPtr : Scene.GetObjects())
     {
         auto& obj = *objPtr;
         auto* meshComp = obj.GetComponent<MeshComponent>();
@@ -766,7 +557,7 @@ void KiwiEngineApp::PickObject(int mouseX, int mouseY)
     }
 
     if (closestID >= 0)
-        m_Scene.SelectObject((uint32_t)closestID);
+        Scene.SelectObject((uint32_t)closestID);
     else
-        m_Scene.DeselectAll();
+        Scene.DeselectAll();
 }

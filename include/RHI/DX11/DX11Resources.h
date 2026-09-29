@@ -15,22 +15,22 @@ namespace Kiwi
     {
     public:
         DX11Buffer(ID3D11Buffer* buffer, ID3D11DeviceContext* context, const BufferDesc& desc)
-            : m_Buffer(buffer), m_Context(context), m_Desc(desc) {}
+            : Buffer(buffer), Context(context), Desc(desc) {}
 
-        void* GetNativeHandle() const override { return m_Buffer.Get(); }
-        const BufferDesc& GetDesc() const override { return m_Desc; }
+        void* GetNativeHandle() const override { return Buffer.Get(); }
+        const BufferDesc& GetDesc() const override { return Desc; }
 
         void* Map(uint32_t /*subresource*/ = 0) override
         {
             D3D11_MAPPED_SUBRESOURCE mapped;
-            HRESULT hr = m_Context->Map(m_Buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+            HRESULT hr = Context->Map(Buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
             if (FAILED(hr)) return nullptr;
             return mapped.pData;
         }
 
         void Unmap(uint32_t /*subresource*/ = 0) override
         {
-            m_Context->Unmap(m_Buffer.Get(), 0);
+            Context->Unmap(Buffer.Get(), 0);
         }
 
         void UpdateData(const void* data, uint32_t size, uint32_t offset = 0) override
@@ -42,15 +42,15 @@ namespace Kiwi
             box.right = offset + size;
             box.bottom = 1;
             box.back = 1;
-            m_Context->UpdateSubresource(m_Buffer.Get(), 0, offset == 0 && size == m_Desc.SizeInBytes ? nullptr : &box, data, size, 0);
+            Context->UpdateSubresource(Buffer.Get(), 0, offset == 0 && size == Desc.SizeInBytes ? nullptr : &box, data, size, 0);
         }
 
-        ID3D11Buffer* GetD3DBuffer() const { return m_Buffer.Get(); }
+        ID3D11Buffer* GetD3DBuffer() const { return Buffer.Get(); }
 
     private:
-        ComPtr<ID3D11Buffer> m_Buffer;
-        ComPtr<ID3D11DeviceContext> m_Context;
-        BufferDesc m_Desc;
+        ComPtr<ID3D11Buffer> Buffer;
+        ComPtr<ID3D11DeviceContext> Context;
+        BufferDesc Desc;
     };
 
     // ============================================================
@@ -61,16 +61,16 @@ namespace Kiwi
     {
     public:
         DX11Texture(ID3D11Resource* resource, const TextureDesc& desc)
-            : m_Texture(resource), m_Desc(desc) {}
+            : Texture(resource), Desc(desc) {}
 
-        void* GetNativeHandle() const override { return m_Texture.Get(); }
-        const TextureDesc& GetDesc() const override { return m_Desc; }
+        void* GetNativeHandle() const override { return Texture.Get(); }
+        const TextureDesc& GetDesc() const override { return Desc; }
 
-        ID3D11Resource* GetD3DResource() const { return m_Texture.Get(); }
+        ID3D11Resource* GetD3DResource() const { return Texture.Get(); }
 
     private:
-        ComPtr<ID3D11Resource> m_Texture;
-        TextureDesc m_Desc;
+        ComPtr<ID3D11Resource> Texture;
+        TextureDesc Desc;
     };
 
     // ============================================================
@@ -81,34 +81,34 @@ namespace Kiwi
     {
     public:
         DX11TextureView(ID3D11RenderTargetView* rtv)
-            : m_RTV(rtv), m_Type(Type::RTV) {}
+            : RTV(rtv), ViewType(Type::RTV) {}
         DX11TextureView(ID3D11DepthStencilView* dsv)
-            : m_DSV(dsv), m_Type(Type::DSV) {}
+            : DSV(dsv), ViewType(Type::DSV) {}
         DX11TextureView(ID3D11ShaderResourceView* srv)
-            : m_SRV(srv), m_Type(Type::SRV) {}
+            : SRV(srv), ViewType(Type::SRV) {}
 
         void* GetNativeHandle() const override
         {
-            switch (m_Type)
+            switch (ViewType)
             {
-            case Type::RTV: return m_RTV.Get();
-            case Type::DSV: return m_DSV.Get();
-            case Type::SRV: return m_SRV.Get();
+            case Type::RTV: return RTV.Get();
+            case Type::DSV: return DSV.Get();
+            case Type::SRV: return SRV.Get();
             default: return nullptr;
             }
         }
 
-        ID3D11RenderTargetView* AsRTV() const { return (m_Type == Type::RTV) ? m_RTV.Get() : nullptr; }
-        ID3D11DepthStencilView* AsDSV() const { return (m_Type == Type::DSV) ? m_DSV.Get() : nullptr; }
-        ID3D11ShaderResourceView* AsSRV() const { return (m_Type == Type::SRV) ? m_SRV.Get() : nullptr; }
+        ID3D11RenderTargetView* AsRTV() const { return (ViewType == Type::RTV) ? RTV.Get() : nullptr; }
+        ID3D11DepthStencilView* AsDSV() const { return (ViewType == Type::DSV) ? DSV.Get() : nullptr; }
+        ID3D11ShaderResourceView* AsSRV() const { return (ViewType == Type::SRV) ? SRV.Get() : nullptr; }
 
     private:
         enum class Type { RTV, DSV, SRV };
-        Type m_Type;
+        Type ViewType;
 
-        ComPtr<ID3D11RenderTargetView>     m_RTV;
-        ComPtr<ID3D11DepthStencilView>     m_DSV;
-        ComPtr<ID3D11ShaderResourceView>   m_SRV;
+        ComPtr<ID3D11RenderTargetView>     RTV;
+        ComPtr<ID3D11DepthStencilView>     DSV;
+        ComPtr<ID3D11ShaderResourceView>   SRV;
     };
 
     // ============================================================
@@ -119,35 +119,35 @@ namespace Kiwi
     {
     public:
         DX11Shader(EShaderType type, ID3DBlob* blob)
-            : m_Type(type), m_Blob(blob) {}
+            : Type(type), Blob(blob) {}
 
-        void* GetNativeHandle() const override { return m_Blob->GetBufferPointer(); }
-        EShaderType GetType() const override { return m_Type; }
+        void* GetNativeHandle() const override { return Blob->GetBufferPointer(); }
+        EShaderType GetType() const override { return Type; }
 
-        ID3DBlob* GetBlob() const { return m_Blob.Get(); }
+        ID3DBlob* GetBlob() const { return Blob.Get(); }
 
         // 获取具体的 DX11 shader 接口
-        ID3D11VertexShader*   AsVertexShader()   const { return m_VertexShader.Get(); }
-        ID3D11PixelShader*    AsPixelShader()    const { return m_PixelShader.Get(); }
-        ID3D11GeometryShader* AsGeometryShader() const { return m_GeometryShader.Get(); }
+        ID3D11VertexShader*   AsVertexShader()   const { return VertexShader.Get(); }
+        ID3D11PixelShader*    AsPixelShader()    const { return PixelShader.Get(); }
+        ID3D11GeometryShader* AsGeometryShader() const { return GeometryShader.Get(); }
 
         void SetD3D11Shader(ID3D11DeviceChild* shader)
         {
-            if (m_Type == EShaderType::Vertex)
-                m_VertexShader = static_cast<ID3D11VertexShader*>(shader);
-            else if (m_Type == EShaderType::Pixel)
-                m_PixelShader = static_cast<ID3D11PixelShader*>(shader);
-            else if (m_Type == EShaderType::Geometry)
-                m_GeometryShader = static_cast<ID3D11GeometryShader*>(shader);
+            if (Type == EShaderType::Vertex)
+                VertexShader = static_cast<ID3D11VertexShader*>(shader);
+            else if (Type == EShaderType::Pixel)
+                PixelShader = static_cast<ID3D11PixelShader*>(shader);
+            else if (Type == EShaderType::Geometry)
+                GeometryShader = static_cast<ID3D11GeometryShader*>(shader);
         }
 
     private:
-        EShaderType m_Type;
-        ComPtr<ID3DBlob> m_Blob;
+        EShaderType Type;
+        ComPtr<ID3DBlob> Blob;
 
-        ComPtr<ID3D11VertexShader>   m_VertexShader;
-        ComPtr<ID3D11PixelShader>    m_PixelShader;
-        ComPtr<ID3D11GeometryShader> m_GeometryShader;
+        ComPtr<ID3D11VertexShader>   VertexShader;
+        ComPtr<ID3D11PixelShader>    PixelShader;
+        ComPtr<ID3D11GeometryShader> GeometryShader;
     };
 
     // ============================================================
@@ -158,13 +158,13 @@ namespace Kiwi
     {
     public:
         DX11InputLayout(ID3D11InputLayout* layout)
-            : m_Layout(layout) {}
+            : Layout(layout) {}
 
-        void* GetNativeHandle() const override { return m_Layout.Get(); }
-        ID3D11InputLayout* GetD3DLayout() const { return m_Layout.Get(); }
+        void* GetNativeHandle() const override { return Layout.Get(); }
+        ID3D11InputLayout* GetD3DLayout() const { return Layout.Get(); }
 
     private:
-        ComPtr<ID3D11InputLayout> m_Layout;
+        ComPtr<ID3D11InputLayout> Layout;
     };
 
     // ============================================================
@@ -176,22 +176,22 @@ namespace Kiwi
     public:
         DX11PipelineState() = default;
 
-        void SetBlendState(ID3D11BlendState* bs)    { m_BlendState = bs; }
-        void SetRasterizerState(ID3D11RasterizerState* rs) { m_RasterizerState = rs; }
-        void SetDepthStencilState(ID3D11DepthStencilState* ds) { m_DepthStencilState = ds; }
+        void SetBlendState(ID3D11BlendState* bs)    { BlendState = bs; }
+        void SetRasterizerState(ID3D11RasterizerState* rs) { RasterizerState = rs; }
+        void SetDepthStencilState(ID3D11DepthStencilState* ds) { DepthStencilState = ds; }
 
-        ID3D11BlendState* GetBlendState() const { return m_BlendState.Get(); }
-        ID3D11RasterizerState* GetRasterizerState() const { return m_RasterizerState.Get(); }
-        ID3D11DepthStencilState* GetDepthStencilState() const { return m_DepthStencilState.Get(); }
+        ID3D11BlendState* GetBlendState() const { return BlendState.Get(); }
+        ID3D11RasterizerState* GetRasterizerState() const { return RasterizerState.Get(); }
+        ID3D11DepthStencilState* GetDepthStencilState() const { return DepthStencilState.Get(); }
 
         RasterizerStateDesc Rasterizer;
 
         void* GetNativeHandle() const override { return nullptr; } // DX11 没有 PSO 对象
 
     private:
-        ComPtr<ID3D11BlendState>         m_BlendState;
-        ComPtr<ID3D11RasterizerState>    m_RasterizerState;
-        ComPtr<ID3D11DepthStencilState>  m_DepthStencilState;
+        ComPtr<ID3D11BlendState>         BlendState;
+        ComPtr<ID3D11RasterizerState>    RasterizerState;
+        ComPtr<ID3D11DepthStencilState>  DepthStencilState;
     };
 
     // ============================================================
@@ -201,12 +201,12 @@ namespace Kiwi
     class DX11Sampler : public RHISampler
     {
     public:
-        DX11Sampler(ID3D11SamplerState* sampler) : m_Sampler(sampler) {}
-        void* GetNativeHandle() const override { return m_Sampler.Get(); }
-        ID3D11SamplerState* GetD3DSampler() const { return m_Sampler.Get(); }
+        DX11Sampler(ID3D11SamplerState* sampler) : Sampler(sampler) {}
+        void* GetNativeHandle() const override { return Sampler.Get(); }
+        ID3D11SamplerState* GetD3DSampler() const { return Sampler.Get(); }
 
     private:
-        ComPtr<ID3D11SamplerState> m_Sampler;
+        ComPtr<ID3D11SamplerState> Sampler;
     };
 
 } // namespace Kiwi

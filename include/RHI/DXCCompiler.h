@@ -35,7 +35,7 @@ namespace Kiwi
         static DXCCompiler& Get();
 
         // Check if DXC is available (dxcompiler.dll loaded successfully)
-        bool IsAvailable() const { return m_Compiler != nullptr; }
+        bool IsAvailable() const { return Compiler != nullptr; }
 
         // Compile HLSL source to shader bytecode
         // shaderModel: e.g. "vs_5_0", "ps_6_0"
@@ -54,9 +54,9 @@ namespace Kiwi
         DXCCompiler(const DXCCompiler&) = delete;
         DXCCompiler& operator=(const DXCCompiler&) = delete;
 
-        HMODULE m_DxcModule = nullptr;
-        ComPtr<IDxcCompiler3> m_Compiler;
-        ComPtr<IDxcUtils>     m_Utils;
+        HMODULE DxcModule = nullptr;
+        ComPtr<IDxcCompiler3> Compiler;
+        ComPtr<IDxcUtils>     Utils;
     };
 
 } // namespace Kiwi

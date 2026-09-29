@@ -2,6 +2,9 @@
 
 #include "RHI/RHI.h"
 #include "RHI/DX12/DX12Headers.h"
+#include "RHI/ConstantBufferVersioning.h"
+#include <algorithm>
+#include <memory>
 #include <vector>
 
 namespace Kiwi
@@ -16,40 +19,55 @@ namespace Kiwi
     public:
         DX12Buffer(ID3D12Resource* resource, const BufferDesc& desc,
                    void* mappedPtr = nullptr)
-            : m_Resource(resource), m_Desc(desc), m_MappedPtr(mappedPtr) {}
+            : Resource(resource), Desc(desc), MappedPtr(mappedPtr) {}
+
+        DX12Buffer(ConstantUploadAllocator* allocator, const BufferDesc& desc, const void* initialData)
+            : Desc(desc)
+            , Constant(std::make_unique<VersionedConstantBuffer>(allocator, (std::max)(desc.SizeInBytes, 16u), initialData)) {}
 
         ~DX12Buffer() override
         {
-            if (m_MappedPtr && m_Resource)
+            if (MappedPtr && Resource)
             {
-                m_Resource->Unmap(0, nullptr);
-                m_MappedPtr = nullptr;
+                Resource->Unmap(0, nullptr);
+                MappedPtr = nullptr;
             }
         }
 
-        void* GetNativeHandle() const override { return m_Resource.Get(); }
-        const BufferDesc& GetDesc() const override { return m_Desc; }
+        void* GetNativeHandle() const override { return Resource.Get(); }
+        const BufferDesc& GetDesc() const override { return Desc; }
 
         void* Map(uint32_t subresource = 0) override
         {
-            if (m_MappedPtr) return m_MappedPtr;
+            if (Constant) return Constant->Map();
+            if (MappedPtr) return MappedPtr;
             D3D12_RANGE readRange = { 0, 0 };
-            HRESULT hr = m_Resource->Map(0, &readRange, &m_MappedPtr);
+            HRESULT hr = Resource->Map(0, &readRange, &MappedPtr);
             if (FAILED(hr)) return nullptr;
-            return m_MappedPtr;
+            return MappedPtr;
         }
 
         void Unmap(uint32_t subresource = 0) override
         {
-            if (m_MappedPtr)
+            if (Constant)
             {
-                m_Resource->Unmap(0, nullptr);
-                m_MappedPtr = nullptr;
+                Constant->Unmap();
+                return;
+            }
+            if (MappedPtr)
+            {
+                Resource->Unmap(0, nullptr);
+                MappedPtr = nullptr;
             }
         }
 
         void UpdateData(const void* data, uint32_t size, uint32_t offset = 0) override
         {
+            if (Constant)
+            {
+                Constant->UpdateData(data, size, offset);
+                return;
+            }
             void* mapped = Map();
             if (mapped)
             {
@@ -58,13 +76,19 @@ namespace Kiwi
             }
         }
 
-        ID3D12Resource* GetD3DResource() const { return m_Resource.Get(); }
-        D3D12_GPU_VIRTUAL_ADDRESS GetGPUVirtualAddress() const { return m_Resource->GetGPUVirtualAddress(); }
+        ID3D12Resource* GetD3DResource() const { return Resource.Get(); }
+        D3D12_GPU_VIRTUAL_ADDRESS GetGPUVirtualAddress() const
+        {
+            if (Constant)
+                return Constant->GetCurrent().GpuAddress;
+            return Resource->GetGPUVirtualAddress();
+        }
 
     private:
-        ComPtr<ID3D12Resource> m_Resource;
-        BufferDesc m_Desc;
-        void* m_MappedPtr = nullptr;
+        ComPtr<ID3D12Resource> Resource;
+        BufferDesc Desc;
+        void* MappedPtr = nullptr;
+        std::unique_ptr<VersionedConstantBuffer> Constant;
     };
 
     // ============================================================
@@ -75,15 +99,15 @@ namespace Kiwi
     {
     public:
         DX12Texture(ID3D12Resource* resource, const TextureDesc& desc)
-            : m_Resource(resource), m_Desc(desc) {}
+            : Resource(resource), Desc(desc) {}
 
-        void* GetNativeHandle() const override { return m_Resource.Get(); }
-        const TextureDesc& GetDesc() const override { return m_Desc; }
-        ID3D12Resource* GetD3DResource() const { return m_Resource.Get(); }
+        void* GetNativeHandle() const override { return Resource.Get(); }
+        const TextureDesc& GetDesc() const override { return Desc; }
+        ID3D12Resource* GetD3DResource() const { return Resource.Get(); }
 
     private:
-        ComPtr<ID3D12Resource> m_Resource;
-        TextureDesc m_Desc;
+        ComPtr<ID3D12Resource> Resource;
+        TextureDesc Desc;
     };
 
     // ============================================================
@@ -94,17 +118,17 @@ namespace Kiwi
     {
     public:
         DX12TextureView(D3D12_CPU_DESCRIPTOR_HANDLE handle)
-            : m_Handle(handle) {}
+            : Handle(handle) {}
 
-        void* GetNativeHandle() const override { return (void*)m_Handle.ptr; }
-        D3D12_CPU_DESCRIPTOR_HANDLE GetCPUHandle() const { return m_Handle; }
+        void* GetNativeHandle() const override { return (void*)Handle.ptr; }
+        D3D12_CPU_DESCRIPTOR_HANDLE GetCPUHandle() const { return Handle; }
 
         // For SRV views: hold the CPU-only descriptor heap so it's not destroyed
-        void SetSRVHeap(ComPtr<ID3D12DescriptorHeap> heap) { m_SRVHeap = std::move(heap); }
+        void SetSRVHeap(ComPtr<ID3D12DescriptorHeap> heap) { SRVHeap = std::move(heap); }
 
     private:
-        D3D12_CPU_DESCRIPTOR_HANDLE m_Handle;
-        ComPtr<ID3D12DescriptorHeap> m_SRVHeap; // Optional: owns the CPU descriptor heap for SRV
+        D3D12_CPU_DESCRIPTOR_HANDLE Handle;
+        ComPtr<ID3D12DescriptorHeap> SRVHeap; // Optional: owns the CPU descriptor heap for SRV
     };
 
     // ============================================================
@@ -115,15 +139,15 @@ namespace Kiwi
     {
     public:
         DX12Shader(EShaderType type, ID3DBlob* blob)
-            : m_Type(type), m_Blob(blob) {}
+            : Type(type), Blob(blob) {}
 
-        void* GetNativeHandle() const override { return m_Blob->GetBufferPointer(); }
-        EShaderType GetType() const override { return m_Type; }
-        ID3DBlob* GetBlob() const { return m_Blob.Get(); }
+        void* GetNativeHandle() const override { return Blob->GetBufferPointer(); }
+        EShaderType GetType() const override { return Type; }
+        ID3DBlob* GetBlob() const { return Blob.Get(); }
 
     private:
-        EShaderType m_Type;
-        ComPtr<ID3DBlob> m_Blob;
+        EShaderType Type;
+        ComPtr<ID3DBlob> Blob;
     };
 
     // ============================================================
@@ -134,13 +158,13 @@ namespace Kiwi
     {
     public:
         DX12InputLayout(const std::vector<D3D12_INPUT_ELEMENT_DESC>& elements)
-            : m_Elements(elements) {}
+            : Elements(elements) {}
 
-        void* GetNativeHandle() const override { return (void*)m_Elements.data(); }
-        const std::vector<D3D12_INPUT_ELEMENT_DESC>& GetElements() const { return m_Elements; }
+        void* GetNativeHandle() const override { return (void*)Elements.data(); }
+        const std::vector<D3D12_INPUT_ELEMENT_DESC>& GetElements() const { return Elements; }
 
     private:
-        std::vector<D3D12_INPUT_ELEMENT_DESC> m_Elements;
+        std::vector<D3D12_INPUT_ELEMENT_DESC> Elements;
     };
 
     // ============================================================
@@ -151,13 +175,13 @@ namespace Kiwi
     {
     public:
         DX12PipelineState(ID3D12PipelineState* pso)
-            : m_PSO(pso) {}
+            : PSO(pso) {}
 
-        void* GetNativeHandle() const override { return m_PSO.Get(); }
-        ID3D12PipelineState* GetPSO() const { return m_PSO.Get(); }
+        void* GetNativeHandle() const override { return PSO.Get(); }
+        ID3D12PipelineState* GetPSO() const { return PSO.Get(); }
 
     private:
-        ComPtr<ID3D12PipelineState> m_PSO;
+        ComPtr<ID3D12PipelineState> PSO;
     };
 
     // ============================================================
@@ -168,12 +192,12 @@ namespace Kiwi
     {
     public:
         DX12Sampler(D3D12_CPU_DESCRIPTOR_HANDLE handle)
-            : m_Handle(handle) {}
+            : Handle(handle) {}
 
-        void* GetNativeHandle() const override { return (void*)m_Handle.ptr; }
+        void* GetNativeHandle() const override { return (void*)Handle.ptr; }
 
     private:
-        D3D12_CPU_DESCRIPTOR_HANDLE m_Handle;
+        D3D12_CPU_DESCRIPTOR_HANDLE Handle;
     };
 
 } // namespace Kiwi

@@ -1,0 +1,47 @@
+---
+description: KiwiEngine C++ formatting and naming preferences
+alwaysApply: true
+---
+
+# Keep statements and signatures on one line
+
+Do not wrap a single call, assignment, function declaration or definition signature across multiple lines, no matter how long it gets.
+
+```cpp
+// BAD
+ViewUB = TUniformBufferRef<ViewUniformBuffer>::CreateEmptyUniformBufferImmediate(
+    device, EUniformBufferUsage::SingleFrame, "ViewUniformBuffer");
+
+void Render(RHICommandContext* ctx, RHITextureView* sceneRTV,
+    const Viewport& viewport, const ScissorRect& scissor);
+
+// GOOD
+ViewUB = TUniformBufferRef<ViewUniformBuffer>::CreateEmptyUniformBufferImmediate(device, EUniformBufferUsage::SingleFrame, "ViewUniformBuffer");
+
+void Render(RHICommandContext* ctx, RHITextureView* sceneRTV, const Viewport& viewport, const ScissorRect& scissor);
+```
+
+Constructor initializer lists, lambda bodies and brace blocks still go on their own lines as usual.
+
+# Naming
+
+- Everything is PascalCase with no prefix: types, functions, member variables, public struct fields, local variables and parameters. No `m_`, and no Unreal `F`/`U` type prefixes.
+- Bool members may use a `b` prefix (`bShouldClose`, `bIsDragging`).
+- A parameter that would collide with a member or type gets an `In` prefix (`SceneRenderer(KiwiEngineApp& InApp) : App(InApp)`, `ComputeViewVisibility(const Scene& InScene)`). A local that would collide gets a more specific name (`Frustum ViewFrustum;`, `Hit PrimaryHit;`).
+- When a member has the same name as its type (`Scene Scene;`, `std::unique_ptr<SceneRenderer> SceneRenderer;`), the bare name means the member inside that class. Write the type as `Kiwi::Scene` there.
+- A member must not share a name with a method of the same class, the class itself, or a nested type. Pick another name (`bShouldClose` next to `ShouldClose()`, `ViewType` next to `enum class Type`).
+- Shader source embedded in C++ strings keeps shader naming; do not rename inside it.
+
+```cpp
+// BAD
+SceneRenderer* m_SceneRenderer;
+MeshBatch batch;
+void Render(RHICommandContext* ctx, const Viewport& vp);
+
+// GOOD
+std::unique_ptr<SceneRenderer> SceneRenderer;
+MeshBatch Batch;
+void Render(RHICommandContext* Ctx, const Viewport& Vp);
+```
+
+Older files outside the renderer (editor, RHI backends, resource setup) still use camelCase locals and parameters. Write new code in PascalCase; convert an old file only when asked.

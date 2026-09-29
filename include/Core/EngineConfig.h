@@ -40,7 +40,7 @@ namespace Kiwi
         bool LoadDefaultConfig();
 
         // Check if any config has been loaded
-        bool IsLoaded() const { return m_Loaded; }
+        bool IsLoaded() const { return Loaded; }
 
         // ---- Getters ----
         // All getters return the defaultValue if the key is not found.
@@ -113,10 +113,10 @@ namespace Kiwi
             std::unordered_map<std::string, size_t> KeyIndex;           // fast lookup
         };
 
-        std::vector<Section> m_Sections;
-        std::unordered_map<std::string, size_t> m_SectionIndex; // name -> index in m_Sections
+        std::vector<Section> Sections;
+        std::unordered_map<std::string, size_t> SectionIndex; // name -> index in Sections
 
-        bool m_Loaded = false;
+        bool Loaded = false;
 
         // Helper to find or create a section
         Section& FindOrCreateSection(const std::string& name);

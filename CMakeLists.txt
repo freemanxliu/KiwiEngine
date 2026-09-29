@@ -54,6 +54,11 @@ set(GLAD_SOURCES ${GLAD_DIR}/src/gl.c)
 set(SOURCES
     src/main.cpp
     src/Core/Renderer.cpp
+    src/Core/SceneRendering.cpp
+    src/Renderer/DeferredShadingRenderer.cpp
+    src/Renderer/ForwardShadingRenderer.cpp
+    src/Renderer/InstanceCulling.cpp
+    src/Renderer/RenderScene.cpp
     src/Core/RayTracing.cpp
     src/Core/KiwiEngineApp.cpp
     src/Core/RenderResources.cpp
@@ -69,9 +74,11 @@ set(SOURCES
     src/Editor/TransformGizmo.cpp
     src/Editor/GizmoMesh.cpp
     src/Core/Application.cpp
+    src/Core/RenderingThread.cpp
     src/Core/EngineConfig.cpp
     src/Core/Platform.cpp
     src/RHI/RHIFactory.cpp
+    src/RHI/RHICommandList.cpp
     src/Scene/Mesh.cpp
     src/Scene/Scene.cpp
     src/Scene/GPUScene.cpp
@@ -101,6 +108,11 @@ endif()
 set(HEADERS
     include/RHI/RHI.h
     include/RHI/RHITypes.h
+    include/RHI/ConstantBufferVersioning.h
+    include/RHI/UniformBuffer.h
+    include/RHI/RHICommandList.h
+    include/RHI/LockedRHIDevice.h
+    include/RHI/ImGuiRHI.h
     include/RHI/DXCCompiler.h
     include/RHI/DX11/DX11Headers.h
     include/RHI/DX11/DX11Utils.h
@@ -116,12 +128,19 @@ set(HEADERS
     include/RHI/Vulkan/VulkanDevice.h
     include/Core/Window.h
     include/Core/Application.h
+    include/Core/RenderingThread.h
+    include/Core/FrameRenderParams.h
     include/KiwiEngineApp.h
     include/Core/EngineConfig.h
     include/Math/Math.h
     include/Math/RayMath.h
     include/Core/PassTimer.h
     include/Core/RendererUtils.h
+    include/Core/SceneRendering.h
+    include/Renderer/DeferredShadingRenderer.h
+    include/Renderer/ForwardShadingRenderer.h
+    include/Renderer/InstanceCulling.h
+    include/Renderer/RenderScene.h
     include/Editor/AssetTypes.h
     include/Editor/GizmoMesh.h
     include/Editor/TransformGizmo.h
@@ -134,6 +153,7 @@ set(HEADERS
     include/Scene/LightComponent.h
     include/Scene/SceneObject.h
     include/Scene/Scene.h
+    include/Scene/SceneInterface.h
     include/Scene/GPUScene.h
     include/Scene/MeshBatch.h
     include/Scene/MeshPassProcessor.h
@@ -145,6 +165,9 @@ set(HEADERS
     include/Scene/MaterialShaderCache.h
     include/Debug/RenderDocIntegration.h
 )
+
+# Mirror the include/ and src/ folders in IDE projects (Xcode, Visual Studio) instead of flat Source/Header Files groups.
+source_group(TREE ${CMAKE_SOURCE_DIR} FILES ${SOURCES} ${HEADERS})
 
 # ---- 可执行文件 ----
 if(WIN32)

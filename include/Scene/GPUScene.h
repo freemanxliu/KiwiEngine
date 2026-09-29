@@ -1,96 +1,78 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <vector>
-#include <unordered_map>
-#include <string>
 #include "Scene/Shaders.h"
-#include "Scene/MeshBatch.h"
 #include "RHI/RHI.h"
 #include "RHI/RHITypes.h"
 
 namespace Kiwi
 {
-    class MeshComponent;
-    class Scene;
-    class MaterialLibrary;
-
     // ============================================================
-    // RenderItem — references a visible MeshComponent after frustum culling
-    // Used by both the rendering loop and GPUScene batch classification.
-    // ============================================================
-    struct RenderItem
-    {
-        size_t         ObjectIndex;   // Index into m_Scene.GetObjects()
-        MeshComponent* MeshComp;      // The mesh component to render
-        int32_t        SortOrder;     // Higher = rendered first
-        float          DistToCamera;  // Squared distance from object center to camera
-
-        // Batching sort keys (set during InitView)
-        uint32_t       MeshID;        // Shared mesh pool ID (EPrimitiveType)
-        const char*    MaterialName;  // Material name (for SRV batching)
-        MeshBatchKey   BatchKey;
-    };
-
-    MeshBatchKey MakeMeshBatchKey(const RenderItem& item, MaterialLibrary& materialLibrary);
-
-    // ============================================================
-    // GPUScene — persistent primitive and instance tables.
+    // GPUScene — GPU mirror of the render scene's primitive and instance tables (UE5 FGPUScene).
     //
-    // Ids stay valid after a mesh enters the scene. Only dirty slots are
-    // uploaded. Draw commands look up InstanceId, then PrimitiveId.
+    // RenderScene owns primitive lifetime and decides the ids. This class only
+    // hands out slots, keeps a CPU copy and uploads the changed range once per
+    // frame. Draw commands look up InstanceId, then PrimitiveId.
     // ============================================================
 
     class GPUScene
     {
     public:
-        GPUScene() = default;
-        ~GPUScene() = default;
+        static constexpr uint32_t InvalidId = 0xffffffffu;
 
-        void Initialize(RHIDevice* device);
+        void Initialize(RHIDevice* InDevice);
         void Release();
 
-        // Allocate stable ids and upload dirty primitive/instance slots.
-        void Update(Scene& scene, MaterialLibrary& materialLibrary);
-
-        // This frame's draw-instance-id list. Cleared by Update.
-        uint32_t AppendDrawInstanceIds(const uint32_t* instanceIds, uint32_t count);
-        void UploadDrawInstanceIds();
-
-        void Bind(RHICommandContext* ctx) const;
-        void SetDrawInstanceOffset(RHICommandContext* ctx, uint32_t offset) const;
-
-        uint32_t GetNumPrimitives() const { return m_PrimitiveCount; }
-        uint32_t GetNumInstances() const { return m_InstanceCount; }
-
-    private:
+        // Returns InvalidId when the table is full.
         uint32_t AllocatePrimitive();
         uint32_t AllocateInstance();
-        void FreePrimitive(uint32_t id);
-        void FreeInstance(uint32_t id);
-        void EnsureBuffers();
-        void UploadSlot(RHIBuffer* buffer, const void* data, uint32_t stride, uint32_t index);
+        void FreePrimitive(uint32_t Id);
+        void FreeInstance(uint32_t Id);
 
-        RHIDevice* m_Device = nullptr;
-        std::unique_ptr<RHIBuffer> m_PrimitiveBuffer;
-        std::unique_ptr<RHITextureView> m_PrimitiveSRV;
-        std::unique_ptr<RHIBuffer> m_InstanceBuffer;
-        std::unique_ptr<RHITextureView> m_InstanceSRV;
-        std::unique_ptr<RHIBuffer> m_DrawInstanceBuffer;
-        std::unique_ptr<RHITextureView> m_DrawInstanceSRV;
-        std::unique_ptr<RHIBuffer> m_DrawOffsetCB;
+        // Writes the CPU copy and marks the slot dirty if the data changed. Nothing reaches the GPU until Upload().
+        void UpdatePrimitive(uint32_t Id, const PrimitiveSceneData& Data);
+        void UpdateInstance(uint32_t Id, const InstanceSceneData& Data);
 
-        std::vector<PrimitiveSceneData> m_Primitives;
-        std::vector<InstanceSceneData> m_Instances;
-        std::vector<uint8_t> m_PrimitiveAlive;
-        std::vector<uint8_t> m_InstanceAlive;
-        std::vector<uint32_t> m_FreePrimitives;
-        std::vector<uint32_t> m_FreeInstances;
-        uint32_t m_PrimitiveCount = 0;
-        uint32_t m_InstanceCount = 0;
+        // One UpdateData per table, covering the lowest to highest dirty slot.
+        void Upload();
 
-        std::vector<DrawInstanceId> m_DrawInstanceIds;
-        bool m_DrawIdsDirty = false;
+        // Instance table (t8) and primitive table (t9).
+        void Bind(RHICommandContext* Ctx) const;
+
+        uint32_t GetNumPrimitives() const { return PrimitiveCount; }
+        uint32_t GetNumInstances() const { return InstanceCount; }
+
+    private:
+        // Half-open range of slots changed since the last upload. Empty when Begin >= End.
+        struct DirtyRange
+        {
+            uint32_t Begin = UINT32_MAX;
+            uint32_t End = 0;
+
+            void Add(uint32_t Id) { Begin = std::min(Begin, Id); End = std::max(End, Id + 1); }
+            bool IsEmpty() const { return Begin >= End; }
+            void Reset() { Begin = UINT32_MAX; End = 0; }
+        };
+
+        RHIDevice* Device = nullptr;
+        std::unique_ptr<RHIBuffer> PrimitiveBuffer;
+        std::unique_ptr<RHITextureView> PrimitiveSRV;
+        std::unique_ptr<RHIBuffer> InstanceBuffer;
+        std::unique_ptr<RHITextureView> InstanceSRV;
+
+        std::vector<PrimitiveSceneData> Primitives;
+        std::vector<InstanceSceneData> Instances;
+        std::vector<uint8_t> PrimitiveAlive;
+        std::vector<uint8_t> InstanceAlive;
+        std::vector<uint32_t> FreePrimitives;
+        std::vector<uint32_t> FreeInstances;
+        uint32_t PrimitiveCount = 0;
+        uint32_t InstanceCount = 0;
+        DirtyRange DirtyPrimitives;
+        DirtyRange DirtyInstances;
     };
 
 } // namespace Kiwi

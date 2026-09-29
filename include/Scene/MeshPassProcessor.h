@@ -3,36 +3,36 @@
 #include "Scene/MeshBatch.h"
 #include <vector>
 
-namespace Kiwi { class GPUScene; }
+namespace Kiwi { class InstanceCullingContext; }
 
 namespace Kiwi
 {
 
 class ShaderLibrary;
 
-// Turns MeshBatches into MeshDrawCommands for one pass.
-// Same role as UE5 FMeshPassProcessor.
+// Turns MeshBatches into MeshDrawCommands for one pass, then sorts and merges them into instanced draws.
+// Same role as UE5 FMeshPassProcessor plus the pass setup task that sorts and merges its commands.
 class MeshPassProcessor
 {
 public:
     virtual ~MeshPassProcessor() = default;
 
-    void Process(const std::vector<MeshBatch>& batches, GPUScene& gpuScene);
+    void Process(const std::vector<MeshBatch>& Batches, InstanceCullingContext& InstanceCulling);
 
-    const std::vector<MeshDrawCommand>& GetCommands() const { return m_Commands; }
+    const std::vector<MeshDrawCommand>& GetCommands() const { return Commands; }
 
 protected:
-    virtual bool ShouldDraw(const MeshBatch& batch) const = 0;
-    virtual void AddMeshBatch(const MeshBatch& batch) = 0;
+    virtual bool ShouldDraw(const MeshBatch& Batch) const = 0;
+    virtual void AddMeshBatch(const MeshBatch& Batch) = 0;
 
-    void AddCommand(const MeshDrawCommand& command) { m_Commands.push_back(command); }
+    void AddCommand(const MeshDrawCommand& Command) { Commands.push_back(Command); }
 
-    static bool HasGeometry(const MeshBatchElement& element)
+    static bool HasGeometry(const MeshBatchElement& Element)
     {
-        return element.VertexBuffer && element.IndexBuffer && element.NumIndices > 0;
+        return Element.VertexBuffer && Element.IndexBuffer && Element.NumIndices > 0;
     }
 
-    std::vector<MeshDrawCommand> m_Commands;
+    std::vector<MeshDrawCommand> Commands;
 };
 
 // Depth-only draw used by cascaded shadow maps.
@@ -42,12 +42,12 @@ public:
     ShadowDepthPassProcessor() = default;
 
 protected:
-    bool ShouldDraw(const MeshBatch& batch) const override
+    bool ShouldDraw(const MeshBatch& Batch) const override
     {
-        return batch.bCastShadow && batch.bUseForDepthPass;
+        return Batch.bCastShadow && Batch.bUseForDepthPass;
     }
 
-    void AddMeshBatch(const MeshBatch& batch) override;
+    void AddMeshBatch(const MeshBatch& Batch) override;
 };
 
 // G-Buffer or forward base pass. Selects the surface shader per batch.
@@ -64,20 +64,20 @@ public:
         ShaderLibrary* Shaders = nullptr;
     };
 
-    explicit BasePassProcessor(Config config) : m_Config(std::move(config)) {}
+    explicit BasePassProcessor(Config InConfig) : PassConfig(std::move(InConfig)) {}
 
 protected:
-    bool ShouldDraw(const MeshBatch& batch) const override
+    bool ShouldDraw(const MeshBatch& Batch) const override
     {
-        return batch.bUseForMaterial;
+        return Batch.bUseForMaterial;
     }
 
-    void AddMeshBatch(const MeshBatch& batch) override;
+    void AddMeshBatch(const MeshBatch& Batch) override;
 
 private:
-    MeshPassShader ResolveSingleShader(const MeshBatch& batch) const;
+    MeshPassShader ResolveSingleShader(const MeshBatch& Batch) const;
 
-    Config m_Config;
+    Config PassConfig;
 };
 
 } // namespace Kiwi

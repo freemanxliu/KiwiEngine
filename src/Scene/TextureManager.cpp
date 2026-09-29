@@ -22,9 +22,10 @@ namespace Kiwi
 
     GPUTexture* TextureManager::LoadTexture(const std::string& filePath)
     {
+        std::lock_guard<std::recursive_mutex> Lock(Mutex);
         // Check cache
-        auto it = m_Textures.find(filePath);
-        if (it != m_Textures.end())
+        auto it = Textures.find(filePath);
+        if (it != Textures.end())
             return it->second.get();
 
         // Load from disk
@@ -56,21 +57,21 @@ namespace Kiwi
     {
         // 1x1 White
         uint8_t white[] = { 255, 255, 255, 255 };
-        m_WhiteTexture = CreateFromRGBA("__white", white, 1, 1);
+        WhiteTexture = CreateFromRGBA("__white", white, 1, 1);
 
         // 1x1 Black
         uint8_t black[] = { 0, 0, 0, 255 };
-        m_BlackTexture = CreateFromRGBA("__black", black, 1, 1);
+        BlackTexture = CreateFromRGBA("__black", black, 1, 1);
 
         // 1x1 Flat Normal (tangent space: 0,0,1 encoded as 128,128,255)
         uint8_t normal[] = { 128, 128, 255, 255 };
-        m_NormalTexture = CreateFromRGBA("__normal", normal, 1, 1);
+        NormalTexture = CreateFromRGBA("__normal", normal, 1, 1);
     }
 
     GPUTexture* TextureManager::CreateFromRGBA(const std::string& name, const uint8_t* data,
                                                 uint32_t width, uint32_t height)
     {
-        if (!m_Device) return nullptr;
+        if (!Device) return nullptr;
 
         TextureDesc desc;
         desc.Width = width;
@@ -81,14 +82,14 @@ namespace Kiwi
         desc.Usage = EResourceUsage::Immutable;
         desc.DebugName = name.c_str();
 
-        auto texture = m_Device->CreateTexture(desc, data);
+        auto texture = Device->CreateTexture(desc, data);
         if (!texture)
         {
             std::cerr << "[Kiwi] TextureManager: Failed to create GPU texture for '" << name << "'" << std::endl;
             return nullptr;
         }
 
-        auto srv = m_Device->CreateTextureView(texture.get(), EDescriptorHeapType::CBV_SRV_UAV);
+        auto srv = Device->CreateTextureView(texture.get(), EDescriptorHeapType::CBV_SRV_UAV);
         if (!srv)
         {
             std::cerr << "[Kiwi] TextureManager: Failed to create SRV for '" << name << "'" << std::endl;
@@ -103,14 +104,15 @@ namespace Kiwi
         gpuTex->Path = name;
 
         GPUTexture* ptr = gpuTex.get();
-        m_Textures[name] = std::move(gpuTex);
+        Textures[name] = std::move(gpuTex);
         return ptr;
     }
 
     GPUTexture* TextureManager::LoadHDRTexture(const std::string& filePath)
     {
-        auto it = m_Textures.find(filePath);
-        if (it != m_Textures.end())
+        std::lock_guard<std::recursive_mutex> Lock(Mutex);
+        auto it = Textures.find(filePath);
+        if (it != Textures.end())
             return it->second.get();
 
         int width, height, channels;
@@ -146,7 +148,7 @@ namespace Kiwi
     GPUTexture* TextureManager::CreateFromFloat16(const std::string& name, const uint16_t* data,
                                                    uint32_t width, uint32_t height)
     {
-        if (!m_Device) return nullptr;
+        if (!Device) return nullptr;
 
         TextureDesc desc;
         desc.Width = width;
@@ -157,14 +159,14 @@ namespace Kiwi
         desc.Usage = EResourceUsage::Immutable;
         desc.DebugName = name.c_str();
 
-        auto texture = m_Device->CreateTexture(desc, data);
+        auto texture = Device->CreateTexture(desc, data);
         if (!texture)
         {
             std::cerr << "[Kiwi] TextureManager: Failed to create HDR GPU texture for '" << name << "'" << std::endl;
             return nullptr;
         }
 
-        auto srv = m_Device->CreateTextureView(texture.get(), EDescriptorHeapType::CBV_SRV_UAV);
+        auto srv = Device->CreateTextureView(texture.get(), EDescriptorHeapType::CBV_SRV_UAV);
         if (!srv)
         {
             std::cerr << "[Kiwi] TextureManager: Failed to create SRV for HDR '" << name << "'" << std::endl;
@@ -179,7 +181,7 @@ namespace Kiwi
         gpuTex->Path = name;
 
         GPUTexture* ptr = gpuTex.get();
-        m_Textures[name] = std::move(gpuTex);
+        Textures[name] = std::move(gpuTex);
         return ptr;
     }
 

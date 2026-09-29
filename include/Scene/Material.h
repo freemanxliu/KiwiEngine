@@ -173,6 +173,7 @@ namespace Kiwi
 
         // Get a material by name. Returns nullptr if not found.
         Material* GetMaterial(const std::string& name);
+        const Material* GetMaterial(const std::string& name) const;
 
         // Get or create: returns existing, or creates a new default material
         Material* GetOrCreateMaterial(const std::string& name);
@@ -190,13 +191,13 @@ namespace Kiwi
         void SaveAll();
 
         // Get the materials directory
-        const std::string& GetMaterialsDir() const { return m_MaterialsDir; }
+        const std::string& GetMaterialsDir() const { return MaterialsDir; }
 
     private:
         void ScanAndLoad(const std::string& dir);
 
-        std::string m_MaterialsDir;
-        std::unordered_map<std::string, std::unique_ptr<Material>> m_Materials;
+        std::string MaterialsDir;
+        std::unordered_map<std::string, std::unique_ptr<Material>> Materials;
     };
 
     // ============================================================

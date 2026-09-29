@@ -59,7 +59,7 @@ namespace Kiwi
                       const SwapChainDesc& desc);
         ~DX12SwapChain() override;
 
-        void* GetNativeHandle() const override { return m_SwapChain.Get(); }
+        void* GetNativeHandle() const override { return SwapChain.Get(); }
         void Present(uint32_t syncInterval = 0) override;
         void ResizeBuffers(uint32_t width, uint32_t height) override;
 
@@ -68,21 +68,21 @@ namespace Kiwi
         RHITextureView* GetBackBufferRTV(uint32_t index) override;
 
         // DX12-specific
-        IDXGISwapChain3* GetDXGISwapChain() const { return m_SwapChain.Get(); }
+        IDXGISwapChain3* GetDXGISwapChain() const { return SwapChain.Get(); }
 
     private:
         void CreateRenderTargetViews();
 
-        ComPtr<IDXGISwapChain3>    m_SwapChain;
-        ComPtr<ID3D12Device>       m_Device;
-        ComPtr<ID3D12CommandQueue>  m_CommandQueue;
+        ComPtr<IDXGISwapChain3>    SwapChain;
+        ComPtr<ID3D12Device>       Device;
+        ComPtr<ID3D12CommandQueue>  CommandQueue;
 
-        SwapChainDesc              m_Desc;
-        ComPtr<ID3D12DescriptorHeap> m_RTVHeap;
-        uint32_t                   m_RTVDescriptorSize = 0;
+        SwapChainDesc              Desc;
+        ComPtr<ID3D12DescriptorHeap> RTVHeap;
+        uint32_t                   RTVDescriptorSize = 0;
 
-        std::vector<std::unique_ptr<DX12Texture>>    m_BackBuffers;
-        std::vector<std::unique_ptr<DX12TextureView>> m_RTVs;
+        std::vector<std::unique_ptr<DX12Texture>>    BackBuffers;
+        std::vector<std::unique_ptr<DX12TextureView>> RTVs;
     };
 
     // ============================================================
@@ -96,8 +96,8 @@ namespace Kiwi
         ~DX12Device() override;
 
         RHI_API_TYPE GetApiType() const override { return RHI_API_TYPE::DX12; }
-        void* GetNativeDevice() const override { return m_Device.Get(); }
-        void* GetImmediateContext() const override { return m_CommandQueue.Get(); }
+        void* GetNativeDevice() const override { return Device.Get(); }
+        void* GetImmediateContext() const override { return CommandQueue.Get(); }
 
         std::unique_ptr<RHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;
         std::unique_ptr<RHIBuffer> CreateBuffer(const BufferDesc& desc, const void* initialData = nullptr) override;
@@ -128,11 +128,12 @@ namespace Kiwi
         void InitImGui(void* windowHandle) override;
         void ShutdownImGui() override;
         void ImGuiNewFrame() override;
-        void ImGuiRenderDrawData(RHICommandContext* ctx) override;
+        void ImGuiUpdateTextures(ImDrawData* DrawData) override;
+        void ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData) override;
 
         // DX12 native access
-        ID3D12Device* GetD3DDevice() const { return m_Device.Get(); }
-        ID3D12CommandQueue* GetCommandQueue() const { return m_CommandQueue.Get(); }
+        ID3D12Device* GetD3DDevice() const { return Device.Get(); }
+        ID3D12CommandQueue* GetCommandQueue() const { return CommandQueue.Get(); }
 
         // Fence & sync
         void WaitForGPU();
@@ -140,40 +141,44 @@ namespace Kiwi
         void WaitForFenceValue(uint64_t fenceValue);
 
         // Descriptor heap for CBV/SRV/UAV (used by ImGui)
-        ID3D12DescriptorHeap* GetSRVHeap() const { return m_SRVHeap.Get(); }
+        ID3D12DescriptorHeap* GetSRVHeap() const { return SRVHeap.Get(); }
+
+        ConstantUploadAllocator* GetConstantAllocator() const { return ConstantAllocator.get(); }
 
     private:
-        ComPtr<ID3D12Device>        m_Device;
-        ComPtr<ID3D12CommandQueue>  m_CommandQueue;
-        ComPtr<IDXGIFactory4>       m_DXGIFactory;
-        ComPtr<ID3D12Fence>         m_Fence;
-        uint64_t                    m_FenceValue = 0;
-        HANDLE                      m_FenceEvent = nullptr;
-        bool                        m_EnableDebug;
+        ComPtr<ID3D12Device>        Device;
+        ComPtr<ID3D12CommandQueue>  CommandQueue;
+        ComPtr<IDXGIFactory4>       DXGIFactory;
+        ComPtr<ID3D12Fence>         Fence;
+        uint64_t                    FenceValue = 0;
+        HANDLE                      FenceEvent = nullptr;
+        bool                        EnableDebug;
 
         // SRV heap for ImGui + post-process + G-Buffer (32 descriptors, index 0 = ImGui)
-        ComPtr<ID3D12DescriptorHeap> m_SRVHeap;
-        uint32_t m_SRVDescriptorSize = 0;
-        uint32_t m_SRVAllocated = 1; // index 0 reserved for ImGui
+        ComPtr<ID3D12DescriptorHeap> SRVHeap;
+        uint32_t SRVDescriptorSize = 0;
+        uint32_t SRVAllocated = 1; // index 0 reserved for ImGui
 
         // RTV heap for offscreen render targets + G-Buffer (separate from SwapChain's RTV heap)
-        ComPtr<ID3D12DescriptorHeap> m_OffscreenRTVHeap;
-        uint32_t m_OffscreenRTVDescriptorSize = 0;
-        uint32_t m_OffscreenRTVAllocated = 0;
+        ComPtr<ID3D12DescriptorHeap> OffscreenRTVHeap;
+        uint32_t OffscreenRTVDescriptorSize = 0;
+        uint32_t OffscreenRTVAllocated = 0;
 
         // DSV heap
-        ComPtr<ID3D12DescriptorHeap> m_DSVHeap;
-        uint32_t m_DSVDescriptorSize = 0;
-        uint32_t m_DSVAllocated = 0;
+        ComPtr<ID3D12DescriptorHeap> DSVHeap;
+        uint32_t DSVDescriptorSize = 0;
+        uint32_t DSVAllocated = 0;
 
         // Root signature (shared for all PSOs in this simple engine)
-        ComPtr<ID3D12RootSignature> m_RootSignature;
+        ComPtr<ID3D12RootSignature> RootSignature;
+
+        std::unique_ptr<ConstantUploadAllocator> ConstantAllocator;
 
         void CreateRootSignature();
-        bool m_ImGuiInitialized = false;
+        bool ImGuiInitialized = false;
 
     public:
-        ID3D12RootSignature* GetRootSignature() const { return m_RootSignature.Get(); }
+        ID3D12RootSignature* GetRootSignature() const { return RootSignature.Get(); }
     };
 
     // ============================================================
@@ -183,11 +188,10 @@ namespace Kiwi
     class DX12CommandContext : public RHICommandContext
     {
     public:
-        DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue,
-                           ID3D12RootSignature* rootSignature, ID3D12DescriptorHeap* srvHeap);
+        DX12CommandContext(ID3D12Device* device, ID3D12CommandQueue* cmdQueue, ID3D12RootSignature* rootSignature, ID3D12DescriptorHeap* srvHeap, ConstantUploadAllocator* constantAllocator);
         ~DX12CommandContext() override;
 
-        void* GetNativeHandle() const override { return m_CommandList.Get(); }
+        void* GetNativeHandle() const override { return CommandList.Get(); }
 
         // Frame lifecycle
         void BeginFrame(RHISwapChain* swapChain) override;
@@ -243,7 +247,7 @@ namespace Kiwi
         void Flush() override;
 
         // DX12-specific
-        ID3D12GraphicsCommandList* GetCommandList() const { return m_CommandList.Get(); }
+        ID3D12GraphicsCommandList* GetCommandList() const { return CommandList.Get(); }
         void Reset();
         void Execute();
 
@@ -252,16 +256,17 @@ namespace Kiwi
         void SetDescriptorHeaps(ID3D12DescriptorHeap* const* heaps, uint32_t count);
 
     private:
-        ComPtr<ID3D12CommandAllocator>       m_CommandAllocator;
-        ComPtr<ID3D12GraphicsCommandList>    m_CommandList;
-        ComPtr<ID3D12CommandQueue>           m_CommandQueue;
-        ComPtr<ID3D12Device>                 m_Device;
-        ComPtr<ID3D12Fence>                  m_Fence;
-        uint64_t                             m_FenceValue = 0;
-        HANDLE                               m_FenceEvent = nullptr;
-        bool                                 m_IsOpen = false;
-        ID3D12RootSignature*                 m_RootSignature = nullptr;
-        ID3D12DescriptorHeap*                m_SRVHeap = nullptr;
+        ComPtr<ID3D12CommandAllocator>       CommandAllocator;
+        ComPtr<ID3D12GraphicsCommandList>    CommandList;
+        ComPtr<ID3D12CommandQueue>           CommandQueue;
+        ComPtr<ID3D12Device>                 Device;
+        ComPtr<ID3D12Fence>                  Fence;
+        uint64_t                             FenceValue = 0;
+        HANDLE                               FenceEvent = nullptr;
+        bool                                 IsOpen = false;
+        ID3D12RootSignature*                 RootSignature = nullptr;
+        ID3D12DescriptorHeap*                SRVHeap = nullptr;
+        ConstantUploadAllocator*             ConstantAllocator = nullptr;
     };
 
 } // namespace Kiwi

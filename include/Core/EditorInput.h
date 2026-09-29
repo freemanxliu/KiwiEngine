@@ -24,30 +24,30 @@ namespace Kiwi
 
         void Init(Window* window, Scene* scene)
         {
-            m_Window = window;
-            m_Scene  = scene;
+            Window = window;
+            Scene  = scene;
         }
 
         // Call once per frame from OnUpdate
         void Update(float deltaTime)
         {
-            if (!m_Window || !m_Scene)
+            if (!Window || !Scene)
                 return;
 
             HandleCameraLook();
             HandleCameraMovement(deltaTime);
 
             // Save mouse position for next frame delta
-            const auto& mouse = m_Window->GetMouseState();
-            m_LastMouseX = mouse.X;
-            m_LastMouseY = mouse.Y;
+            const auto& mouse = Window->GetMouseState();
+            LastMouseX = mouse.X;
+            LastMouseY = mouse.Y;
         }
 
         // --------------------------------------------------------
         // Configuration — exposed for UI
         // --------------------------------------------------------
-        float GetCameraMoveSpeed() const { return m_CameraMoveSpeed; }
-        void  SetCameraMoveSpeed(float s) { m_CameraMoveSpeed = s; }
+        float GetCameraMoveSpeed() const { return CameraMoveSpeed; }
+        void  SetCameraMoveSpeed(float s) { CameraMoveSpeed = s; }
 
     private:
         // --------------------------------------------------------
@@ -57,14 +57,14 @@ namespace Kiwi
         // --------------------------------------------------------
         void HandleCameraLook()
         {
-            const auto& mouse = m_Window->GetMouseState();
+            const auto& mouse = Window->GetMouseState();
             if (!mouse.RightDown)
             {
-                m_WasRightDown = false;
+                WasRightDown = false;
                 return;
             }
 
-            auto* cam = m_Scene->GetActiveCamera();
+            auto* cam = Scene->GetActiveCamera();
             if (!cam)
                 return;
 
@@ -74,24 +74,24 @@ namespace Kiwi
                 return;
 
             // First frame of right-click: just record position, don't rotate
-            if (!m_WasRightDown)
+            if (!WasRightDown)
             {
-                m_WasRightDown = true;
-                m_LastMouseX = mouse.X;
-                m_LastMouseY = mouse.Y;
+                WasRightDown = true;
+                LastMouseX = mouse.X;
+                LastMouseY = mouse.Y;
                 return;
             }
 
-            int32_t dx = mouse.X - m_LastMouseX;
-            int32_t dy = mouse.Y - m_LastMouseY;
+            int32_t dx = mouse.X - LastMouseX;
+            int32_t dy = mouse.Y - LastMouseY;
 
             if (dx == 0 && dy == 0)
                 return;
 
             // Yaw: mouse moving right => increase Y rotation (turn right in LH)
             // Pitch: mouse moving down => increase X rotation (look down)
-            cam->Rotation.y += (float)dx * m_MouseSensitivity;
-            cam->Rotation.x += (float)dy * m_MouseSensitivity;
+            cam->Rotation.y += (float)dx * MouseSensitivity;
+            cam->Rotation.x += (float)dy * MouseSensitivity;
 
             // Clamp pitch to avoid gimbal lock
             cam->Rotation.x = std::max(-89.0f, std::min(89.0f, cam->Rotation.x));
@@ -103,11 +103,11 @@ namespace Kiwi
         // --------------------------------------------------------
         void HandleCameraMovement(float dt)
         {
-            const auto& mouse = m_Window->GetMouseState();
+            const auto& mouse = Window->GetMouseState();
             if (!mouse.RightDown)
                 return;
 
-            auto* cam = m_Scene->GetActiveCamera();
+            auto* cam = Scene->GetActiveCamera();
             if (!cam)
                 return;
 
@@ -116,7 +116,7 @@ namespace Kiwi
             if (io.WantCaptureKeyboard)
                 return;
 
-            const float speed = m_CameraMoveSpeed * dt;
+            const float speed = CameraMoveSpeed * dt;
 
             Vec3 forward = cam->GetForward();
             Vec3 right   = cam->GetRight();
@@ -128,7 +128,7 @@ namespace Kiwi
 
             Vec3 delta = { 0, 0, 0 };
 
-            const auto& keys = m_Window->GetKeyState();
+            const auto& keys = Window->GetKeyState();
 
             // W / Up Arrow => move forward
             if (keys.IsKeyDown('W') || keys.IsKeyDown(VK_UP))
@@ -149,21 +149,21 @@ namespace Kiwi
         // --------------------------------------------------------
         // Configuration
         // --------------------------------------------------------
-        float m_CameraMoveSpeed  = 5.0f;   // units/sec
-        float m_MouseSensitivity = 0.15f;  // degrees per pixel
+        float CameraMoveSpeed  = 5.0f;   // units/sec
+        float MouseSensitivity = 0.15f;  // degrees per pixel
 
         // --------------------------------------------------------
         // State
         // --------------------------------------------------------
-        int32_t m_LastMouseX = 0;
-        int32_t m_LastMouseY = 0;
-        bool    m_WasRightDown = false;
+        int32_t LastMouseX = 0;
+        int32_t LastMouseY = 0;
+        bool    WasRightDown = false;
 
         // --------------------------------------------------------
         // References (non-owning)
         // --------------------------------------------------------
-        Window* m_Window = nullptr;
-        Scene*  m_Scene  = nullptr;
+        Window* Window = nullptr;
+        Scene*  Scene  = nullptr;
     };
 
 } // namespace Kiwi

@@ -30,9 +30,8 @@ void KiwiEngineApp::DrawMenuBar()
         {
             if (ImGui::MenuItem("Create Scene"))
             {
-                m_Scene.Clear();
-                m_GPUMeshes.clear();
-                m_Scene.SetName("New Scene");
+                Scene.Clear();
+                Scene.SetName("New Scene");
             }
 
             // Open Scene — lists all .json files in Scenes/ directory
@@ -40,19 +39,16 @@ void KiwiEngineApp::DrawMenuBar()
             {
                 namespace fs = std::filesystem;
                 bool hasFiles = false;
-                if (fs::exists(m_ScenesDir))
+                if (fs::exists(ScenesDir))
                 {
-                    for (auto& entry : fs::directory_iterator(m_ScenesDir))
+                    for (auto& entry : fs::directory_iterator(ScenesDir))
                     {
                         if (entry.is_regular_file() && entry.path().extension() == ".json")
                         {
                             std::string filename = entry.path().stem().string();
                             if (ImGui::MenuItem(filename.c_str()))
                             {
-                                if (m_Scene.LoadFromFile(entry.path().string()))
-                                {
-                                    RebuildAllGPUBuffers();
-                                }
+                                Scene.LoadFromFile(entry.path().string());
                             }
                             hasFiles = true;
                         }
@@ -67,11 +63,11 @@ void KiwiEngineApp::DrawMenuBar()
 
             if (ImGui::MenuItem("Save Scene"))
             {
-                m_ShowSaveDialog = true;
+                ShowSaveDialog = true;
                 // Pre-fill with current scene name
-                std::string name = m_Scene.GetName();
-                strncpy(m_SaveSceneName, name.c_str(), sizeof(m_SaveSceneName) - 1);
-                m_SaveSceneName[sizeof(m_SaveSceneName) - 1] = '\0';
+                std::string name = Scene.GetName();
+                strncpy(SaveSceneName, name.c_str(), sizeof(SaveSceneName) - 1);
+                SaveSceneName[sizeof(SaveSceneName) - 1] = '\0';
             }
             ImGui::EndMenu();
         }
@@ -90,20 +86,20 @@ void KiwiEngineApp::DrawMenuBar()
                 if (ImGui::MenuItem("Direct3D 11", nullptr,
                     currentRHI == RHI_API_TYPE::DX11, currentRHI != RHI_API_TYPE::DX11))
                 {
-                    m_PendingRHISwitch = true;
-                    m_PendingRHIType = RHI_API_TYPE::DX11;
+                    PendingRHISwitch = true;
+                    PendingRHIType = RHI_API_TYPE::DX11;
                 }
                 if (ImGui::MenuItem("Direct3D 12", nullptr,
                     currentRHI == RHI_API_TYPE::DX12, currentRHI != RHI_API_TYPE::DX12))
                 {
-                    m_PendingRHISwitch = true;
-                    m_PendingRHIType = RHI_API_TYPE::DX12;
+                    PendingRHISwitch = true;
+                    PendingRHIType = RHI_API_TYPE::DX12;
                 }
                 if (ImGui::MenuItem("OpenGL", nullptr,
                     currentRHI == RHI_API_TYPE::OPENGL, currentRHI != RHI_API_TYPE::OPENGL))
                 {
-                    m_PendingRHISwitch = true;
-                    m_PendingRHIType = RHI_API_TYPE::OPENGL;
+                    PendingRHISwitch = true;
+                    PendingRHIType = RHI_API_TYPE::OPENGL;
                 }
 
                 // Vulkan is incompatible with RenderDoc in-process hook (NVIDIA nvoglv64.dll conflict)
@@ -112,8 +108,8 @@ void KiwiEngineApp::DrawMenuBar()
                 if (ImGui::MenuItem("Vulkan", rdocLoaded ? "(RenderDoc active)" : nullptr,
                     currentRHI == RHI_API_TYPE::VULKAN, canSwitchVulkan))
                 {
-                    m_PendingRHISwitch = true;
-                    m_PendingRHIType = RHI_API_TYPE::VULKAN;
+                    PendingRHISwitch = true;
+                    PendingRHIType = RHI_API_TYPE::VULKAN;
                 }
 #endif
 
@@ -123,7 +119,7 @@ void KiwiEngineApp::DrawMenuBar()
             ImGui::Separator();
             if (ImGui::MenuItem("Reload All Shaders", "F5"))
             {
-                m_PendingShaderReload = true;
+                PendingShaderReload = true;
             }
 
             ImGui::EndMenu();
@@ -131,9 +127,9 @@ void KiwiEngineApp::DrawMenuBar()
 
         if (ImGui::BeginMenu("Window"))
         {
-            if (ImGui::MenuItem("Content Browser", "Ctrl+Space", m_ShowContentBrowser))
+            if (ImGui::MenuItem("Content Browser", "Ctrl+Space", ShowContentBrowser))
             {
-                m_ShowContentBrowser = !m_ShowContentBrowser;
+                ShowContentBrowser = !ShowContentBrowser;
             }
             ImGui::EndMenu();
         }
@@ -142,10 +138,10 @@ void KiwiEngineApp::DrawMenuBar()
     }
 
     // Save Scene dialog (modal popup)
-    if (m_ShowSaveDialog)
+    if (ShowSaveDialog)
     {
         ImGui::OpenPopup("Save Scene##SaveDlg");
-        m_ShowSaveDialog = false;
+        ShowSaveDialog = false;
     }
 
     if (ImGui::BeginPopupModal("Save Scene##SaveDlg", nullptr,
@@ -153,8 +149,8 @@ void KiwiEngineApp::DrawMenuBar()
     {
         ImGui::Text("Scene name:");
         ImGui::SetNextItemWidth(300.0f);
-        bool enterPressed = ImGui::InputText("##SceneName", m_SaveSceneName,
-            sizeof(m_SaveSceneName), ImGuiInputTextFlags_EnterReturnsTrue);
+        bool enterPressed = ImGui::InputText("##SceneName", SaveSceneName,
+            sizeof(SaveSceneName), ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::Spacing();
 
@@ -165,14 +161,14 @@ void KiwiEngineApp::DrawMenuBar()
         if (ImGui::Button("Cancel", ImVec2(120, 0)))
             ImGui::CloseCurrentPopup();
 
-        if (doSave && m_SaveSceneName[0] != '\0')
+        if (doSave && SaveSceneName[0] != '\0')
         {
             namespace fs = std::filesystem;
-            std::string name(m_SaveSceneName);
-            m_Scene.SetName(name);
-            std::string filepath = m_ScenesDir + "/" + name + ".json";
-            fs::create_directories(m_ScenesDir);
-            m_Scene.SaveToFile(filepath);
+            std::string name(SaveSceneName);
+            Scene.SetName(name);
+            std::string filepath = ScenesDir + "/" + name + ".json";
+            fs::create_directories(ScenesDir);
+            Scene.SaveToFile(filepath);
             ImGui::CloseCurrentPopup();
         }
 
@@ -207,9 +203,9 @@ void KiwiEngineApp::DrawScenePanel()
     ImGui::Separator();
 
     // Scene object list
-    ImGui::Text("Objects (%d)", (int)m_Scene.GetObjects().size());
+    ImGui::Text("Objects (%d)", (int)Scene.GetObjects().size());
     ImGui::BeginChild("ObjectList", ImVec2(0, 120), true);
-    for (auto& objPtr : m_Scene.GetObjects())
+    for (auto& objPtr : Scene.GetObjects())
     {
         auto& obj = *objPtr;
         bool selected = obj.Selected;
@@ -228,16 +224,15 @@ void KiwiEngineApp::DrawScenePanel()
         std::string label = std::string(icon) + obj.Name;
         if (ImGui::Selectable(label.c_str(), &selected))
         {
-            m_Scene.SelectObject(obj.ID);
+            Scene.SelectObject(obj.ID);
         }
     }
     ImGui::EndChild();
 
-    if (ImGui::Button("Delete Selected") && m_Scene.GetSelectedObject())
+    if (ImGui::Button("Delete Selected") && Scene.GetSelectedObject())
     {
-        uint32_t selID = (uint32_t)m_Scene.GetSelectedID();
-        m_Scene.RemoveObject(selID);
-        RebuildAllGPUBuffers();
+        uint32_t selID = (uint32_t)Scene.GetSelectedID();
+        Scene.RemoveObject(selID);
     }
 
     ImGui::Separator();
@@ -288,7 +283,7 @@ void KiwiEngineApp::DrawPlacerTab()
     {
         if (ImGui::Button(entry.label, ImVec2(280, 35)))
         {
-            auto* obj = m_Scene.AddMeshObject(entry.type);
+            auto* obj = Scene.AddMeshObject(entry.type);
             auto* mesh = obj->GetComponent<MeshComponent>();
             if (mesh && entry.type != EPrimitiveType::Floor)
             {
@@ -296,8 +291,7 @@ void KiwiEngineApp::DrawPlacerTab()
                 mesh->Position.x = (float)(rand() % 60 - 30) * 0.1f;
                 mesh->Position.z = (float)(rand() % 60 - 30) * 0.1f;
             }
-            RebuildAllGPUBuffers();
-            m_Scene.SelectObject(obj->ID);
+            Scene.SelectObject(obj->ID);
         }
     }
 
@@ -305,59 +299,60 @@ void KiwiEngineApp::DrawPlacerTab()
     ImGui::Text("Special:");
     if (ImGui::Button("Camera", ImVec2(280, 35)))
     {
-        auto* obj = m_Scene.AddCameraObject();
+        auto* obj = Scene.AddCameraObject();
         auto* cam = obj->GetComponent<CameraComponent>();
         if (cam)
         {
             cam->Position = { 0.0f, 3.0f, -6.0f };
         }
-        m_Scene.SelectObject(obj->ID);
+        Scene.SelectObject(obj->ID);
     }
 
     ImGui::Separator();
     ImGui::Text("Lights:");
     if (ImGui::Button("Directional Light", ImVec2(280, 35)))
     {
-        auto* obj = m_Scene.AddDirectionalLightObject();
-        m_Scene.SelectObject(obj->ID);
+        auto* obj = Scene.AddDirectionalLightObject();
+        Scene.SelectObject(obj->ID);
     }
     if (ImGui::Button("Point Light", ImVec2(280, 35)))
     {
-        auto* obj = m_Scene.AddPointLightObject();
-        m_Scene.SelectObject(obj->ID);
+        auto* obj = Scene.AddPointLightObject();
+        Scene.SelectObject(obj->ID);
     }
 
     ImGui::Separator();
     ImGui::Text("Effects:");
     if (ImGui::Button("Post Process", ImVec2(280, 35)))
     {
-        auto* obj = m_Scene.AddPostProcessObject();
+        auto* obj = Scene.AddPostProcessObject();
         // Add a default material if shaders are available
         auto* ppComp = obj->GetComponent<PostProcessComponent>();
-        if (ppComp && !m_PostProcessLibrary.GetShaderNames().empty())
+        if (ppComp && !PostProcessLibrary.GetShaderNames().empty())
         {
-            ppComp->AddMaterial(m_PostProcessLibrary.GetShaderNames()[0]);
+            ppComp->AddMaterial(PostProcessLibrary.GetShaderNames()[0]);
         }
-        m_Scene.SelectObject(obj->ID);
+        Scene.SelectObject(obj->ID);
     }
 }
 
 void KiwiEngineApp::DrawRenderingTab()
 {
-    ImGui::Text("Render Path: %s", GetRenderPathName(m_RenderPath));
+    ImGui::Text("Render Path: %s", GetRenderPathName(RenderPath));
     ImGui::Separator();
 
-    if (m_RenderPath == ERenderPath::RayTracing)
+    if (RenderPath == ERenderPath::RayTracing)
     {
-        ImGui::SliderInt("RPP", &m_RayTracingSamplesPerPixel, 1, 16);
+        ImGui::SliderInt("RPP", &RayTracingSamplesPerPixel, 1, 16);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Rays per pixel. Samples are jittered inside the pixel and averaged.");
 
-        ImGui::SliderFloat("Resolution", &m_RayTracingResolutionPercent, 10.0f, 100.0f, "%.0f%%");
+        ImGui::SliderFloat("Resolution", &RayTracingResolutionPercent, 10.0f, 100.0f, "%.0f%%");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Percentage of the framebuffer resolution used for tracing.");
 
-        ImGui::Text("Trace size: %u x %u", m_RayTraceWidth, m_RayTraceHeight);
+        RenderStats stats = GetRenderStats();
+        ImGui::Text("Trace size: %u x %u", stats.RayTraceWidth, stats.RayTraceHeight);
     }
     else
     {

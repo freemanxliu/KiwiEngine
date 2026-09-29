@@ -7,7 +7,7 @@
 
 void KiwiEngineApp::DrawDetailTab()
 {
-    SceneObject* sel = m_Scene.GetSelectedObject();
+    SceneObject* sel = Scene.GetSelectedObject();
     if (!sel)
     {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No object selected.");
@@ -32,7 +32,8 @@ void KiwiEngineApp::DrawDetailTab()
         if (compOpen)
         {
             // Enable/Disable toggle
-            ImGui::Checkbox(("Enabled##comp" + std::to_string(ci)).c_str(), &comp.Enabled);
+            if (ImGui::Checkbox(("Enabled##comp" + std::to_string(ci)).c_str(), &comp.Enabled))
+                comp.MarkRenderStateDirty();
 
             // Transform — every component has this
             ImGui::Text("Transform");
@@ -40,6 +41,8 @@ void KiwiEngineApp::DrawDetailTab()
             changed |= ImGui::DragFloat3(("Position##" + std::to_string(ci)).c_str(), &comp.Position.x, 0.05f);
             changed |= ImGui::DragFloat3(("Rotation##" + std::to_string(ci)).c_str(), &comp.Rotation.x, 1.0f, -360.0f, 360.0f);
             changed |= ImGui::DragFloat3(("Scale##" + std::to_string(ci)).c_str(), &comp.Scale.x, 0.05f, 0.01f, 100.0f);
+            if (changed)
+                comp.MarkRenderTransformDirty();
 
             // Type-specific UI
             if (comp.GetType() == EComponentType::Mesh)
@@ -50,21 +53,24 @@ void KiwiEngineApp::DrawDetailTab()
                 ImGui::Separator();
                 ImGui::Text("Material Instance");
                 {
-                    auto matNames = m_MaterialLibrary.GetMaterialNames();
+                    auto matNames = MaterialLibrary.GetMaterialNames();
                     if (ImGui::BeginCombo(("##MaterialCombo" + std::to_string(ci)).c_str(), mesh.Material.Parent.c_str()))
                     {
                         for (const auto& name : matNames)
                         {
                             bool isSelected = (name == mesh.Material.Parent);
                             if (ImGui::Selectable(name.c_str(), isSelected))
+                            {
                                 mesh.Material.SetParent(name);
+                                mesh.MarkRenderStateDirty();
+                            }
                             if (isSelected) ImGui::SetItemDefaultFocus();
                         }
                         ImGui::EndCombo();
                     }
                 }
 
-                Material* activeMat = m_MaterialLibrary.GetMaterial(mesh.Material.Parent);
+                Material* activeMat = MaterialLibrary.GetMaterial(mesh.Material.Parent);
                 if (activeMat)
                 {
                     ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Shading Model: %s", ShadingModelToString(activeMat->ShadingModel));
@@ -76,17 +82,26 @@ void KiwiEngineApp::DrawDetailTab()
                     {
                         Vec4 color = mesh.Material.GetColor(activeMat, "_Color", { 0.8f, 0.8f, 0.8f, 1.0f });
                         if (ImGui::ColorEdit4(("Color##mat" + std::to_string(ci)).c_str(), &color.x))
+                        {
                             mesh.Material.SetColor("_Color", color);
+                            mesh.MarkRenderStateDirty();
+                        }
                     }
                     {
                         float roughness = mesh.Material.GetFloat(activeMat, "_Roughness", 0.5f);
                         if (ImGui::SliderFloat(("Roughness##mat" + std::to_string(ci)).c_str(), &roughness, 0.0f, 1.0f))
+                        {
                             mesh.Material.SetFloat("_Roughness", roughness);
+                            mesh.MarkRenderStateDirty();
+                        }
                     }
                     {
                         float metallic = mesh.Material.GetFloat(activeMat, "_Metallic", 0.0f);
                         if (ImGui::SliderFloat(("Metallic##mat" + std::to_string(ci)).c_str(), &metallic, 0.0f, 1.0f))
+                        {
                             mesh.Material.SetFloat("_Metallic", metallic);
+                            mesh.MarkRenderStateDirty();
+                        }
                     }
 
                     ImGui::Spacing();
@@ -102,12 +117,15 @@ void KiwiEngineApp::DrawDetailTab()
 
                     ImGui::Spacing();
                     if (ImGui::SmallButton(("Reset Overrides##" + std::to_string(ci)).c_str()))
+                    {
                         mesh.Material.ClearOverrides();
+                        mesh.MarkRenderStateDirty();
+                    }
                     ImGui::SameLine();
                     if (ImGui::SmallButton(("Edit Material...##" + std::to_string(ci)).c_str()))
                     {
-                        m_MaterialEditorTarget = mesh.Material.Parent;
-                        m_ShowMaterialEditor   = true;
+                        MaterialEditorTarget = mesh.Material.Parent;
+                        ShowMaterialEditor   = true;
                     }
                 }
 
@@ -119,22 +137,29 @@ void KiwiEngineApp::DrawDetailTab()
                     int cullIndex = mesh.CullMode == ECullMode::Front ? 1
                         : mesh.CullMode == ECullMode::None ? 2 : 0;
                     if (ImGui::Combo(("Culling Mode##" + std::to_string(ci)).c_str(), &cullIndex, cullItems, 3))
+                    {
                         mesh.CullMode = cullValues[cullIndex];
+                        mesh.MarkRenderStateDirty();
+                    }
                 }
-                ImGui::DragInt(("Sort Order##" + std::to_string(ci)).c_str(), &mesh.SortOrder, 0.5f, -1000, 1000);
+                if (ImGui::DragInt(("Sort Order##" + std::to_string(ci)).c_str(), &mesh.SortOrder, 0.5f, -1000, 1000))
+                    mesh.MarkRenderStateDirty();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Higher values are rendered first.\nObjects with same order are sorted back-to-front.");
 
                 ImGui::Separator();
                 ImGui::Text("GPU Scene");
-                if (mesh.PrimitiveId == MeshComponent::kInvalidGPUSceneId)
+                uint32_t primitiveId = GPUScene::InvalidId;
+                uint32_t instanceId = GPUScene::InvalidId;
+                RenderScene.GetPrimitiveGPUIds(&mesh, primitiveId, instanceId);
+                if (primitiveId == GPUScene::InvalidId)
                     ImGui::Text("  PrimitiveId: -");
                 else
-                    ImGui::Text("  PrimitiveId: %u", mesh.PrimitiveId);
-                if (mesh.InstanceId == MeshComponent::kInvalidGPUSceneId)
+                    ImGui::Text("  PrimitiveId: %u", primitiveId);
+                if (instanceId == GPUScene::InvalidId)
                     ImGui::Text("  InstanceId: -");
                 else
-                    ImGui::Text("  InstanceId: %u", mesh.InstanceId);
+                    ImGui::Text("  InstanceId: %u", instanceId);
 
                 ImGui::Separator();
                 ImGui::Text("Mesh Info");
@@ -156,7 +181,7 @@ void KiwiEngineApp::DrawDetailTab()
                     if (isMain)
                     {
                         // Set this camera as main (clears all others)
-                        m_Scene.SetMainCamera(&cam);
+                        Scene.SetMainCamera(&cam);
                     }
                     else
                     {
@@ -204,15 +229,18 @@ void KiwiEngineApp::DrawDetailTab()
                 ImGui::Text("Light Type: %s", light.GetLightTypeName());
 
                 // Light Color
-                ImGui::ColorEdit3(("Light Color##" + std::to_string(ci)).c_str(), &light.LightColor.x);
+                if (ImGui::ColorEdit3(("Light Color##" + std::to_string(ci)).c_str(), &light.LightColor.x))
+                    light.MarkRenderStateDirty();
 
                 // Intensity
-                ImGui::DragFloat(("Intensity##" + std::to_string(ci)).c_str(), &light.Intensity, 0.01f, 0.0f, 20.0f);
+                if (ImGui::DragFloat(("Intensity##" + std::to_string(ci)).c_str(), &light.Intensity, 0.01f, 0.0f, 20.0f))
+                    light.MarkRenderStateDirty();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Light intensity multiplier.\n0 = off, 1 = normal, >1 = brighter");
 
                 // Affect World
-                ImGui::Checkbox(("Affect World##light" + std::to_string(ci)).c_str(), &light.AffectWorld);
+                if (ImGui::Checkbox(("Affect World##light" + std::to_string(ci)).c_str(), &light.AffectWorld))
+                    light.MarkRenderStateDirty();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("When disabled, this light will not affect any objects.");
 
@@ -222,7 +250,8 @@ void KiwiEngineApp::DrawDetailTab()
                     auto& pointLight = static_cast<PointLightComponent&>(light);
                     ImGui::Separator();
                     ImGui::Text("Point Light");
-                    ImGui::DragFloat(("Radius##" + std::to_string(ci)).c_str(), &pointLight.Radius, 0.1f, 0.1f, 100.0f);
+                    if (ImGui::DragFloat(("Radius##" + std::to_string(ci)).c_str(), &pointLight.Radius, 0.1f, 0.1f, 100.0f))
+                        light.MarkRenderStateDirty();
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("Maximum distance this light can reach.\nFragments beyond this distance receive no light.");
                 }
@@ -238,11 +267,12 @@ void KiwiEngineApp::DrawDetailTab()
                     ImGui::Separator();
                     ImGui::Text("Shadow (CSM)");
 
-                    ImGui::Checkbox(("Cast Shadow##" + std::to_string(ci)).c_str(), &dirLight.CastShadow);
-
+                    if (ImGui::Checkbox(("Cast Shadow##" + std::to_string(ci)).c_str(), &dirLight.CastShadow))
+                        light.MarkRenderStateDirty();
                     if (dirLight.CastShadow)
                     {
-                        ImGui::SliderInt(("Cascades##" + std::to_string(ci)).c_str(), &dirLight.NumCascades, 1, 4);
+                        if (ImGui::SliderInt(("Cascades##" + std::to_string(ci)).c_str(), &dirLight.NumCascades, 1, 4))
+                            light.MarkRenderStateDirty();
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Number of shadow map cascades.\nMore cascades = better quality at distance,\nbut more GPU cost.");
 
@@ -261,27 +291,33 @@ void KiwiEngineApp::DrawDetailTab()
                         if (ImGui::Combo(("Resolution##shadow" + std::to_string(ci)).c_str(), &resIdx, resLabels, 4))
                         {
                             dirLight.ShadowMapResolution = resolutions[resIdx];
+                            light.MarkRenderStateDirty();
                         }
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Shadow map resolution per cascade.\nHigher = sharper shadows, more VRAM.");
 
-                        ImGui::DragFloat(("Shadow Distance##" + std::to_string(ci)).c_str(), &dirLight.ShadowDistance, 0.5f, 1.0f, 500.0f);
+                        if (ImGui::DragFloat(("Shadow Distance##" + std::to_string(ci)).c_str(), &dirLight.ShadowDistance, 0.5f, 1.0f, 500.0f))
+                            light.MarkRenderStateDirty();
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Maximum distance from camera\nwhere shadows are rendered.");
 
-                        ImGui::SliderFloat(("Split Lambda##" + std::to_string(ci)).c_str(), &dirLight.CascadeSplitLambda, 0.0f, 1.0f);
+                        if (ImGui::SliderFloat(("Split Lambda##" + std::to_string(ci)).c_str(), &dirLight.CascadeSplitLambda, 0.0f, 1.0f))
+                            light.MarkRenderStateDirty();
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Cascade split scheme.\n0 = uniform splits\n1 = logarithmic splits\n0.75 is a good balance.");
 
-                        ImGui::DragFloat(("Shadow Bias##" + std::to_string(ci)).c_str(), &dirLight.ShadowBias, 0.0001f, 0.0f, 0.05f, "%.4f");
+                        if (ImGui::DragFloat(("Shadow Bias##" + std::to_string(ci)).c_str(), &dirLight.ShadowBias, 0.0001f, 0.0f, 0.05f, "%.4f"))
+                            light.MarkRenderStateDirty();
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Depth bias to reduce shadow acne.\nToo high = peter panning.");
 
-                        ImGui::DragFloat(("Normal Bias##" + std::to_string(ci)).c_str(), &dirLight.NormalBias, 0.001f, 0.0f, 0.1f, "%.3f");
+                        if (ImGui::DragFloat(("Normal Bias##" + std::to_string(ci)).c_str(), &dirLight.NormalBias, 0.001f, 0.0f, 0.1f, "%.3f"))
+                            light.MarkRenderStateDirty();
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Normal offset bias.\nHelps with self-shadowing artifacts.");
 
-                        ImGui::SliderFloat(("Shadow Strength##" + std::to_string(ci)).c_str(), &dirLight.ShadowStrength, 0.0f, 1.0f);
+                        if (ImGui::SliderFloat(("Shadow Strength##" + std::to_string(ci)).c_str(), &dirLight.ShadowStrength, 0.0f, 1.0f))
+                            light.MarkRenderStateDirty();
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("Shadow darkness.\n0 = no shadow, 1 = full shadow.");
                     }
@@ -310,7 +346,7 @@ void KiwiEngineApp::DrawDetailTab()
                     ImGui::SameLine();
 
                     // Shader dropdown
-                    const auto& ppShaderNames = m_PostProcessLibrary.GetShaderNames();
+                    const auto& ppShaderNames = PostProcessLibrary.GetShaderNames();
                     if (ImGui::BeginCombo("##Shader", mat.ShaderName.c_str()))
                     {
                         for (const auto& name : ppShaderNames)
@@ -366,7 +402,7 @@ void KiwiEngineApp::DrawDetailTab()
                 ImGui::Separator();
 
                 // Add material button
-                const auto& ppShaderNames = m_PostProcessLibrary.GetShaderNames();
+                const auto& ppShaderNames = PostProcessLibrary.GetShaderNames();
                 if (!ppShaderNames.empty())
                 {
                     if (ImGui::Button("+ Add Material", ImVec2(-1, 30)))

@@ -1,9 +1,11 @@
 #include "Core/RendererUtils.h"
 
 #include "Scene/GLShaders.h"
+#include "Scene/MeshComponent.h"
 #include "Scene/MetalShaders.h"
 #include "Scene/Shaders.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,6 +14,31 @@
 
 namespace Kiwi
 {
+
+void ComputeWorldAABB(const MeshComponent& mesh, Vec3& outMin, Vec3& outMax)
+{
+    Mat4 world = mesh.GetWorldMatrix();
+    const auto& verts = mesh.MeshData.GetVertices();
+
+    if (verts.empty())
+    {
+        outMin = outMax = mesh.Position;
+        return;
+    }
+
+    outMin = { 1e30f, 1e30f, 1e30f };
+    outMax = { -1e30f, -1e30f, -1e30f };
+
+    for (const auto& v : verts)
+    {
+        float wx = v.Position.x * world.m[0][0] + v.Position.y * world.m[1][0] + v.Position.z * world.m[2][0] + world.m[3][0];
+        float wy = v.Position.x * world.m[0][1] + v.Position.y * world.m[1][1] + v.Position.z * world.m[2][1] + world.m[3][1];
+        float wz = v.Position.x * world.m[0][2] + v.Position.y * world.m[1][2] + v.Position.z * world.m[2][2] + world.m[3][2];
+
+        outMin.x = std::min(outMin.x, wx); outMin.y = std::min(outMin.y, wy); outMin.z = std::min(outMin.z, wz);
+        outMax.x = std::max(outMax.x, wx); outMax.y = std::max(outMax.y, wy); outMax.z = std::max(outMax.z, wz);
+    }
+}
 
 bool IsDeferredRHI(RHI_API_TYPE api)
 {

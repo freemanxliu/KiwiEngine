@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Math/Math.h"
+#include "Scene/SceneInterface.h"
 #include <string>
 #include <cstdint>
 
@@ -89,11 +90,20 @@ namespace Kiwi
             return Vec3(rot.m[0][0], rot.m[0][1], rot.m[0][2]).Normalize();
         }
 
+        // Call after changing Position, Rotation or Scale so the renderer picks up the new transform.
+        virtual void MarkRenderTransformDirty() {}
+
+        // Call after changing any other property the renderer mirrors (Enabled, material, light color...).
+        virtual void MarkRenderStateDirty() {}
+
         // Whether this component is enabled
         bool Enabled = true;
 
         // Owner object (set by SceneObject when adding)
         SceneObject* Owner = nullptr;
+
+        // Render scene this component is added to. Set by Scene; null while not registered.
+        SceneInterface* RegisteredScene = nullptr;
     };
 
 } // namespace Kiwi

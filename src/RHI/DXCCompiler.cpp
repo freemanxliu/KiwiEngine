@@ -14,8 +14,8 @@ namespace Kiwi
     DXCCompiler::DXCCompiler()
     {
         // Try to load dxcompiler.dll at runtime
-        m_DxcModule = LoadLibraryW(L"dxcompiler.dll");
-        if (!m_DxcModule)
+        DxcModule = LoadLibraryW(L"dxcompiler.dll");
+        if (!DxcModule)
         {
             std::cerr << "[Kiwi DXC] dxcompiler.dll not found, DXC unavailable" << std::endl;
             return;
@@ -23,32 +23,32 @@ namespace Kiwi
 
         // Get DxcCreateInstance function pointer
         typedef HRESULT(WINAPI* DxcCreateInstanceProc)(REFCLSID, REFIID, LPVOID*);
-        auto createInstance = (DxcCreateInstanceProc)GetProcAddress(m_DxcModule, "DxcCreateInstance");
+        auto createInstance = (DxcCreateInstanceProc)GetProcAddress(DxcModule, "DxcCreateInstance");
         if (!createInstance)
         {
             std::cerr << "[Kiwi DXC] Failed to get DxcCreateInstance" << std::endl;
-            FreeLibrary(m_DxcModule);
-            m_DxcModule = nullptr;
+            FreeLibrary(DxcModule);
+            DxcModule = nullptr;
             return;
         }
 
         // Create compiler and utils
-        HRESULT hr = createInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&m_Compiler));
+        HRESULT hr = createInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&Compiler));
         if (FAILED(hr))
         {
             std::cerr << "[Kiwi DXC] Failed to create IDxcCompiler3" << std::endl;
-            FreeLibrary(m_DxcModule);
-            m_DxcModule = nullptr;
+            FreeLibrary(DxcModule);
+            DxcModule = nullptr;
             return;
         }
 
-        hr = createInstance(CLSID_DxcUtils, IID_PPV_ARGS(&m_Utils));
+        hr = createInstance(CLSID_DxcUtils, IID_PPV_ARGS(&Utils));
         if (FAILED(hr))
         {
             std::cerr << "[Kiwi DXC] Failed to create IDxcUtils" << std::endl;
-            m_Compiler.Reset();
-            FreeLibrary(m_DxcModule);
-            m_DxcModule = nullptr;
+            Compiler.Reset();
+            FreeLibrary(DxcModule);
+            DxcModule = nullptr;
             return;
         }
 
@@ -57,12 +57,12 @@ namespace Kiwi
 
     DXCCompiler::~DXCCompiler()
     {
-        m_Compiler.Reset();
-        m_Utils.Reset();
-        if (m_DxcModule)
+        Compiler.Reset();
+        Utils.Reset();
+        if (DxcModule)
         {
-            FreeLibrary(m_DxcModule);
-            m_DxcModule = nullptr;
+            FreeLibrary(DxcModule);
+            DxcModule = nullptr;
         }
     }
 
@@ -76,7 +76,7 @@ namespace Kiwi
     {
         DXCCompileResult result;
 
-        if (!m_Compiler || !m_Utils)
+        if (!Compiler || !Utils)
         {
             result.ErrorMsg = "DXC compiler not available";
             return result;
@@ -136,7 +136,7 @@ namespace Kiwi
 
         // Compile
         ComPtr<IDxcResult> dxcResult;
-        HRESULT hr = m_Compiler->Compile(
+        HRESULT hr = Compiler->Compile(
             &sourceBuffer,
             args.data(),
             (UINT32)args.size(),

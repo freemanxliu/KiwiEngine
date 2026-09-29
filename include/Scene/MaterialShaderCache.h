@@ -27,7 +27,7 @@ namespace Kiwi
         void ReleaseAll();
 
         MaterialPassShader* Get(const std::string& surfaceName, EMaterialPass pass);
-        const std::vector<std::string>& GetSurfaceNames() const { return m_SurfaceNames; }
+        const std::vector<std::string>& GetSurfaceNames() const { return SurfaceNames; }
 
         // Shared shaders used by every material (depth, and DefaultSurface instancing).
         void SetSharedShader(EMaterialPass pass, bool bInstanced, MeshPassShader shader);
@@ -40,15 +40,15 @@ namespace Kiwi
         MaterialPassShader* Compile(const std::string& surfaceName, EMaterialPass pass);
         MeshPassShader ShaderOrFallback(const std::string& surfaceName, EMaterialPass pass);
 
-        RHIDevice* m_Device = nullptr;
-        RHIInputLayout* m_Layout = nullptr;
-        std::string m_SurfaceDir;
-        std::string m_TemplateDir;
-        std::vector<std::string> m_SurfaceNames;
-        std::unordered_map<std::string, std::unique_ptr<MaterialPassShader>> m_Shaders;
-        std::unordered_map<std::string, std::unique_ptr<MaterialShaderMap>> m_ShaderMaps;
-        MeshPassShader m_Shared[(int)EMaterialPass::Count][2]{};
-        MeshPassShader m_Fallback[(int)EMaterialPass::Count]{};
+        RHIDevice* Device = nullptr;
+        RHIInputLayout* Layout = nullptr;
+        std::string SurfaceDir;
+        std::string TemplateDir;
+        std::vector<std::string> SurfaceNames;
+        std::unordered_map<std::string, std::unique_ptr<MaterialPassShader>> Shaders;
+        std::unordered_map<std::string, std::unique_ptr<MaterialShaderMap>> ShaderMaps;
+        MeshPassShader Shared[(int)EMaterialPass::Count][2]{};
+        MeshPassShader Fallback[(int)EMaterialPass::Count]{};
     };
 
 } // namespace Kiwi

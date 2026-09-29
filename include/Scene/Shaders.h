@@ -96,6 +96,13 @@ namespace Kiwi
         uint32_t Pad[3];
     };
 
+    // ---- Draw Instance Uniform Buffer (b4) — per-draw offset into g_DrawInstanceIds ----
+    struct DrawInstanceUniformBuffer
+    {
+        uint32_t DrawInstanceOffset;
+        uint32_t Pad[3];
+    };
+
     // ---- Shadow Uniform Buffer (b2) — per-frame CSM data ----
     struct ShadowUniformBuffer
     {

@@ -27,25 +27,25 @@ namespace Kiwi
         GLSwapChain(HWND hwnd, HDC hdc, const SwapChainDesc& desc);
         ~GLSwapChain() override;
 
-        void* GetNativeHandle() const override { return (void*)m_HDC; }
+        void* GetNativeHandle() const override { return (void*)Hdc; }
         void Present(uint32_t syncInterval = 0) override;
         void ResizeBuffers(uint32_t width, uint32_t height) override;
 
         uint32_t GetCurrentBackBufferIndex() const override { return 0; }
-        RHITexture* GetBackBuffer(uint32_t index) override { return &m_BackBuffer; }
-        RHITextureView* GetBackBufferRTV(uint32_t index) override { return &m_BackBufferRTV; }
+        RHITexture* GetBackBuffer(uint32_t index) override { return &BackBuffer; }
+        RHITextureView* GetBackBufferRTV(uint32_t index) override { return &BackBufferRTV; }
 
-        uint32_t GetWidth() const { return m_Desc.Width; }
-        uint32_t GetHeight() const { return m_Desc.Height; }
+        uint32_t GetWidth() const { return Desc.Width; }
+        uint32_t GetHeight() const { return Desc.Height; }
 
     private:
-        HWND m_HWND = nullptr;
-        HDC  m_HDC  = nullptr;
-        SwapChainDesc m_Desc;
+        HWND Hwnd = nullptr;
+        HDC  Hdc  = nullptr;
+        SwapChainDesc Desc;
 
         // Pseudo back-buffer (GL default framebuffer = 0)
-        GLTexture     m_BackBuffer;
-        GLTextureView m_BackBufferRTV;
+        GLTexture     BackBuffer;
+        GLTextureView BackBufferRTV;
     };
 
     // ============================================================
@@ -59,8 +59,8 @@ namespace Kiwi
         ~GLDevice() override;
 
         RHI_API_TYPE GetApiType() const override { return RHI_API_TYPE::OPENGL; }
-        void* GetNativeDevice() const override { return (void*)m_HGLRC; }
-        void* GetImmediateContext() const override { return (void*)m_HGLRC; }
+        void* GetNativeDevice() const override { return (void*)Hglrc; }
+        void* GetImmediateContext() const override { return (void*)Hglrc; }
 
         std::unique_ptr<RHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;
         std::unique_ptr<RHIBuffer> CreateBuffer(const BufferDesc& desc, const void* initialData = nullptr) override;
@@ -84,14 +84,15 @@ namespace Kiwi
         void InitImGui(void* windowHandle) override;
         void ShutdownImGui() override;
         void ImGuiNewFrame() override;
-        void ImGuiRenderDrawData(RHICommandContext* ctx) override;
+        void ImGuiUpdateTextures(ImDrawData* DrawData) override;
+        void ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData) override;
 
     private:
-        HWND  m_HWND  = nullptr;
-        HDC   m_HDC   = nullptr;
-        HGLRC m_HGLRC = nullptr;
-        bool  m_EnableDebug;
-        bool  m_ImGuiInitialized = false;
+        HWND  Hwnd  = nullptr;
+        HDC   Hdc   = nullptr;
+        HGLRC Hglrc = nullptr;
+        bool  EnableDebug;
+        bool  ImGuiInitialized = false;
 
         void CreateWGLContext(HWND hwnd);
     };
@@ -144,22 +145,22 @@ namespace Kiwi
         void EnsureGLResources();
 
     private:
-        bool   m_GLResourcesReady = false;
-        GLuint m_FBO = 0;       // Current framebuffer object (0 = default/backbuffer)
-        GLuint m_VAO = 0;       // Current vertex array object
-        GLenum m_Topology = GL_TRIANGLES;
+        bool   GLResourcesReady = false;
+        GLuint FBO = 0;       // Current framebuffer object (0 = default/backbuffer)
+        GLuint VAO = 0;       // Current vertex array object
+        GLenum Topology = GL_TRIANGLES;
 
         // Cached state for draw calls
-        GLShader*      m_CurrentVS = nullptr;
-        GLShader*      m_CurrentPS = nullptr;
-        GLInputLayout* m_CurrentLayout = nullptr;
-        GLPipelineState* m_CurrentPSO = nullptr;
-        bool m_CullOverride = false;
-        ECullMode m_CullMode = ECullMode::Back;
+        GLShader*      CurrentVS = nullptr;
+        GLShader*      CurrentPS = nullptr;
+        GLInputLayout* CurrentLayout = nullptr;
+        GLPipelineState* CurrentPSO = nullptr;
+        bool CullOverride = false;
+        ECullMode CullMode = ECullMode::Back;
 
         // Index buffer state
-        GLenum m_IndexFormat = GL_UNSIGNED_INT;
-        uint32_t m_IndexBufferOffset = 0;
+        GLenum IndexFormat = GL_UNSIGNED_INT;
+        uint32_t IndexBufferOffset = 0;
     };
 
     // Factory function (called from CreateRHI)

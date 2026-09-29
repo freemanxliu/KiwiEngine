@@ -54,27 +54,27 @@ namespace Kiwi
     public:
         VulkanBuffer(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
                      const BufferDesc& desc, void* mappedPtr = nullptr)
-            : m_Device(device), m_Buffer(buffer), m_Memory(memory)
-            , m_Desc(desc), m_MappedPtr(mappedPtr) {}
+            : Device(device), Buffer(buffer), Memory(memory)
+            , Desc(desc), MappedPtr(mappedPtr) {}
 
         ~VulkanBuffer() override;
 
-        void* GetNativeHandle() const override { return (void*)m_Buffer; }
-        const BufferDesc& GetDesc() const override { return m_Desc; }
+        void* GetNativeHandle() const override { return (void*)Buffer; }
+        const BufferDesc& GetDesc() const override { return Desc; }
 
         void* Map(uint32_t subresource = 0) override;
         void  Unmap(uint32_t subresource = 0) override;
         void  UpdateData(const void* data, uint32_t size, uint32_t offset = 0) override;
 
-        VkBuffer GetVkBuffer() const { return m_Buffer; }
-        VkDeviceMemory GetVkMemory() const { return m_Memory; }
+        VkBuffer GetVkBuffer() const { return Buffer; }
+        VkDeviceMemory GetVkMemory() const { return Memory; }
 
     private:
-        VkDevice m_Device;
-        VkBuffer m_Buffer;
-        VkDeviceMemory m_Memory;
-        BufferDesc m_Desc;
-        void* m_MappedPtr = nullptr;
+        VkDevice Device;
+        VkBuffer Buffer;
+        VkDeviceMemory Memory;
+        BufferDesc Desc;
+        void* MappedPtr = nullptr;
     };
 
     class VulkanTexture : public RHITexture
@@ -82,37 +82,37 @@ namespace Kiwi
     public:
         VulkanTexture(VkDevice device, VkImage image, VkDeviceMemory memory,
                       const TextureDesc& desc, bool ownsImage = true)
-            : m_Device(device), m_Image(image), m_Memory(memory)
-            , m_Desc(desc), m_OwnsImage(ownsImage) {}
+            : Device(device), Image(image), Memory(memory)
+            , Desc(desc), OwnsImage(ownsImage) {}
 
         ~VulkanTexture() override;
 
-        void* GetNativeHandle() const override { return (void*)m_Image; }
-        const TextureDesc& GetDesc() const override { return m_Desc; }
-        VkImage GetVkImage() const { return m_Image; }
+        void* GetNativeHandle() const override { return (void*)Image; }
+        const TextureDesc& GetDesc() const override { return Desc; }
+        VkImage GetVkImage() const { return Image; }
 
     private:
-        VkDevice m_Device;
-        VkImage m_Image;
-        VkDeviceMemory m_Memory;
-        TextureDesc m_Desc;
-        bool m_OwnsImage;
+        VkDevice Device;
+        VkImage Image;
+        VkDeviceMemory Memory;
+        TextureDesc Desc;
+        bool OwnsImage;
     };
 
     class VulkanTextureView : public RHITextureView
     {
     public:
         VulkanTextureView(VkDevice device, VkImageView view)
-            : m_Device(device), m_ImageView(view) {}
+            : Device(device), ImageView(view) {}
 
         ~VulkanTextureView() override;
 
-        void* GetNativeHandle() const override { return (void*)m_ImageView; }
-        VkImageView GetVkImageView() const { return m_ImageView; }
+        void* GetNativeHandle() const override { return (void*)ImageView; }
+        VkImageView GetVkImageView() const { return ImageView; }
 
     private:
-        VkDevice m_Device;
-        VkImageView m_ImageView;
+        VkDevice Device;
+        VkImageView ImageView;
     };
 
     class VulkanShader : public RHIShader
@@ -120,20 +120,20 @@ namespace Kiwi
     public:
         VulkanShader(VkDevice device, VkShaderModule module, EShaderType type,
                      const std::vector<uint32_t>& spirvCode)
-            : m_Device(device), m_Module(module), m_Type(type), m_SPIRVCode(spirvCode) {}
+            : Device(device), Module(module), Type(type), SPIRVCode(spirvCode) {}
 
         ~VulkanShader() override;
 
-        void* GetNativeHandle() const override { return (void*)m_Module; }
-        EShaderType GetType() const override { return m_Type; }
-        VkShaderModule GetVkShaderModule() const { return m_Module; }
-        const std::vector<uint32_t>& GetSPIRVCode() const { return m_SPIRVCode; }
+        void* GetNativeHandle() const override { return (void*)Module; }
+        EShaderType GetType() const override { return Type; }
+        VkShaderModule GetVkShaderModule() const { return Module; }
+        const std::vector<uint32_t>& GetSPIRVCode() const { return SPIRVCode; }
 
     private:
-        VkDevice m_Device;
-        VkShaderModule m_Module;
-        EShaderType m_Type;
-        std::vector<uint32_t> m_SPIRVCode;
+        VkDevice Device;
+        VkShaderModule Module;
+        EShaderType Type;
+        std::vector<uint32_t> SPIRVCode;
     };
 
     class VulkanInputLayout : public RHIInputLayout
@@ -141,46 +141,46 @@ namespace Kiwi
     public:
         VulkanInputLayout(const std::vector<VkVertexInputAttributeDescription>& attributes,
                           const VkVertexInputBindingDescription& binding)
-            : m_Attributes(attributes), m_Binding(binding) {}
+            : Attributes(attributes), Binding(binding) {}
 
-        void* GetNativeHandle() const override { return (void*)m_Attributes.data(); }
-        const std::vector<VkVertexInputAttributeDescription>& GetAttributes() const { return m_Attributes; }
-        const VkVertexInputBindingDescription& GetBinding() const { return m_Binding; }
+        void* GetNativeHandle() const override { return (void*)Attributes.data(); }
+        const std::vector<VkVertexInputAttributeDescription>& GetAttributes() const { return Attributes; }
+        const VkVertexInputBindingDescription& GetBinding() const { return Binding; }
 
     private:
-        std::vector<VkVertexInputAttributeDescription> m_Attributes;
-        VkVertexInputBindingDescription m_Binding;
+        std::vector<VkVertexInputAttributeDescription> Attributes;
+        VkVertexInputBindingDescription Binding;
     };
 
     class VulkanPipelineState : public RHIPipelineState
     {
     public:
         VulkanPipelineState(VkDevice device, VkPipeline pipeline)
-            : m_Device(device), m_Pipeline(pipeline) {}
+            : Device(device), Pipeline(pipeline) {}
 
         ~VulkanPipelineState() override;
 
-        void* GetNativeHandle() const override { return (void*)m_Pipeline; }
-        VkPipeline GetVkPipeline() const { return m_Pipeline; }
+        void* GetNativeHandle() const override { return (void*)Pipeline; }
+        VkPipeline GetVkPipeline() const { return Pipeline; }
 
     private:
-        VkDevice m_Device;
-        VkPipeline m_Pipeline;
+        VkDevice Device;
+        VkPipeline Pipeline;
     };
 
     class VulkanSampler : public RHISampler
     {
     public:
         VulkanSampler(VkDevice device, VkSampler sampler)
-            : m_Device(device), m_Sampler(sampler) {}
+            : Device(device), Sampler(sampler) {}
 
         ~VulkanSampler() override;
 
-        void* GetNativeHandle() const override { return (void*)m_Sampler; }
+        void* GetNativeHandle() const override { return (void*)Sampler; }
 
     private:
-        VkDevice m_Device;
-        VkSampler m_Sampler;
+        VkDevice Device;
+        VkSampler Sampler;
     };
 
     // ============================================================
@@ -195,7 +195,7 @@ namespace Kiwi
                         const SwapChainDesc& desc);
         ~VulkanSwapChain() override;
 
-        void* GetNativeHandle() const override { return (void*)m_SwapChain; }
+        void* GetNativeHandle() const override { return (void*)SwapChain; }
         void Present(uint32_t syncInterval = 0) override;
         void ResizeBuffers(uint32_t width, uint32_t height) override;
 
@@ -204,15 +204,15 @@ namespace Kiwi
         RHITextureView* GetBackBufferRTV(uint32_t index) override;
 
         // Vulkan-specific
-        VkSwapchainKHR GetVkSwapChain() const { return m_SwapChain; }
-        VkFormat GetSwapChainFormat() const { return m_SwapChainFormat; }
-        VkRenderPass GetRenderPass() const { return m_RenderPass; }
+        VkSwapchainKHR GetVkSwapChain() const { return SwapChain; }
+        VkFormat GetSwapChainFormat() const { return SwapChainFormat; }
+        VkRenderPass GetRenderPass() const { return RenderPass; }
         VkFramebuffer GetCurrentFramebuffer() const;
-        VkExtent2D GetExtent() const { return m_Extent; }
+        VkExtent2D GetExtent() const { return Extent; }
 
         // Semaphores for frame sync
-        VkSemaphore GetImageAvailableSemaphore() const { return m_ImageAvailableSemaphore; }
-        VkSemaphore GetRenderFinishedSemaphore() const { return m_RenderFinishedSemaphore; }
+        VkSemaphore GetImageAvailableSemaphore() const { return ImageAvailableSemaphore; }
+        VkSemaphore GetRenderFinishedSemaphore() const { return RenderFinishedSemaphore; }
 
         // Acquire next image
         void AcquireNextImage();
@@ -222,25 +222,25 @@ namespace Kiwi
         void CleanupSwapChain();
         void CreateRenderPass();
 
-        VkDevice m_Device;
-        VkPhysicalDevice m_PhysicalDevice;
-        VkSurfaceKHR m_Surface;
-        VkQueue m_PresentQueue;
-        SwapChainDesc m_Desc;
+        VkDevice Device;
+        VkPhysicalDevice PhysicalDevice;
+        VkSurfaceKHR Surface;
+        VkQueue PresentQueue;
+        SwapChainDesc Desc;
 
-        VkSwapchainKHR m_SwapChain = VK_NULL_HANDLE;
-        VkFormat m_SwapChainFormat = VK_FORMAT_B8G8R8A8_UNORM;
-        VkExtent2D m_Extent = {};
-        VkRenderPass m_RenderPass = VK_NULL_HANDLE;
+        VkSwapchainKHR SwapChain = VK_NULL_HANDLE;
+        VkFormat SwapChainFormat = VK_FORMAT_B8G8R8A8_UNORM;
+        VkExtent2D Extent = {};
+        VkRenderPass RenderPass = VK_NULL_HANDLE;
 
-        uint32_t m_CurrentImageIndex = 0;
+        uint32_t CurrentImageIndex = 0;
 
-        std::vector<std::unique_ptr<VulkanTexture>>     m_BackBuffers;
-        std::vector<std::unique_ptr<VulkanTextureView>> m_BackBufferViews;
-        std::vector<VkFramebuffer>                      m_Framebuffers;
+        std::vector<std::unique_ptr<VulkanTexture>>     BackBuffers;
+        std::vector<std::unique_ptr<VulkanTextureView>> BackBufferViews;
+        std::vector<VkFramebuffer>                      Framebuffers;
 
-        VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE;
-        VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
+        VkSemaphore ImageAvailableSemaphore = VK_NULL_HANDLE;
+        VkSemaphore RenderFinishedSemaphore = VK_NULL_HANDLE;
     };
 
     // ============================================================
@@ -254,8 +254,8 @@ namespace Kiwi
         ~VulkanDevice() override;
 
         RHI_API_TYPE GetApiType() const override { return RHI_API_TYPE::VULKAN; }
-        void* GetNativeDevice() const override { return (void*)m_Device; }
-        void* GetImmediateContext() const override { return (void*)m_GraphicsQueue; }
+        void* GetNativeDevice() const override { return (void*)Device; }
+        void* GetImmediateContext() const override { return (void*)GraphicsQueue; }
 
         std::unique_ptr<RHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;
         std::unique_ptr<RHIBuffer> CreateBuffer(const BufferDesc& desc, const void* initialData = nullptr) override;
@@ -283,28 +283,29 @@ namespace Kiwi
         void InitImGui(void* windowHandle) override;
         void ShutdownImGui() override;
         void ImGuiNewFrame() override;
-        void ImGuiRenderDrawData(RHICommandContext* ctx) override;
+        void ImGuiUpdateTextures(ImDrawData* DrawData) override;
+        void ImGuiRenderDrawData(RHICommandContext* Ctx, ImDrawData* DrawData) override;
 
         // Compile from pre-compiled SPIR-V
         std::unique_ptr<RHIShader> CompileShaderFromSPIRV(EShaderType type,
             const uint32_t* spirvCode, size_t spirvSize);
 
         // Vulkan native access
-        VkInstance GetVkInstance() const { return m_Instance; }
-        VkPhysicalDevice GetVkPhysicalDevice() const { return m_PhysicalDevice; }
-        VkDevice GetVkDevice() const { return m_Device; }
-        VkQueue GetGraphicsQueue() const { return m_GraphicsQueue; }
-        uint32_t GetGraphicsQueueFamily() const { return m_GraphicsQueueFamily; }
-        VkCommandPool GetCommandPool() const { return m_CommandPool; }
-        VkDescriptorPool GetDescriptorPool() const { return m_DescriptorPool; }
+        VkInstance GetVkInstance() const { return Instance; }
+        VkPhysicalDevice GetVkPhysicalDevice() const { return PhysicalDevice; }
+        VkDevice GetVkDevice() const { return Device; }
+        VkQueue GetGraphicsQueue() const { return GraphicsQueue; }
+        uint32_t GetGraphicsQueueFamily() const { return GraphicsQueueFamily; }
+        VkCommandPool GetCommandPool() const { return CommandPool; }
+        VkDescriptorPool GetDescriptorPool() const { return DescriptorPool; }
 
         // Pipeline layout & descriptor set layout
-        VkPipelineLayout GetPipelineLayout() const { return m_PipelineLayout; }
-        VkDescriptorSetLayout GetDescriptorSetLayout() const { return m_DescriptorSetLayout; }
+        VkPipelineLayout GetPipelineLayout() const { return PipelineLayout; }
+        VkDescriptorSetLayout GetDescriptorSetLayout() const { return DescriptorSetLayout; }
 
         // Get the main render pass (for pipeline creation)
-        VkRenderPass GetMainRenderPass() const { return m_MainRenderPass; }
-        void SetMainRenderPass(VkRenderPass rp) { m_MainRenderPass = rp; }
+        VkRenderPass GetMainRenderPass() const { return MainRenderPass; }
+        void SetMainRenderPass(VkRenderPass rp) { MainRenderPass = rp; }
 
         // Allocate descriptor set for constant buffer
         VkDescriptorSet AllocateDescriptorSet();
@@ -323,24 +324,24 @@ namespace Kiwi
         void CreateDescriptorPoolAndLayout();
         void CreatePipelineLayout();
 
-        VkInstance m_Instance = VK_NULL_HANDLE;
-        VkDebugUtilsMessengerEXT m_DebugMessenger = VK_NULL_HANDLE;
-        VkPhysicalDevice m_PhysicalDevice = VK_NULL_HANDLE;
-        VkDevice m_Device = VK_NULL_HANDLE;
-        VkQueue m_GraphicsQueue = VK_NULL_HANDLE;
-        uint32_t m_GraphicsQueueFamily = 0;
-        VkCommandPool m_CommandPool = VK_NULL_HANDLE;
-        VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
-        VkDescriptorSetLayout m_DescriptorSetLayout = VK_NULL_HANDLE;
-        VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
-        VkRenderPass m_MainRenderPass = VK_NULL_HANDLE;  // cached from SwapChain
-        bool m_EnableDebug;
+        VkInstance Instance = VK_NULL_HANDLE;
+        VkDebugUtilsMessengerEXT DebugMessenger = VK_NULL_HANDLE;
+        VkPhysicalDevice PhysicalDevice = VK_NULL_HANDLE;
+        VkDevice Device = VK_NULL_HANDLE;
+        VkQueue GraphicsQueue = VK_NULL_HANDLE;
+        uint32_t GraphicsQueueFamily = 0;
+        VkCommandPool CommandPool = VK_NULL_HANDLE;
+        VkDescriptorPool DescriptorPool = VK_NULL_HANDLE;
+        VkDescriptorSetLayout DescriptorSetLayout = VK_NULL_HANDLE;
+        VkPipelineLayout PipelineLayout = VK_NULL_HANDLE;
+        VkRenderPass MainRenderPass = VK_NULL_HANDLE;  // cached from SwapChain
+        bool EnableDebug;
 
-        VkSurfaceKHR m_LastSurface = VK_NULL_HANDLE; // cached for queue family check
+        VkSurfaceKHR LastSurface = VK_NULL_HANDLE; // cached for queue family check
 
     public:
         // Expose for SwapChain creation
-        void SetSurface(VkSurfaceKHR surface) { m_LastSurface = surface; }
+        void SetSurface(VkSurfaceKHR surface) { LastSurface = surface; }
     };
 
     // ============================================================
@@ -354,7 +355,7 @@ namespace Kiwi
                             VkQueue graphicsQueue);
         ~VulkanCommandContext() override;
 
-        void* GetNativeHandle() const override { return (void*)m_CommandBuffer; }
+        void* GetNativeHandle() const override { return (void*)CommandBuffer; }
 
         // Frame lifecycle
         void BeginFrame(RHISwapChain* swapChain) override;
@@ -401,7 +402,7 @@ namespace Kiwi
         void Flush() override;
 
         // Vulkan-specific
-        VkCommandBuffer GetCommandBuffer() const { return m_CommandBuffer; }
+        VkCommandBuffer GetCommandBuffer() const { return CommandBuffer; }
         void Reset();
         void BeginCommandBuffer();
         void EndCommandBuffer();
@@ -416,13 +417,13 @@ namespace Kiwi
         void BindDescriptorSet(VkPipelineLayout layout, VkDescriptorSet descriptorSet);
 
     private:
-        VkDevice m_Device;
-        VkCommandPool m_CommandPool;
-        VkQueue m_GraphicsQueue;
-        VkCommandBuffer m_CommandBuffer = VK_NULL_HANDLE;
-        VkFence m_Fence = VK_NULL_HANDLE;
-        bool m_IsRecording = false;
-        bool m_InRenderPass = false;
+        VkDevice Device;
+        VkCommandPool CommandPool;
+        VkQueue GraphicsQueue;
+        VkCommandBuffer CommandBuffer = VK_NULL_HANDLE;
+        VkFence Fence = VK_NULL_HANDLE;
+        bool IsRecording = false;
+        bool InRenderPass = false;
     };
 
 } // namespace Kiwi
