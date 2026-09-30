@@ -7,7 +7,9 @@ License : LICENSE.TXT (University of Illinois/NCSA Open Source License)
 Layout
   include/dxc/dxcapi.h, WinAdapter.h   <- VulkanSDK/1.4.363.0/macOS/include/dxc/
   macos/libdxcompiler.dylib            <- VulkanSDK/1.4.363.0/macOS/lib/        (universal arm64 + x86_64)
-  win-x64/dxcompiler.dll, dxil.dll     <- C:/VulkanSDK/1.4.363.0/Bin/            (dxil.dll signs DXIL for D3D12)
+  win-x64/dxcompiler.dll               <- C:/VulkanSDK/1.4.363.0/Bin/
+    The SDK no longer ships dxil.dll: DXC 1.9 validates and signs DXIL itself, so D3D12 accepts
+    its output without it. Only add win-x64/dxil.dll if a future SDK version needs it again.
 
 Updating: install the new Vulkan SDK on both macOS and Windows, replace every file above from the
 same SDK version at once, and update the version lines here. Never mix files from different versions.

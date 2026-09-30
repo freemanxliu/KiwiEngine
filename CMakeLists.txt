@@ -335,14 +335,20 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${KIWI_DXC_DIR}/include")
 if(WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE KIWI_WITH_DXC=1)
     set(KIWI_DXC_BIN "${KIWI_DXC_DIR}/win-x64")
-    if(EXISTS "${KIWI_DXC_BIN}/dxcompiler.dll" AND EXISTS "${KIWI_DXC_BIN}/dxil.dll")
+    if(EXISTS "${KIWI_DXC_BIN}/dxcompiler.dll")
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KIWI_DXC_BIN}/dxcompiler.dll" $<TARGET_FILE_DIR:${PROJECT_NAME}>/dxcompiler.dll
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KIWI_DXC_BIN}/dxil.dll" $<TARGET_FILE_DIR:${PROJECT_NAME}>/dxil.dll
-            COMMENT "Copying DXC runtime (dxcompiler.dll + dxil.dll)"
+            COMMENT "Copying DXC runtime (dxcompiler.dll)"
         )
+        # DXC 1.9 signs DXIL by itself; dxil.dll is only needed by older DXC builds.
+        if(EXISTS "${KIWI_DXC_BIN}/dxil.dll")
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KIWI_DXC_BIN}/dxil.dll" $<TARGET_FILE_DIR:${PROJECT_NAME}>/dxil.dll
+                COMMENT "Copying DXIL signer (dxil.dll)"
+            )
+        endif()
     else()
-        message(WARNING "DXC: ${KIWI_DXC_BIN}/dxcompiler.dll or dxil.dll is missing; DX12 falls back to FXC. See third_party/dxc/VERSION.txt")
+        message(WARNING "DXC: ${KIWI_DXC_BIN}/dxcompiler.dll is missing; DX12 falls back to FXC. See third_party/dxc/VERSION.txt")
     endif()
 elseif(APPLE)
     set(KIWI_DXC_DYLIB "${KIWI_DXC_DIR}/macos/libdxcompiler.dylib")
