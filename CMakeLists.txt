@@ -327,17 +327,35 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/Materials)
     )
 endif()
 
-# ---- Copy DXC runtime DLLs to output directory (for runtime shader compilation) ----
-# Find Windows SDK bin directory for x64
-set(WIN_SDK_BIN "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64")
-if(EXISTS "${WIN_SDK_BIN}/dxcompiler.dll")
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${WIN_SDK_BIN}/dxcompiler.dll"
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/dxcompiler.dll
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${WIN_SDK_BIN}/dxil.dll"
-            $<TARGET_FILE_DIR:${PROJECT_NAME}>/dxil.dll
-        COMMENT "Copying DXC runtime (dxcompiler.dll + dxil.dll)"
-    )
+# ---- DXC (DirectX Shader Compiler), vendored in third_party/dxc ----
+# Every platform uses the same pinned DXC build (see third_party/dxc/VERSION.txt).
+set(KIWI_DXC_DIR "${CMAKE_SOURCE_DIR}/third_party/dxc")
+target_include_directories(${PROJECT_NAME} PRIVATE "${KIWI_DXC_DIR}/include")
+
+if(WIN32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE KIWI_WITH_DXC=1)
+    set(KIWI_DXC_BIN "${KIWI_DXC_DIR}/win-x64")
+    if(EXISTS "${KIWI_DXC_BIN}/dxcompiler.dll" AND EXISTS "${KIWI_DXC_BIN}/dxil.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KIWI_DXC_BIN}/dxcompiler.dll" $<TARGET_FILE_DIR:${PROJECT_NAME}>/dxcompiler.dll
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KIWI_DXC_BIN}/dxil.dll" $<TARGET_FILE_DIR:${PROJECT_NAME}>/dxil.dll
+            COMMENT "Copying DXC runtime (dxcompiler.dll + dxil.dll)"
+        )
+    else()
+        message(WARNING "DXC: ${KIWI_DXC_BIN}/dxcompiler.dll or dxil.dll is missing; DX12 falls back to FXC. See third_party/dxc/VERSION.txt")
+    endif()
+elseif(APPLE)
+    set(KIWI_DXC_DYLIB "${KIWI_DXC_DIR}/macos/libdxcompiler.dylib")
+    if(EXISTS "${KIWI_DXC_DYLIB}")
+        target_sources(${PROJECT_NAME} PRIVATE src/RHI/DXCCompiler.cpp)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE KIWI_WITH_DXC=1)
+        # The loader only looks in Contents/Frameworks, so the app never picks up a different DXC from the system.
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}>/Frameworks"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${KIWI_DXC_DYLIB}" "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}>/Frameworks/libdxcompiler.dylib"
+            COMMENT "Bundling DXC runtime (libdxcompiler.dylib)"
+        )
+    else()
+        message(WARNING "DXC: ${KIWI_DXC_DYLIB} is missing; HLSL -> SPIR-V compilation is disabled. See third_party/dxc/VERSION.txt")
+    endif()
 endif()

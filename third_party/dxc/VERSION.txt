@@ -1,0 +1,13 @@
+DirectX Shader Compiler (DXC), vendored so every platform compiles shaders with the same compiler.
+
+Version : 1.9.0.5512 (commit 01b62ad4)
+Source  : LunarG Vulkan SDK 1.4.363.0
+License : LICENSE.TXT (University of Illinois/NCSA Open Source License)
+
+Layout
+  include/dxc/dxcapi.h, WinAdapter.h   <- VulkanSDK/1.4.363.0/macOS/include/dxc/
+  macos/libdxcompiler.dylib            <- VulkanSDK/1.4.363.0/macOS/lib/        (universal arm64 + x86_64)
+  win-x64/dxcompiler.dll, dxil.dll     <- C:/VulkanSDK/1.4.363.0/Bin/            (dxil.dll signs DXIL for D3D12)
+
+Updating: install the new Vulkan SDK on both macOS and Windows, replace every file above from the
+same SDK version at once, and update the version lines here. Never mix files from different versions.

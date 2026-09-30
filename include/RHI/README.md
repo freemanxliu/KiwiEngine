@@ -24,8 +24,7 @@ RHI 抽象层
 ├── Vulkan/                 — Vulkan 后端
 │   ├── VulkanHeaders.h      — Vulkan / Win32 系统头文件
 │   └── VulkanDevice.h       — Device / SwapChain / CommandContext + 资源类
-└── DXC/                    — DXC 着色器编译器
-    └── DXCCompiler.h        — DXC 单例封装（IDxcCompiler3）
+└── DXCCompiler.h          — DXC 单例封装（IDxcCompiler3，Windows / macOS，DXIL / SPIR-V）
 ```
 
 ## 继承关系
@@ -111,11 +110,12 @@ GPU 原生指令              ← 驱动翻译
 DXBC 字节码
 ```
 
-- **编译器**：DXC (DirectX Shader Compiler)，运行时通过 `LoadLibrary("dxcompiler.dll")` 加载
-- **DXCCompiler**：单例封装，`include/RHI/DXC/DXCCompiler.h`
+- **编译器**：DXC (DirectX Shader Compiler)，固定版本放在 `third_party/dxc`（取自 Vulkan SDK 1.4.363.0，版本和更新方法见 `third_party/dxc/VERSION.txt`），Windows 和 macOS 使用同一版本
+- **加载方式**：Windows `LoadLibraryW("dxcompiler.dll")`（可执行文件目录）；macOS `dlopen("@executable_path/../Frameworks/libdxcompiler.dylib")`，只加载随程序打包的这一份
+- **DXCCompiler**：单例封装，`include/RHI/DXCCompiler.h`；编译目标 `EDXCTarget::DXIL`（DX12）或 `EDXCTarget::SPIRV`（Vulkan / SPIRV-Cross 输入，带 `-fvk-use-dx-layout`）
 - **Shader Model**：SM 6.0（DXC 不支持 SM 5.x，自动升级）
 - **编译产物**：DXIL (DirectX Intermediate Language) — 比 DXBC 更现代的中间格式
-- **运行时依赖**：`dxcompiler.dll` + `dxil.dll`（CMake 自动复制到 `build/bin/`）
+- **运行时依赖**：Windows 为 `third_party/dxc/win-x64/` 下的 `dxcompiler.dll` + `dxil.dll`（CMake 复制到 `build/bin/`，缺失时 DX12 回退到 FXC）；macOS 为 `third_party/dxc/macos/libdxcompiler.dylib`（CMake 复制到 app bundle 的 `Contents/Frameworks/`，文件缺失时不编译 DXC 支持）
 
 #### DX11 vs DX12 的差异
 

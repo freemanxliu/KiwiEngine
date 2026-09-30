@@ -1,9 +1,65 @@
 #include "RHI/DXCCompiler.h"
-#include <iostream>
 #include <cstring>
+#include <iostream>
+
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
 
 namespace Kiwi
 {
+
+    namespace
+    {
+        using DxcCreateInstanceFn = HRESULT(__stdcall*)(REFCLSID, REFIID, LPVOID*);
+
+#if defined(_WIN32)
+        void* LoadDxcLibrary()
+        {
+            return LoadLibraryW(L"dxcompiler.dll");
+        }
+
+        DxcCreateInstanceFn FindCreateInstance(void* Module)
+        {
+            return reinterpret_cast<DxcCreateInstanceFn>(GetProcAddress(static_cast<HMODULE>(Module), "DxcCreateInstance"));
+        }
+
+        void FreeDxcLibrary(void* Module)
+        {
+            FreeLibrary(static_cast<HMODULE>(Module));
+        }
+#else
+#if defined(__APPLE__)
+        constexpr const char* DxcLibraryName = "libdxcompiler.dylib";
+#else
+        constexpr const char* DxcLibraryName = "libdxcompiler.so";
+#endif
+
+        // Only the copy shipped next to the executable is accepted, so a system-wide DXC of another version is never used.
+        void* LoadDxcLibrary()
+        {
+#if defined(__APPLE__)
+            std::string Path = std::string("@executable_path/../Frameworks/") + DxcLibraryName;
+#else
+            std::string Path = std::string("$ORIGIN/") + DxcLibraryName;
+#endif
+            void* Module = dlopen(Path.c_str(), RTLD_NOW | RTLD_LOCAL);
+            if (!Module)
+                std::cerr << "[Kiwi DXC] dlopen(" << Path << ") failed: " << dlerror() << std::endl;
+            return Module;
+        }
+
+        DxcCreateInstanceFn FindCreateInstance(void* Module)
+        {
+            return reinterpret_cast<DxcCreateInstanceFn>(dlsym(Module, "DxcCreateInstance"));
+        }
+
+        void FreeDxcLibrary(void* Module)
+        {
+            dlclose(Module);
+        }
+#endif
+    }
 
     DXCCompiler& DXCCompiler::Get()
     {
@@ -13,22 +69,18 @@ namespace Kiwi
 
     DXCCompiler::DXCCompiler()
     {
-        // Try to load dxcompiler.dll at runtime
-        DxcModule = LoadLibraryW(L"dxcompiler.dll");
+        DxcModule = LoadDxcLibrary();
         if (!DxcModule)
         {
-            std::cerr << "[Kiwi DXC] dxcompiler.dll not found, DXC unavailable" << std::endl;
+            std::cerr << "[Kiwi DXC] DXC runtime not found next to the executable (see third_party/dxc/VERSION.txt), DXC unavailable" << std::endl;
             return;
         }
 
-        // Get DxcCreateInstance function pointer
-        typedef HRESULT(WINAPI* DxcCreateInstanceProc)(REFCLSID, REFIID, LPVOID*);
-        auto createInstance = (DxcCreateInstanceProc)GetProcAddress(DxcModule, "DxcCreateInstance");
+        DxcCreateInstanceFn createInstance = FindCreateInstance(DxcModule);
         if (!createInstance)
         {
             std::cerr << "[Kiwi DXC] Failed to get DxcCreateInstance" << std::endl;
-            FreeLibrary(DxcModule);
-            DxcModule = nullptr;
+            UnloadLibrary();
             return;
         }
 
@@ -37,8 +89,7 @@ namespace Kiwi
         if (FAILED(hr))
         {
             std::cerr << "[Kiwi DXC] Failed to create IDxcCompiler3" << std::endl;
-            FreeLibrary(DxcModule);
-            DxcModule = nullptr;
+            UnloadLibrary();
             return;
         }
 
@@ -46,9 +97,7 @@ namespace Kiwi
         if (FAILED(hr))
         {
             std::cerr << "[Kiwi DXC] Failed to create IDxcUtils" << std::endl;
-            Compiler.Reset();
-            FreeLibrary(DxcModule);
-            DxcModule = nullptr;
+            UnloadLibrary();
             return;
         }
 
@@ -57,22 +106,21 @@ namespace Kiwi
 
     DXCCompiler::~DXCCompiler()
     {
+        UnloadLibrary();
+    }
+
+    void DXCCompiler::UnloadLibrary()
+    {
         Compiler.Reset();
         Utils.Reset();
         if (DxcModule)
         {
-            FreeLibrary(DxcModule);
+            FreeDxcLibrary(DxcModule);
             DxcModule = nullptr;
         }
     }
 
-    DXCCompileResult DXCCompiler::Compile(
-        const char* hlslSource,
-        const char* entryPoint,
-        const char* shaderModel,
-        const ShaderMacro* macros,
-        uint32_t macroCount,
-        bool debug)
+    DXCCompileResult DXCCompiler::Compile(const char* hlslSource, const char* entryPoint, const char* shaderModel, const ShaderMacro* macros, uint32_t macroCount, bool debug, EDXCTarget Target)
     {
         DXCCompileResult result;
 
@@ -99,6 +147,14 @@ namespace Kiwi
         // Enable strictness
         args.push_back(L"-HV");
         args.push_back(L"2021");
+
+        if (Target == EDXCTarget::SPIRV)
+        {
+            args.push_back(L"-spirv");
+            args.push_back(L"-fspv-target-env=vulkan1.1");
+            // Keep HLSL cbuffer / StructuredBuffer packing so the C++ structs stay identical across backends.
+            args.push_back(L"-fvk-use-dx-layout");
+        }
 
         if (debug)
         {
@@ -135,13 +191,8 @@ namespace Kiwi
         sourceBuffer.Encoding = DXC_CP_UTF8;
 
         // Compile
-        ComPtr<IDxcResult> dxcResult;
-        HRESULT hr = Compiler->Compile(
-            &sourceBuffer,
-            args.data(),
-            (UINT32)args.size(),
-            nullptr,  // No include handler
-            IID_PPV_ARGS(&dxcResult));
+        DxcRef<IDxcResult> dxcResult;
+        HRESULT hr = Compiler->Compile(&sourceBuffer, args.data(), (UINT32)args.size(), nullptr, IID_PPV_ARGS(&dxcResult));
 
         if (FAILED(hr))
         {
@@ -150,7 +201,7 @@ namespace Kiwi
         }
 
         // Check for errors
-        ComPtr<IDxcBlobUtf8> errors;
+        DxcRef<IDxcBlobUtf8> errors;
         dxcResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
         if (errors && errors->GetStringLength() > 0)
         {
@@ -166,7 +217,7 @@ namespace Kiwi
         }
 
         // Get compiled bytecode
-        ComPtr<IDxcBlob> bytecode;
+        DxcRef<IDxcBlob> bytecode;
         dxcResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&bytecode), nullptr);
         if (bytecode && bytecode->GetBufferSize() > 0)
         {
