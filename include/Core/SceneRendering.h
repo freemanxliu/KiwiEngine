@@ -18,7 +18,7 @@ namespace Kiwi
 {
     class RenderScene;
     class MaterialLibrary;
-    class MeshComponent;
+    class PrimitiveComponent;
 
     struct PrimitiveSceneInfo;
 

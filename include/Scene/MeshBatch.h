@@ -82,7 +82,7 @@ struct MeshBatch
     uint32_t MeshId = 0;
     std::string MaterialName;
     std::string SurfaceShader = "DefaultSurface";
-    int32_t SortPriority = 0; // MeshComponent::SortOrder. Higher draws first in every pass.
+    int32_t SortPriority = 0; // PrimitiveComponent::SortOrder. Higher draws first in every pass.
     ECullMode CullMode = ECullMode::Back;
     EPrimitiveTopology Type = EPrimitiveTopology::TriangleList;
 

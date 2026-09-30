@@ -2,7 +2,7 @@
 #include "Core/RenderingThread.h"
 #include "Core/RendererUtils.h"
 #include "Scene/SceneObject.h"
-#include "Scene/MeshComponent.h"
+#include "Scene/PrimitiveComponent.h"
 #include "Scene/LightComponent.h"
 #include "Scene/Material.h"
 
@@ -48,14 +48,14 @@ void RenderScene::Release()
 // Game thread
 // ============================================================
 
-void RenderScene::AddPrimitive(MeshComponent* Primitive)
+void RenderScene::AddPrimitive(PrimitiveComponent* Primitive)
 {
     if (!GamePrimitives.insert(Primitive).second)
         return;
     GamePendingAdds.push_back(Primitive);
 }
 
-void RenderScene::RemovePrimitive(MeshComponent* Primitive)
+void RenderScene::RemovePrimitive(PrimitiveComponent* Primitive)
 {
     if (!GamePrimitives.erase(Primitive))
         return;
@@ -67,35 +67,35 @@ void RenderScene::RemovePrimitive(MeshComponent* Primitive)
         return;
     }
     // The component is destroyed right after this call; the render thread only needs its address.
-    const MeshComponent* Key = Primitive;
+    const PrimitiveComponent* Key = Primitive;
     EnqueueRenderCommand([this, Key] { RemovePrimitive_RenderThread(Key); });
 }
 
-void RenderScene::UpdatePrimitiveTransform(MeshComponent* Primitive)
+void RenderScene::UpdatePrimitiveTransform(PrimitiveComponent* Primitive)
 {
     MarkPrimitiveDirty(Primitive, DirtyTransform);
 }
 
-void RenderScene::UpdatePrimitiveSelectedState(MeshComponent* Primitive)
+void RenderScene::UpdatePrimitiveSelectedState(PrimitiveComponent* Primitive)
 {
     MarkPrimitiveDirty(Primitive, DirtyState);
 }
 
-void RenderScene::UpdatePrimitiveMaterial(MeshComponent* Primitive)
+void RenderScene::UpdatePrimitiveMaterial(PrimitiveComponent* Primitive)
 {
     MarkPrimitiveDirty(Primitive, DirtyState);
 }
 
 void RenderScene::UpdatePrimitivesUsingMaterial(const std::string& MaterialName)
 {
-    for (MeshComponent* Primitive : GamePrimitives)
+    for (PrimitiveComponent* Primitive : GamePrimitives)
     {
         if (Primitive->Material.Parent == MaterialName)
             MarkPrimitiveDirty(Primitive, DirtyState);
     }
 }
 
-void RenderScene::MarkPrimitiveDirty(MeshComponent* Primitive, uint8_t Flags)
+void RenderScene::MarkPrimitiveDirty(PrimitiveComponent* Primitive, uint8_t Flags)
 {
     // Pending adds send a full proxy anyway.
     if (!GamePrimitives.count(Primitive) || std::find(GamePendingAdds.begin(), GamePendingAdds.end(), Primitive) != GamePendingAdds.end())
@@ -130,7 +130,7 @@ void RenderScene::UpdateLightColorAndBrightness(LightComponent* Light)
         GameDirtyLights.insert(Light);
 }
 
-PrimitiveSceneProxy RenderScene::BuildPrimitiveProxy(const MeshComponent& Component, const MaterialLibrary& Materials, bool bIncludeMesh)
+PrimitiveSceneProxy RenderScene::BuildPrimitiveProxy(const PrimitiveComponent& Component, const MaterialLibrary& Materials, bool bIncludeMesh)
 {
     PrimitiveSceneProxy Proxy;
     Proxy.LocalToWorld = Component.GetWorldMatrix();
@@ -208,7 +208,7 @@ void RenderScene::SendAllEndOfFrameUpdates(const MaterialLibrary& Materials)
 
     std::vector<PrimitiveUpdate> PrimitiveUpdates;
     PrimitiveUpdates.reserve(GamePendingAdds.size() + GameDirtyPrimitives.size());
-    for (MeshComponent* Primitive : GamePendingAdds)
+    for (PrimitiveComponent* Primitive : GamePendingAdds)
     {
         PrimitiveUpdate Update;
         Update.Key = Primitive;
@@ -238,7 +238,7 @@ void RenderScene::SendAllEndOfFrameUpdates(const MaterialLibrary& Materials)
     EnqueueRenderCommand([this, Primitives, LightList] { ApplyUpdates(*Primitives, *LightList); });
 }
 
-bool RenderScene::GetPrimitiveGPUIds(const MeshComponent* Component, uint32_t& OutPrimitiveId, uint32_t& OutInstanceId) const
+bool RenderScene::GetPrimitiveGPUIds(const PrimitiveComponent* Component, uint32_t& OutPrimitiveId, uint32_t& OutInstanceId) const
 {
     std::lock_guard<std::mutex> Lock(PublishedIdsMutex);
     auto It = PublishedIds.find(Component);
@@ -298,7 +298,7 @@ void RenderScene::ApplyUpdates(std::vector<PrimitiveUpdate>& PrimitiveUpdates, s
     }
 }
 
-void RenderScene::RemovePrimitive_RenderThread(const MeshComponent* Key)
+void RenderScene::RemovePrimitive_RenderThread(const PrimitiveComponent* Key)
 {
     auto PendingIt = std::find_if(PendingAdds.begin(), PendingAdds.end(), [Key](const PrimitiveUpdate& Pending) { return Pending.Key == Key; });
     if (PendingIt != PendingAdds.end())
@@ -439,7 +439,7 @@ void RenderScene::UpdatePrimitiveSceneInfos()
     PendingAdds.swap(RetryAdds);
 
     // A dirty entry may name a primitive that was removed since; it is skipped.
-    for (const MeshComponent* Key : DirtyPrimitives)
+    for (const PrimitiveComponent* Key : DirtyPrimitives)
     {
         auto It = Primitives.find(Key);
         if (It == Primitives.end())

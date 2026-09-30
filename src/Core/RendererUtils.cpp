@@ -1,7 +1,7 @@
 #include "Core/RendererUtils.h"
 
 #include "Scene/GLShaders.h"
-#include "Scene/MeshComponent.h"
+#include "Scene/PrimitiveComponent.h"
 #include "Scene/MetalShaders.h"
 #include "Scene/Shaders.h"
 
@@ -15,7 +15,7 @@
 namespace Kiwi
 {
 
-void ComputeWorldAABB(const MeshComponent& mesh, Vec3& outMin, Vec3& outMax)
+void ComputeWorldAABB(const PrimitiveComponent& mesh, Vec3& outMin, Vec3& outMax)
 {
     Mat4 world = mesh.GetWorldMatrix();
     const auto& verts = mesh.MeshData.GetVertices();

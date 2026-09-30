@@ -2,7 +2,7 @@
 
 namespace Kiwi
 {
-    class MeshComponent;
+    class PrimitiveComponent;
     class LightComponent;
 
     // Renderer-side scene as seen from the game scene (UE5 FSceneInterface).
@@ -12,11 +12,11 @@ namespace Kiwi
     public:
         virtual ~SceneInterface() = default;
 
-        virtual void AddPrimitive(MeshComponent* Primitive) = 0;
-        virtual void RemovePrimitive(MeshComponent* Primitive) = 0;
-        virtual void UpdatePrimitiveTransform(MeshComponent* Primitive) = 0;
-        virtual void UpdatePrimitiveSelectedState(MeshComponent* Primitive) = 0;
-        virtual void UpdatePrimitiveMaterial(MeshComponent* Primitive) = 0;
+        virtual void AddPrimitive(PrimitiveComponent* Primitive) = 0;
+        virtual void RemovePrimitive(PrimitiveComponent* Primitive) = 0;
+        virtual void UpdatePrimitiveTransform(PrimitiveComponent* Primitive) = 0;
+        virtual void UpdatePrimitiveSelectedState(PrimitiveComponent* Primitive) = 0;
+        virtual void UpdatePrimitiveMaterial(PrimitiveComponent* Primitive) = 0;
 
         virtual void AddLight(LightComponent* Light) = 0;
         virtual void RemoveLight(LightComponent* Light) = 0;

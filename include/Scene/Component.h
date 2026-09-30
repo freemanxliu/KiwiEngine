@@ -16,7 +16,7 @@ namespace Kiwi
     enum class EComponentType
     {
         Base,        // Base component (Transform only)
-        Mesh,        // Mesh renderer component
+        Primitive,   // Primitive (mesh renderer) component
         Camera,      // Camera component
         Light,       // Light component (Directional, Point, etc.)
         PostProcess, // Post-processing component (full-screen shader effects)

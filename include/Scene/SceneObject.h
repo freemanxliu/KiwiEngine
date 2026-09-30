@@ -3,7 +3,7 @@
 #include "Math/Math.h"
 #include "Scene/Component.h"
 #include "Scene/PrimitiveType.h"
-#include "Scene/MeshComponent.h"
+#include "Scene/PrimitiveComponent.h"
 #include "Scene/CameraComponent.h"
 #include "Scene/LightComponent.h"
 #include "Scene/PostProcessComponent.h"
@@ -93,7 +93,7 @@ namespace Kiwi
         // ---- Convenience accessors ----
         // These provide backward-compatible access to commonly used components
 
-        // Get the "primary" transform: first component's transform (usually MeshComponent or CameraComponent)
+        // Get the "primary" transform: first component's transform (usually PrimitiveComponent or CameraComponent)
         // Every SceneObject should have at least one component.
         Component* GetPrimaryComponent() const
         {

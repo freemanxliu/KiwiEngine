@@ -18,7 +18,7 @@
 
 namespace Kiwi
 {
-    class MeshComponent;
+    class PrimitiveComponent;
     class LightComponent;
     class MaterialLibrary;
 
@@ -94,7 +94,7 @@ namespace Kiwi
     // Renderer-side record of one mesh component (UE5 FPrimitiveSceneInfo).
     struct PrimitiveSceneInfo
     {
-        const MeshComponent* Key = nullptr; // identity only, never dereferenced on the render thread
+        const PrimitiveComponent* Key = nullptr; // identity only, never dereferenced on the render thread
         PrimitiveSceneProxy Proxy;
         uint32_t PrimitiveId = GPUScene::InvalidId;
         uint32_t InstanceId = GPUScene::InvalidId;
@@ -119,18 +119,18 @@ namespace Kiwi
     class RenderScene : public SceneInterface
     {
     public:
-        using PrimitiveMap = std::unordered_map<const MeshComponent*, PrimitiveSceneInfo>;
+        using PrimitiveMap = std::unordered_map<const PrimitiveComponent*, PrimitiveSceneInfo>;
 
         // Game thread, with the rendering threads flushed.
         void Initialize(RHIDevice* InDevice);
         void Release();
 
         // ---- Game thread ----
-        void AddPrimitive(MeshComponent* Primitive) override;
-        void RemovePrimitive(MeshComponent* Primitive) override;
-        void UpdatePrimitiveTransform(MeshComponent* Primitive) override;
-        void UpdatePrimitiveSelectedState(MeshComponent* Primitive) override;
-        void UpdatePrimitiveMaterial(MeshComponent* Primitive) override;
+        void AddPrimitive(PrimitiveComponent* Primitive) override;
+        void RemovePrimitive(PrimitiveComponent* Primitive) override;
+        void UpdatePrimitiveTransform(PrimitiveComponent* Primitive) override;
+        void UpdatePrimitiveSelectedState(PrimitiveComponent* Primitive) override;
+        void UpdatePrimitiveMaterial(PrimitiveComponent* Primitive) override;
 
         void AddLight(LightComponent* Light) override;
         void RemoveLight(LightComponent* Light) override;
@@ -144,7 +144,7 @@ namespace Kiwi
         void SendAllEndOfFrameUpdates(const MaterialLibrary& Materials);
 
         // GPU Scene slots last published by the render thread, for the details panel.
-        bool GetPrimitiveGPUIds(const MeshComponent* Component, uint32_t& OutPrimitiveId, uint32_t& OutInstanceId) const;
+        bool GetPrimitiveGPUIds(const PrimitiveComponent* Component, uint32_t& OutPrimitiveId, uint32_t& OutInstanceId) const;
 
         // ---- Render thread ----
         // Once per frame (UE5 FScene::Update): applies primitive removes and adds, refreshes dirty
@@ -175,7 +175,7 @@ namespace Kiwi
 
         struct PrimitiveUpdate
         {
-            const MeshComponent* Key = nullptr;
+            const PrimitiveComponent* Key = nullptr;
             PrimitiveSceneProxy Proxy;
             bool bAdd = false;
             uint8_t DirtyFlags = 0;
@@ -194,13 +194,13 @@ namespace Kiwi
         };
 
         // Game thread
-        void MarkPrimitiveDirty(MeshComponent* Primitive, uint8_t Flags);
-        static PrimitiveSceneProxy BuildPrimitiveProxy(const MeshComponent& Component, const MaterialLibrary& Materials, bool bIncludeMesh);
+        void MarkPrimitiveDirty(PrimitiveComponent* Primitive, uint8_t Flags);
+        static PrimitiveSceneProxy BuildPrimitiveProxy(const PrimitiveComponent& Component, const MaterialLibrary& Materials, bool bIncludeMesh);
         static LightSceneProxy BuildLightProxy(const LightComponent& Light);
 
         // Render thread
         void ApplyUpdates(std::vector<PrimitiveUpdate>& PrimitiveUpdates, std::vector<LightUpdate>& LightUpdates);
-        void RemovePrimitive_RenderThread(const MeshComponent* Key);
+        void RemovePrimitive_RenderThread(const PrimitiveComponent* Key);
         void RemoveLight_RenderThread(const LightComponent* Key);
         void UpdatePrimitiveSceneInfos();
         void EnsureSharedMesh(const PrimitiveSceneProxy& Proxy);
@@ -210,9 +210,9 @@ namespace Kiwi
         void PublishGPUIds();
 
         // ---- Game thread state ----
-        std::unordered_set<MeshComponent*> GamePrimitives;
-        std::vector<MeshComponent*> GamePendingAdds;
-        std::unordered_map<MeshComponent*, uint8_t> GameDirtyPrimitives;
+        std::unordered_set<PrimitiveComponent*> GamePrimitives;
+        std::vector<PrimitiveComponent*> GamePendingAdds;
+        std::unordered_map<PrimitiveComponent*, uint8_t> GameDirtyPrimitives;
         std::unordered_set<LightComponent*> GameLights;
         std::unordered_set<LightComponent*> GameDirtyLights;
 
@@ -222,7 +222,7 @@ namespace Kiwi
         PrimitiveMap Primitives;
         std::vector<PrimitiveUpdate> PendingAdds;
         std::vector<PendingRemove> PendingRemoves;
-        std::vector<const MeshComponent*> DirtyPrimitives;
+        std::vector<const PrimitiveComponent*> DirtyPrimitives;
         std::unordered_map<uint32_t, GPUMeshData> SharedMeshes;
         bool bGPUIdsChanged = false;
 
@@ -235,6 +235,6 @@ namespace Kiwi
 
         // ---- Shared ----
         mutable std::mutex PublishedIdsMutex;
-        std::unordered_map<const MeshComponent*, std::pair<uint32_t, uint32_t>> PublishedIds;
+        std::unordered_map<const PrimitiveComponent*, std::pair<uint32_t, uint32_t>> PublishedIds;
     };
 }

@@ -91,11 +91,11 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 ### 🧱 Material System
 
 - **Material Assets** — `.mat` files (JSON) defining material properties independently from mesh data. Each material declares its **ShadingModel** (Unlit / DefaultLit) instead of a shader name. The rendering pipeline maps ShadingModel to the correct shader per pass. Backward compatible: legacy `"shader"` field auto-maps to ShadingModel.
-- **MaterialLibrary** — Singleton material manager. Auto-creates `Default-Material.mat` on first run, scans `Materials/` folder at startup. Materials are referenced by name from `MeshComponent`.
+- **MaterialLibrary** — Singleton material manager. Auto-creates `Default-Material.mat` on first run, scans `Materials/` folder at startup. Materials are referenced by name from `PrimitiveComponent`.
 - **Shading Model System** — UE5-style `EShadingModel` enum (`ShadingModel.h`): materials declare how they should be shaded, and the pipeline picks the appropriate shaders per pass. Current models: **Unlit** (emissive-only, no lighting), **DefaultLit** (standard PBR metallic/roughness). Extensible: Subsurface, ClearCoat, TwoSidedFoliage placeholders reserved.
 - **Shader Properties Metadata** — Shaders can declare a `// @Properties { }` block defining UI-exposed properties (Float, Range, Color, Texture2D). The material editor parses the shader file associated with the material's ShadingModel to generate dynamic property UI.
 - **Material Editor** — Double-click `.mat` files in Content Browser to open a floating editor window. Features: **Shading Model** combo (Unlit/DefaultLit), @Properties-driven dynamic UI with color preview swatches, texture slot rows with Pick button (modal popup) + DragDrop from Content Browser, Save/Close buttons.
-- **Property Migration** — All appearance properties (color, roughness, metallic, texture paths) live in Material, not MeshComponent. UploadObjectUB and texture binding read from the material at render time.
+- **Property Migration** — All appearance properties (color, roughness, metallic, texture paths) live in Material, not PrimitiveComponent. UploadObjectUB and texture binding read from the material at render time.
 
 ### 🖼️ Texture System
 
@@ -120,7 +120,7 @@ A lightweight 3D rendering engine and scene editor built from scratch with C++17
 ### 🎬 Scene & Component System
 
 - **Entity-Component Architecture** — `SceneObject` holds a vector of `Component` via `unique_ptr`. Template methods for `AddComponent<T>`, `GetComponent<T>`, `RemoveComponent<T>`.
-- **MeshComponent** — Mesh data, material name reference, sort order, primitive type. Appearance properties (color, roughness, metallic, textures) are defined in the Material asset.
+- **PrimitiveComponent** — Mesh data, material name reference, sort order, primitive type. Appearance properties (color, roughness, metallic, textures) are defined in the Material asset.
 - **CameraComponent** — Perspective/orthographic projection, configurable FOV, near/far planes, Main Camera toggle with mutual exclusion. The active camera drives the engine's rendering viewpoint.
 - **DirectionalLightComponent** — Direction derived from rotation, configurable color and intensity. **Cascaded Shadow Mapping (CSM)** parameters: CastShadow, NumCascades (1-4), ShadowMapResolution, ShadowDistance, CascadeSplitLambda, ShadowBias, NormalBias, ShadowStrength.
 - **PointLightComponent** — Position-based lighting with configurable radius and quadratic falloff.
@@ -511,7 +511,7 @@ KiwiEngine/
 │   │   └── Math.h                    # Vec2/3/4, Mat4, projections, LookAt
 │   └── Scene/
 │       ├── Component.h               # Base Component class (Transform, EComponentType)
-│       ├── MeshComponent.h           # Mesh + Material reference + SortOrder
+│       ├── PrimitiveComponent.h      # Mesh + Material reference + SortOrder
 │       ├── Material.h                # Material asset + MaterialLibrary + ShaderProperties parser
 │       ├── TextureManager.h          # Texture loading (stb_image) + GPU texture cache + default textures
 │       ├── CameraComponent.h         # Camera (Perspective/Ortho, FOV, MainCamera)

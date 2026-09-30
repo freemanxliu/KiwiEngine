@@ -80,7 +80,7 @@ void KiwiEngineApp::DrawTexturePickerModal()
 
 // Helper: draw a single texture slot row.
 void KiwiEngineApp::DrawTextureSlotRow(const std::string& slotLabel, const std::string& propKey,
-                                       const std::string& uniqueId, Material* mat, MeshComponent* mesh)
+                                       const std::string& uniqueId, Material* mat, PrimitiveComponent* mesh)
 {
     std::string texPath = mesh ? mesh->Material.GetTexture(mat, propKey) : mat->GetTexture(propKey);
 

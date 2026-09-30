@@ -218,7 +218,7 @@ void KiwiEngineApp::DrawScenePanel()
             icon = (cam && cam->IsMainCamera) ? "[C*] " : "[C] ";
         }
         else if (obj.HasComponent<LightComponent>()) icon = "[L] ";
-        else if (obj.HasComponent<MeshComponent>()) icon = "[M] ";
+        else if (obj.HasComponent<PrimitiveComponent>()) icon = "[M] ";
         else if (obj.HasComponent<PostProcessComponent>()) icon = "[PP] ";
 
         std::string label = std::string(icon) + obj.Name;
@@ -284,7 +284,7 @@ void KiwiEngineApp::DrawPlacerTab()
         if (ImGui::Button(entry.label, ImVec2(280, 35)))
         {
             auto* obj = Scene.AddMeshObject(entry.type);
-            auto* mesh = obj->GetComponent<MeshComponent>();
+            auto* mesh = obj->GetComponent<PrimitiveComponent>();
             if (mesh && entry.type != EPrimitiveType::Floor)
             {
                 mesh->Position.y = 0.5f;

@@ -16,7 +16,7 @@
 #include "Scene/Material.h"
 #include "Scene/MaterialShaderCache.h"
 #include "Scene/MeshBatch.h"
-#include "Scene/MeshComponent.h"
+#include "Scene/PrimitiveComponent.h"
 #include "Scene/MeshPassProcessor.h"
 #include "Scene/PostProcessComponent.h"
 #include "Scene/PostProcessShaderLibrary.h"
@@ -182,7 +182,7 @@ private:
     void DrawTexturePickerModal();
     // mesh: when set, the slot edits that primitive's material instance.
     void DrawTextureSlotRow(const std::string& slotLabel, const std::string& propKey,
-                            const std::string& uniqueId, Material* mat, MeshComponent* mesh = nullptr);
+                            const std::string& uniqueId, Material* mat, PrimitiveComponent* mesh = nullptr);
     void DrawMaterialEditor();
 
     // ============================================================
@@ -223,7 +223,7 @@ private:
     bool ShowTexturePicker = false;
     std::string TexturePickerPropKey;   // Which material property to set (e.g. "_BaseColorTex")
     std::string TexturePickerMatTarget; // Parent material asset, used by the material editor
-    MeshComponent* TexturePickerMesh = nullptr; // Primitive instance to write, when set
+    PrimitiveComponent* TexturePickerMesh = nullptr; // Primitive instance to write, when set
 
     // Save Scene dialog state
     bool ShowSaveDialog = false;

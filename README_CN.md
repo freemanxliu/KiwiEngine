@@ -90,11 +90,11 @@
 ### 🧱 材质系统
 
 - **材质资产** — `.mat` 文件（JSON 格式），独立于网格数据定义材质属性。每个材质声明其 **ShadingModel**（Unlit / DefaultLit）而非着色器名称。渲染管线根据 ShadingModel 自动选择正确的着色器。向后兼容：旧版 `"shader"` 字段自动映射为 ShadingModel。
-- **MaterialLibrary** — 单例材质管理器。首次运行自动创建 `Default-Material.mat`，启动时扫描 `Materials/` 文件夹。材质通过名称从 `MeshComponent` 引用。
+- **MaterialLibrary** — 单例材质管理器。首次运行自动创建 `Default-Material.mat`，启动时扫描 `Materials/` 文件夹。材质通过名称从 `PrimitiveComponent` 引用。
 - **Shading Model 系统** — UE5 风格 `EShadingModel` 枚举（`ShadingModel.h`）：材质声明着色模型，管线按 Pass 选择对应着色器。当前模型：**Unlit**（仅自发光，无光照）、**DefaultLit**（标准 PBR 金属度/粗糙度）。可扩展：Subsurface、ClearCoat、TwoSidedFoliage 预留占位。
 - **着色器属性元数据** — 着色器可声明 `// @Properties { }` 块定义 UI 可见属性（Float、Range、Color、Texture2D）。材质编辑器解析材质 ShadingModel 对应的着色器文件来生成动态属性 UI。
 - **材质编辑器** — 在 Content Browser 中双击 `.mat` 文件打开浮动编辑器窗口。功能：**Shading Model** 下拉框（Unlit/DefaultLit）、基于 @Properties 的动态 UI（含颜色预览色块）、贴图槽位行（Pick 按钮 + 模态弹窗 + Content Browser 拖放）、Save/Close 按钮。
-- **属性迁移** — 所有外观属性（颜色、粗糙度、金属度、贴图路径）定义在 Material 中，不在 MeshComponent 中。UploadObjectUB 和贴图绑定在渲染时从材质读取。
+- **属性迁移** — 所有外观属性（颜色、粗糙度、金属度、贴图路径）定义在 Material 中，不在 PrimitiveComponent 中。UploadObjectUB 和贴图绑定在渲染时从材质读取。
 
 ### 🖼️ 纹理系统
 
@@ -119,7 +119,7 @@
 ### 🎬 场景与组件系统
 
 - **实体-组件架构** — `SceneObject` 通过 `unique_ptr` 持有 `Component` 列表。提供模板方法 `AddComponent<T>`、`GetComponent<T>`、`RemoveComponent<T>`。
-- **MeshComponent（网格组件）** — 网格数据、材质名称引用、排序顺序、图元类型。外观属性（颜色、粗糙度、金属度、贴图）定义在 Material 资产中。
+- **PrimitiveComponent（网格组件）** — 网格数据、材质名称引用、排序顺序、图元类型。外观属性（颜色、粗糙度、金属度、贴图）定义在 Material 资产中。
 - **CameraComponent（相机组件）** — 透视/正交投影、可配置 FOV、近/远裁剪面、Main Camera 开关（互斥）。激活的相机驱动引擎渲染视角。
 - **DirectionalLightComponent（方向光组件）** — 方向由旋转决定，可配置颜色和强度。**级联阴影贴图（CSM）**参数：CastShadow、NumCascades (1-4)、ShadowMapResolution、ShadowDistance、CascadeSplitLambda、ShadowBias、NormalBias、ShadowStrength。
 - **PointLightComponent（点光源组件）** — 基于位置的光照，可配置半径，二次衰减。
@@ -511,7 +511,7 @@ KiwiEngine/
 │   │   └── Math.h                    # Vec2/3/4、Mat4、投影、LookAt
 │   └── Scene/
 │       ├── Component.h               # 组件基类（Transform、EComponentType）
-│       ├── MeshComponent.h           # 网格 + 材质引用 + 排序顺序
+│       ├── PrimitiveComponent.h      # 网格 + 材质引用 + 排序顺序
 │       ├── Material.h                # 材质资产 + MaterialLibrary + ShaderProperties 解析器
 │       ├── TextureManager.h          # 纹理加载 (stb_image) + GPU 纹理缓存 + 默认纹理
 │       ├── CameraComponent.h         # 相机（透视/正交、FOV、MainCamera）

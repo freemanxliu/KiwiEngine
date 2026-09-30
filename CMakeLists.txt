@@ -148,7 +148,7 @@ set(HEADERS
     include/Scene/Shaders.h
     include/Scene/ShaderLibrary.h
     include/Scene/Component.h
-    include/Scene/MeshComponent.h
+    include/Scene/PrimitiveComponent.h
     include/Scene/CameraComponent.h
     include/Scene/LightComponent.h
     include/Scene/SceneObject.h
@@ -176,6 +176,9 @@ else()
     add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${IMGUI_SOURCES})
 endif()
 if(APPLE)
+    # CMake's Xcode generator marks .h as C headers (sourcecode.c.h). Xcode then
+    # cannot match those declarations to the C++ definitions in .cpp files.
+    set_source_files_properties(${HEADERS} PROPERTIES XCODE_EXPLICIT_FILE_TYPE sourcecode.cpp.h)
     set_source_files_properties(src/Core/Window.mm src/RHI/MetalDevice.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     # A command-line tool on the macOS 14 SDK cannot be signed with an empty identity.
     # Build a normal app bundle and ad-hoc sign it, so Xcode does not require a certificate.

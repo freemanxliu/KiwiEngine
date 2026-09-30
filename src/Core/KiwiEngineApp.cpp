@@ -192,7 +192,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
 
     // ---- Ground (large floor) ----
     auto* floor = Scene.AddMeshObject(EPrimitiveType::Floor, "Ground");
-    auto* floorMesh = floor->GetComponent<MeshComponent>();
+    auto* floorMesh = floor->GetComponent<PrimitiveComponent>();
     if (floorMesh) floorMesh->Scale = { 3.0f, 1.0f, 3.0f };
 
     // ---- Row of cubes (different positions — tests GPU Scene offset correctness) ----
@@ -202,7 +202,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
         float x = (i - 2) * cubeSpacing;
         std::string name = "Cube_" + std::to_string(i + 1);
         auto* cubeObj = Scene.AddMeshObject(EPrimitiveType::Cube, name);
-        auto* mesh = cubeObj->GetComponent<MeshComponent>();
+        auto* mesh = cubeObj->GetComponent<PrimitiveComponent>();
         if (mesh)
         {
             mesh->Position = { x, 0.5f, 0.0f };
@@ -218,7 +218,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
         float x = (i - 1.5f) * 3.0f;
         std::string name = "Sphere_" + std::to_string(i + 1);
         auto* sphereObj = Scene.AddMeshObject(EPrimitiveType::Sphere, name);
-        auto* mesh = sphereObj->GetComponent<MeshComponent>();
+        auto* mesh = sphereObj->GetComponent<PrimitiveComponent>();
         if (mesh)
         {
             mesh->Position = { x, 0.8f, 4.0f };
@@ -232,7 +232,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
         float x = (i == 0) ? -6.0f : 6.0f;
         std::string name = "Column_" + std::to_string(i + 1);
         auto* cylObj = Scene.AddMeshObject(EPrimitiveType::Cylinder, name);
-        auto* mesh = cylObj->GetComponent<MeshComponent>();
+        auto* mesh = cylObj->GetComponent<PrimitiveComponent>();
         if (mesh)
         {
             mesh->Position = { x, 1.5f, 0.0f };
@@ -242,7 +242,7 @@ void KiwiEngineApp::CreateDefaultScene(const std::string& savePath)
 
     // ---- Rotated cube (tests rotation in GPU Scene) ----
     auto* rotCubeObj = Scene.AddMeshObject(EPrimitiveType::Cube, "Rotated_Cube");
-    auto* rotMesh = rotCubeObj->GetComponent<MeshComponent>();
+    auto* rotMesh = rotCubeObj->GetComponent<PrimitiveComponent>();
     if (rotMesh)
     {
         rotMesh->Position = { 0.0f, 1.5f, -4.0f };
@@ -539,7 +539,7 @@ void KiwiEngineApp::PickObject(int mouseX, int mouseY)
     for (auto& objPtr : Scene.GetObjects())
     {
         auto& obj = *objPtr;
-        auto* meshComp = obj.GetComponent<MeshComponent>();
+        auto* meshComp = obj.GetComponent<PrimitiveComponent>();
         if (!meshComp) continue;
 
         Vec3 aabbMin, aabbMax;

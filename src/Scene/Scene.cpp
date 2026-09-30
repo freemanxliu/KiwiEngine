@@ -27,8 +27,8 @@ namespace Kiwi
             obj->Name = name;
         }
 
-        // Add MeshComponent
-        auto* mesh = obj->AddComponent<MeshComponent>();
+        // Add PrimitiveComponent
+        auto* mesh = obj->AddComponent<PrimitiveComponent>();
         mesh->MeshData = CreateMeshForType(type);
         mesh->PrimitiveType = type;
 
@@ -148,7 +148,7 @@ namespace Kiwi
     {
         if (!RenderSceneInterface)
             return;
-        for (MeshComponent* Mesh : Object.GetComponents<MeshComponent>())
+        for (PrimitiveComponent* Mesh : Object.GetComponents<PrimitiveComponent>())
         {
             Mesh->RegisteredScene = RenderSceneInterface;
             RenderSceneInterface->AddPrimitive(Mesh);
@@ -162,7 +162,7 @@ namespace Kiwi
 
     void Scene::UnregisterObject(SceneObject& Object)
     {
-        for (MeshComponent* Mesh : Object.GetComponents<MeshComponent>())
+        for (PrimitiveComponent* Mesh : Object.GetComponents<PrimitiveComponent>())
         {
             if (Mesh->RegisteredScene)
                 Mesh->RegisteredScene->RemovePrimitive(Mesh);
@@ -178,7 +178,7 @@ namespace Kiwi
 
     void Scene::UpdateSelectedState(SceneObject& Object)
     {
-        for (MeshComponent* Mesh : Object.GetComponents<MeshComponent>())
+        for (PrimitiveComponent* Mesh : Object.GetComponents<PrimitiveComponent>())
         {
             if (Mesh->RegisteredScene)
                 Mesh->RegisteredScene->UpdatePrimitiveSelectedState(Mesh);
@@ -344,9 +344,9 @@ namespace Kiwi
                 file << "          \"rotation\": [" << comp.Rotation.x << ", " << comp.Rotation.y << ", " << comp.Rotation.z << "],\n";
                 file << "          \"scale\": [" << comp.Scale.x << ", " << comp.Scale.y << ", " << comp.Scale.z << "]";
 
-                if (comp.GetType() == EComponentType::Mesh)
+                if (comp.GetType() == EComponentType::Primitive)
                 {
-                    const auto& mesh = static_cast<const MeshComponent&>(comp);
+                    const auto& mesh = static_cast<const PrimitiveComponent&>(comp);
                     file << ",\n";
                     file << "          \"materialName\": \"" << EscapeString(mesh.Material.Parent) << "\"";
                     WriteMaterialOverrides(file, mesh.Material);
@@ -677,9 +677,10 @@ namespace Kiwi
                     ReadVec3(compStr, "scale", compScale);
                     ReadBool(compStr, "enabled", enabled);
 
-                    if (compType == "MeshComponent")
+                    // "MeshComponent" is the pre-rename type name still present in older scene files.
+                    if (compType == "PrimitiveComponent" || compType == "MeshComponent")
                     {
-                        auto* mesh = sceneObj->AddComponent<MeshComponent>();
+                        auto* mesh = sceneObj->AddComponent<PrimitiveComponent>();
                         mesh->Position = compPos;
                         mesh->Rotation = compRot;
                         mesh->Scale = compScale;
@@ -825,7 +826,7 @@ namespace Kiwi
                 EPrimitiveType type = StringToPrimitiveType(typeStr);
                 SceneObject* obj = AddMeshObject(type, name);
 
-                auto* mesh = obj->GetComponent<MeshComponent>();
+                auto* mesh = obj->GetComponent<PrimitiveComponent>();
                 if (mesh)
                 {
                     Vec3 pos, rot, scale;

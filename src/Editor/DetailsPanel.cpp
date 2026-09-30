@@ -45,9 +45,9 @@ void KiwiEngineApp::DrawDetailTab()
                 comp.MarkRenderTransformDirty();
 
             // Type-specific UI
-            if (comp.GetType() == EComponentType::Mesh)
+            if (comp.GetType() == EComponentType::Primitive)
             {
-                auto& mesh = static_cast<MeshComponent&>(comp);
+                auto& mesh = static_cast<PrimitiveComponent&>(comp);
 
                 // ---- Material Selection ----
                 ImGui::Separator();

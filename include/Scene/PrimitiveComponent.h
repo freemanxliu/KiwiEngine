@@ -12,19 +12,19 @@ namespace Kiwi
 {
 
     // ============================================================
-    // MeshComponent — renders a mesh at the component's transform
+    // PrimitiveComponent — renders a mesh at the component's transform
     // ============================================================
-    class MeshComponent : public Component
+    class PrimitiveComponent : public Component
     {
     public:
-        MeshComponent() = default;
-        ~MeshComponent() override = default;
+        PrimitiveComponent() = default;
+        ~PrimitiveComponent() override = default;
 
-        MeshComponent(MeshComponent&&) = default;
-        MeshComponent& operator=(MeshComponent&&) = default;
+        PrimitiveComponent(PrimitiveComponent&&) = default;
+        PrimitiveComponent& operator=(PrimitiveComponent&&) = default;
 
-        EComponentType GetType() const override { return EComponentType::Mesh; }
-        const char* GetTypeName() const override { return "MeshComponent"; }
+        EComponentType GetType() const override { return EComponentType::Primitive; }
+        const char* GetTypeName() const override { return "PrimitiveComponent"; }
 
         // Mesh data
         Mesh MeshData;
